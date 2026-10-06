@@ -79,6 +79,7 @@ Sunak rechnet nicht selbst, die Modelle laufen in Ollama. Ollama nutzt eine pass
 | 💬 **Chat** | Streaming-Antworten, Volltextsuche über alle Chats, Export als Markdown, JSON oder PDF, Bearbeiten und Neu generieren, Markdown, Tabellen, Code mit Kopier-Knopf, Denkprozess von Reasoning-Modellen ein- und ausklappbar, Dateien anhängen (auch PDF, Word, PowerPoint) per 📎 oder Drag & Drop |
 | 🤖 **Claude** | Claude als eigener Anbieter: API-Key eintragen, die verfügbaren Claude-Modelle erscheinen automatisch in der Auswahl. Antworten werden gestreamt, der Denkprozess ist zusammengefasst sichtbar. Funktioniert in Chat, Compare, Research und Documents |
 | 📚 **Knowledge** | Eigene Wissensbasis: PDFs, Word (.docx), OpenDocument (.odt), PowerPoint (.pptx), HTML, Markdown, Text, CSV und Code hochladen, im Chat mit 📚 einschalten und Fragen dazu stellen. Antworten zeigen, aus welchen Dateien sie stammen. Volltextsuche über alle Dateien. Alles bleibt lokal, ohne Zusatzsoftware |
+| ✉️ **Mail** | Beliebig viele E-Mail-Konten verknüpfen (Gmail, Outlook, iCloud, Yahoo, GMX, WEB.DE, Telekom oder eigener Server über IMAP/SMTP). Posteingang je Konto, Ordner, Suche, Mails lesen ohne sie als gelesen zu markieren, Anhänge herunterladen, Antworten, Weiterleiten, Entwürfe. Die KI fasst Mails zusammen, entwirft Antworten, sortiert den Posteingang („Overview“) oder nimmt eine Mail mit in den Chat. Gesendet wird nur nach Klick auf **Send** |
 | 🛠 **Agent** | Agentisches Coding: Das Modell arbeitet in einem Projektordner, den du auswählst. Es liest, sucht und listet Dateien selbst, legt Dateien an, bearbeitet sie (als Diff sichtbar) und führt Befehle aus, etwa die Tests. Jeder Schritt erscheint live im Chat, Schreiben und Befehle nur nach deinem Klick („Apply“, „Allow … in this chat“ oder „Deny“), Stop jederzeit. Kein Zugriff außerhalb des Ordners. Funktioniert mit Claude, Ollama-Modellen mit Tool-Support (z. B. Qwen 3, Llama 3.1+) und OpenAI-kompatiblen APIs; Modelle ohne Tool-Support nutzen ein einfaches Textprotokoll. Standardmäßig aus |
 | 🎭 **Personas** | Eigene Systemprompts als Personas, oben im Chat umschaltbar. Mitgeliefert: Assistant, Coder, Writer, Translator, Teacher; alle änderbar, eigene hinzufügbar (Settings → Personas) |
 | ⚖️ **Compare** | Ein Prompt an 2 bis 4 Modelle gleichzeitig, Antworten und Geschwindigkeit nebeneinander |
@@ -105,6 +106,8 @@ Sunak rechnet nicht selbst, die Modelle laufen in Ollama. Ollama nutzt eine pass
 | Chat exportieren | ⬇ oben rechts → Markdown, JSON oder Drucken/PDF |
 | Alles sichern | Settings → Data → Download backup (ohne API-Keys und Passwort) |
 | Fragen zu eigenen Dateien | 📚 Knowledge → Dateien hineinziehen → im Chat 📚 neben dem Eingabefeld einschalten. Für eine einzelne Datei reicht auch 📎 |
+| E-Mail-Konto verknüpfen | Settings → Mail accounts → ＋ Add mail account → Adresse und App-Passwort eintragen (die Server werden für bekannte Anbieter automatisch ausgefüllt) → Test connection → Save account. Weitere Konten genauso |
+| Mails mit KI bearbeiten | ✉️ Mail → Mail öffnen → ✨ Summarize, ↩ Reply und dann ✨ Draft reply (optional mit Hinweis wie „zusagen, aber erst nächste Woche“), oder 💬 Ask in chat |
 | Claude nutzen | Settings → Providers → Preset „Claude (Anthropic)“ → API-Key von [console.anthropic.com](https://console.anthropic.com) einfügen → Save settings. Alternativ beim ersten Start „Use Claude with an API key“ klicken |
 | Agent-Modus (agentisches Coding) | Settings → Agent → „Enable agent mode“ → Save settings. Dann im Chat 🛠 neben dem Eingabefeld einschalten, den Projektordner eintragen (voller Pfad) und sagen, was zu tun ist. Änderungen und Befehle erscheinen zur Freigabe; „Ask again“ nimmt eine Freigabe „für diesen Chat“ zurück |
 | Anderes Cloud-Modell nutzen | Settings → Providers → Preset wählen → API-Key eintragen → Save settings |
@@ -119,6 +122,23 @@ Sunak rechnet nicht selbst, die Modelle laufen in Ollama. Ollama nutzt eine pass
 | Update-Hinweis abschalten | Settings → Updates → Haken bei „Check for updates“ entfernen → Save settings |
 | Version anzeigen | `sunak version` |
 | Deinstallieren | `sunak uninstall` (macOS/Linux, entfernt auch Icons und Autostart). Windows: `sunak autostart off`, dann den Ordner `%LOCALAPPDATA%\sunak` und die Sunak-Icons löschen |
+
+## E-Mail
+
+Sunak spricht IMAP (lesen) und SMTP (senden) direkt mit der Python-Standardbibliothek, ohne Zusatzpakete und ohne Umweg über fremde Server.
+
+- **App-Passwort:** Gmail, iCloud und Yahoo verlangen ein App-Passwort statt des normalen Passworts (bei Gmail erst nach Einschalten der Bestätigung in zwei Schritten). Bei GMX und WEB.DE muss IMAP vorher in den Einstellungen des Postfachs freigeschaltet werden, bei der Telekom gilt das eigene E-Mail-Passwort. Sunak zeigt beim Einrichten den passenden Hinweis.
+- **Sicherheit:** Passwörter liegen wie API-Keys nur in der lokalen Datenbank, werden nie protokolliert und nie an den Browser zurückgegeben; das Backup enthält sie nicht. Verbindungen laufen über SSL/TLS oder STARTTLS mit Zertifikatsprüfung. Unverschlüsselt (und mit selbst signiertem Zertifikat) verbindet Sunak sich nur mit `localhost`, etwa mit der Proton Mail Bridge.
+- **Nichts passiert von selbst:** Ordner werden nur lesend geöffnet, Mails bleiben ungelesen. Gesendet wird nur nach Klick auf **Send** und einer Rückfrage, Entwürfe landen nur mit **Save draft** im Entwürfe-Ordner. KI-Antworten erscheinen als Entwurf im Formular.
+- **Mail-Inhalt ist kein Befehl:** Die KI bekommt Mails ausdrücklich als Daten von Dritten; Anweisungen darin soll sie ignorieren. Sie hat ohnehin keine Werkzeuge und kann selbst nichts senden.
+
+**Grenzen (ehrlich):**
+
+- **Kein OAuth.** Anmeldung geht nur per Passwort bzw. App-Passwort. OAuth bräuchte eine bei Google bzw. Microsoft registrierte App mit Client-ID; das lässt sich ohne fremden Dienst nicht sauber mitliefern. Microsoft (Outlook, Hotmail, Microsoft 365) erlaubt für fremde Programme oft nur noch OAuth. Lehnt der Server die Anmeldung ab, funktioniert das Konto in Sunak nicht.
+- HTML-Mails werden als Text angezeigt (keine Bilder, keine Formatierung, dafür auch kein Tracking).
+- Eigene Anhänge beim Schreiben und Weiterleiten von Anhängen gehen noch nicht; empfangene Anhänge lassen sich herunterladen.
+- Keine Benachrichtigung bei neuen Mails, kein Verschieben oder Löschen. Jede Aktion baut eine neue Verbindung auf, das dauert je nach Anbieter ein bis zwei Sekunden.
+- Getestet ist alles gegen simulierte IMAP- und SMTP-Server, nicht gegen echte Anbieter.
 
 ## Konfiguration
 

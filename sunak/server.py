@@ -22,8 +22,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlparse
 
-from . import __version__, agent, extract, gpu, knowledge, ollama, providers, research, updates
-from .db import DB
+from . import __version__, agent, extract, gpu, knowledge, mail, ollama, providers, research, updates
+from .db import DB, new_id
 
 STATIC = Path(__file__).parent / "static"
 ATTACHED_RE = re.compile(r"File `([^`\n]+)`:\n```\n.*?\n```\s*", re.S)  # files attached in the chat
@@ -340,6 +340,18 @@ class App:
                 for n in names:
                     out.append({"id": f"{p['id']}::{n}", "name": n, "provider": p["id"], "provider_name": p["name"]})
         return {"models": out, "errors": errors}
+
+    # mail accounts ----------------------------------------------------
+    def mail_accounts(self):
+        """Linked e-mail accounts, including their passwords (server side only)."""
+        return self.db.get_setting("mail_accounts") or []
+
+    def mail_account(self, aid):
+        """One account by id; raises ValueError when it does not exist."""
+        acc = next((a for a in self.mail_accounts() if a["id"] == aid), None)
+        if not acc:
+            raise ValueError("Unknown mail account. Add it in Settings → Mail accounts.")
+        return acc
 
     # auth -------------------------------------------------------------
     def auth_required(self):
@@ -751,7 +763,8 @@ class Handler(BaseHTTPRequestHandler):
         data = self.app.db.export_all()
         s = self.app.settings()
         s["providers"] = [{k: v for k, v in p.items() if k != "api_key"} for p in s["providers"]]
-        data.update(sunak_version=__version__, exported=time.strftime("%Y-%m-%dT%H:%M:%S"), settings=s)
+        data.update(sunak_version=__version__, exported=time.strftime("%Y-%m-%dT%H:%M:%S"), settings=s,
+                    mail_accounts=[{k: v for k, v in a.items() if k != "password"} for a in self.app.mail_accounts()])
         self.send_download(json.dumps(data, indent=2, ensure_ascii=False),
                            f"sunak-backup-{time.strftime('%Y-%m-%d')}.json", "application/json; charset=utf-8")
 
@@ -1164,6 +1177,93 @@ class Handler(BaseHTTPRequestHandler):
         name, _, text = self.file_upload()
         self.send_json({"name": name, "text": text})
 
+    # mail
+    def query(self, key, default=""):
+        """One query-string parameter."""
+        return parse_qs(urlparse(self.path).query).get(key, [default])[0]
+
+    def mail_list_accounts(self):
+        """GET /api/mail/accounts: linked accounts without passwords, and the provider presets."""
+        self.send_json({"accounts": [mail.public(a) for a in self.app.mail_accounts()], "presets": mail.PRESETS})
+
+    def mail_save_account(self):
+        """POST /api/mail/accounts {account}: add an account, or update the one with the same id.
+        An empty password keeps the saved one (same user name and servers only)."""
+        accounts = self.app.mail_accounts()
+        acc = mail.clean_account(self.body().get("account"), accounts, new_id)
+        if any(a["email"].lower() == acc["email"].lower() and a["id"] != acc["id"] for a in accounts):
+            raise ValueError(f"{acc['email']} is already linked")
+        if any(a["id"] == acc["id"] for a in accounts):
+            accounts = [acc if a["id"] == acc["id"] else a for a in accounts]
+        else:
+            accounts.append(acc)
+        self.app.db.set_setting("mail_accounts", accounts)
+        self.send_json(mail.public(acc))
+
+    def mail_delete_account(self, aid):
+        """DELETE /api/mail/accounts/<id>: unlink an account (nothing on the mail server changes)."""
+        self.app.db.set_setting("mail_accounts", [a for a in self.app.mail_accounts() if a["id"] != aid])
+        self.send_json({"ok": True})
+
+    def mail_test(self):
+        """POST /api/mail/test {account}: try IMAP and SMTP with the settings from the form, before saving."""
+        acc = mail.clean_account(self.body().get("account"), self.app.mail_accounts())
+        self.send_json(mail.test_account(acc))
+
+    def mail_folders(self, aid):
+        """GET /api/mail/<id>/folders"""
+        self.send_json(mail.list_folders(self.app.mail_account(aid)))
+
+    def mail_messages(self, aid):
+        """GET /api/mail/<id>/messages?folder=&q=&unread=1&before=<uid>: newest messages, read-only."""
+        before = self.query("before")
+        self.send_json(mail.list_messages(self.app.mail_account(aid), self.query("folder", "INBOX"), self.query("q"),
+                                          self.query("unread") == "1", int(before) if before.isdigit() else None))
+
+    def mail_message(self, aid):
+        """GET /api/mail/<id>/message?folder=&uid=: one message as text (not marked as read)."""
+        uid = self.query("uid")
+        if not uid.isdigit():
+            raise ValueError("uid missing")
+        self.send_json(mail.get_message(self.app.mail_account(aid), self.query("folder", "INBOX"), int(uid)))
+
+    def mail_attachment(self, aid):
+        """GET /api/mail/<id>/attachment?folder=&uid=&i=: download one attachment."""
+        uid, i = self.query("uid"), self.query("i")
+        if not uid.isdigit() or not i.isdigit():
+            raise ValueError("uid and i are needed")
+        name, data = mail.get_attachment(self.app.mail_account(aid), self.query("folder", "INBOX"), int(uid), int(i))
+        name = re.sub(r"[\\/\x00-\x1f]", "_", name)[-200:] or "attachment"
+        self.send_download(data, name, "application/octet-stream")  # never shown inline in the browser
+
+    def mail_send(self, aid):
+        """POST /api/mail/<id>/send {to, cc, bcc, subject, body, in_reply_to, references}: only on the Send click."""
+        self.send_json(mail.send(self.app.mail_account(aid), self.body()))
+
+    def mail_draft(self, aid):
+        """POST /api/mail/<id>/draft {…same as send}: save in the Drafts folder."""
+        self.send_json({"ok": True, "folder": mail.save_draft(self.app.mail_account(aid), self.body())})
+
+    def mail_ai(self):
+        """POST /api/mail/ai {task: summarize|reply|overview, text, instruction, account, model}: stream the result.
+        Nothing is sent: a reply only fills the compose form."""
+        d = self.body()
+        text = d.get("text") if isinstance(d.get("text"), str) else ""
+        if not text.strip():
+            raise ValueError("No e-mail to work with")
+        instruction = d.get("instruction") if isinstance(d.get("instruction"), str) else ""
+        acc = self.app.mail_account(d["account"]) if d.get("account") else None
+        memories = self.app.db.memories() if self.app.settings()["use_memory"] else []
+        messages = mail.ai_messages(d.get("task"), acc, text[:40000], instruction.strip()[:2000], memories)
+        prov, model = self.app.resolve(d.get("model"))
+        self.start_stream()
+        try:
+            for kind, c in providers.chat_stream(prov, model, messages, {"temperature": 0.3}):
+                self.emit({"type": kind, "t": c})
+            self.emit({"type": "done"})
+        except providers.ProviderError as e:
+            self.emit({"type": "error", "error": str(e)})
+
     # model management (Ollama)
     def pull(self):
         """POST /api/models/pull: download an Ollama model and stream its progress.
@@ -1277,6 +1377,17 @@ ROUTES = [
     (rf"/api/knowledge/{ID}", "GET", Handler.kb_get),
     (rf"/api/knowledge/{ID}", "DELETE", Handler.kb_delete),
     (r"/api/extract", "POST", Handler.extract_file),
+    (r"/api/mail/accounts", "GET", Handler.mail_list_accounts),
+    (r"/api/mail/accounts", "POST", Handler.mail_save_account),
+    (rf"/api/mail/accounts/{ID}", "DELETE", Handler.mail_delete_account),
+    (r"/api/mail/test", "POST", Handler.mail_test),
+    (r"/api/mail/ai", "POST", Handler.mail_ai),
+    (rf"/api/mail/{ID}/folders", "GET", Handler.mail_folders),
+    (rf"/api/mail/{ID}/messages", "GET", Handler.mail_messages),
+    (rf"/api/mail/{ID}/message", "GET", Handler.mail_message),
+    (rf"/api/mail/{ID}/attachment", "GET", Handler.mail_attachment),
+    (rf"/api/mail/{ID}/send", "POST", Handler.mail_send),
+    (rf"/api/mail/{ID}/draft", "POST", Handler.mail_draft),
     (r"/api/notes", "GET", Handler.list_notes),
     (r"/api/notes", "POST", Handler.create_note),
     (rf"/api/notes/{ID}", "PATCH", Handler.patch_note),

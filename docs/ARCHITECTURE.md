@@ -27,9 +27,11 @@ Browser (sunak/static)  ──HTTP/JSON, NDJSON-Streams──▶  sunak/server.p
 | `sunak/research.py` | Websuche, Seiten lesen, Prompt für den Recherchebericht |
 | `sunak/agent.py` | Agent-Modus: Werkzeuge im Projektordner (Pfadprüfung), Befehle mit Zeit- und Ausgabelimit, Tool-Calling je Backend, Textprotokoll als Ersatz, Agent-Schleife mit Freigaben |
 | `sunak/extract.py` | Text aus hochgeladenen Dateien: PDF (eigener Leser), .docx, .odt, .pptx, HTML, Text |
+| `sunak/mail.py` | E-Mail: Konten prüfen, IMAP (Ordner, Liste, Suche, Mail als Text, Anhänge, Entwürfe) und SMTP (Senden), Anbieter-Vorlagen, Prompts für die KI |
 | `sunak/knowledge.py` | Wissensbasis: Abschnitte bilden, suchen, passende Abschnitte für den Chat auswählen |
 | `sunak/static/` | Oberfläche: `index.html`, `app.js` (gesamte Logik), `app.css` (inklusive Themes), `theme.js` (setzt das Theme vor dem ersten Zeichnen), `login.html`, Icon, PWA-Manifest |
 | `tests/test_server.py` | End-to-End-Tests gegen simulierte Backends |
+| `tests/test_mail.py` | E-Mail gegen simulierte IMAP- und SMTP-Server |
 | `tests/test_extract.py` | Tests für Textauslese und Wissensbasis (die Testdateien werden im Test erzeugt) |
 | `install.sh`, `install.ps1` | Installer für macOS/Linux und Windows |
 | `Dockerfile`, `docker-compose*.yml` | Container mit Ollama: nur CPU (`docker-compose.yml`), NVIDIA (`+ docker-compose.gpu.yml`) oder AMD/ROCm (`+ docker-compose.amd.yml`) |
@@ -76,6 +78,17 @@ Alle Endpunkte liegen unter `/api/`. Schreibende Anfragen brauchen den Header `X
 | `POST /api/research` | Web-Recherche mit Bericht | NDJSON `status`, `sources`, `text`, `done`/`error` |
 | `GET`/`POST /api/documents`, `GET`/`PUT`/`DELETE /api/documents/<id>` | Dokumente | JSON |
 | `POST /api/documents/ai` | KI-Bearbeitung eines Dokuments oder einer Markierung | NDJSON `text` |
+| `GET /api/mail/accounts` | Konten ohne Passwort (`has_password`), dazu `presets` (Server bekannter Anbieter) | JSON |
+| `POST /api/mail/accounts` | Konto `{account}` anlegen oder (gleiche `id`) ändern; leeres Passwort behält das gespeicherte | JSON |
+| `DELETE /api/mail/accounts/<id>` | Konto aus Sunak entfernen (auf dem Mail-Server ändert sich nichts) | JSON |
+| `POST /api/mail/test` | IMAP und SMTP mit den Daten aus dem Formular prüfen: `{imap, smtp}`, leer heißt „klappt“, sonst die Fehlermeldung | JSON |
+| `GET /api/mail/<id>/folders` | Ordner mit `role` (`inbox`, `drafts`, `sent`, `archive`, `junk`, `trash`, …) | JSON |
+| `GET /api/mail/<id>/messages?folder=&q=&unread=1&before=` | Neueste 40 Mails (Kopfzeilen), `before` (UID) blättert zu älteren | JSON |
+| `GET /api/mail/<id>/message?folder=&uid=` | Eine Mail als Text mit Anhangsliste | JSON |
+| `GET /api/mail/<id>/attachment?folder=&uid=&i=` | Anhang herunterladen (immer als Download) | Datei |
+| `POST /api/mail/<id>/send` | `{to, cc, bcc, subject, body, in_reply_to, references}` senden | JSON (`saved_to`, `warning`) |
+| `POST /api/mail/<id>/draft` | Gleiches Format, landet im Entwürfe-Ordner | JSON (`folder`) |
+| `POST /api/mail/ai` | `{task: summarize\|reply\|overview, text, instruction, account, model}` | NDJSON `think`, `text`, `done`/`error` |
 | `GET`/`POST /api/notes`, `PATCH`/`DELETE /api/notes/<id>` | Notizen und Gedächtnis | JSON |
 | `GET /api/knowledge` | Dateien der Wissensbasis, Gesamtgröße, ob FTS5 verfügbar ist | JSON |
 | `POST /api/knowledge` | Datei hinzufügen: `{name, data}` mit `data` als Base64; gleicher Name ersetzt die alte Datei | JSON |
@@ -147,6 +160,18 @@ Agentisches Coding: Das Modell arbeitet in einer Schleife mit Werkzeugen in eine
 3. Bis zu fünf Seiten werden geladen und in Text umgewandelt, jeweils höchstens 6000 Zeichen.
 4. Das Modell schreibt einen Markdown-Bericht mit Quellenverweisen wie `[1]`.
 
+## E-Mail
+
+`sunak/mail.py` nutzt nur `imaplib`, `smtplib` und `email`. Jede Anfrage öffnet eine eigene Verbindung und schließt sie wieder; es gibt keinen Hintergrunddienst.
+
+- **Konten** liegen in der Einstellung `mail_accounts`: `{id, email, name, username, password, imap_host, imap_port, imap_security, smtp_host, smtp_port, smtp_security, save_sent}`, `*_security` ist `ssl`, `starttls` oder `none`. `none` und das Akzeptieren selbst signierter Zertifikate gibt es nur für `localhost`/Loopback (z. B. Proton Mail Bridge). `mail.clean_account` prüft alles; ein leeres Passwort übernimmt das gespeicherte nur bei gleichem Benutzernamen und gleichen Servern, damit es nie an einen anderen Server geht. `PRESETS` enthält die Server bekannter Anbieter samt Domains (das Frontend wählt die Vorlage anhand der Adresse) und Hinweistext zum App-Passwort.
+- **Passwörter** verlassen den Server nie: `mail.public` entfernt sie, `/api/export` ebenso. Fehlermeldungen laufen durch `_safe`, das ein Passwort sicherheitshalber ersetzt. Nicht-ASCII-Passwörter gehen per `AUTHENTICATE PLAIN` (IMAP) bzw. eigenem `AUTH PLAIN` (SMTP) in UTF-8, weil `LOGIN` und `smtplib.login` nur ASCII können.
+- **Nur lesen:** Ordner werden mit `EXAMINE` (`select(readonly=True)`) geöffnet und Mails mit `BODY.PEEK` geholt, so bleibt `\Seen` unverändert. Die Liste holt nur `FROM TO SUBJECT DATE`, Flags und Größe; Suche per `UID SEARCH TEXT` (jedes Wort muss vorkommen), Text mit Umlauten als UTF-8-Literal mit `CHARSET UTF-8`.
+- **Mail lesen:** höchstens 10 MB pro Mail, Text bevorzugt aus `text/plain`, sonst wird HTML mit `research.html_to_text` in Text umgewandelt (Skripte fallen weg, nichts wird nachgeladen). Ordnernamen kommen in IMAPs modifiziertem UTF-7 und werden mit `utf7_decode` lesbar gemacht. Die Rolle eines Ordners stammt aus den Special-Use-Flags (RFC 6154), sonst aus dem Namen („Gesendet“, „Entwürfe“, …).
+- **Schreiben:** `build_message` baut eine `EmailMessage` (Adressen geprüft, Zeilenumbrüche in Kopfzeilen entfernt, `In-Reply-To`/`References` für Antworten). `send` schickt per SMTP und legt bei `save_sent` eine Kopie mit `APPEND` in den Gesendet-Ordner (Gmail und Outlook machen das selbst, daher dort aus). Scheitert nur die Kopie, ist die Mail trotzdem verschickt und es gibt eine Warnung. `save_draft` legt die Mail mit `\Draft` in den Entwürfe-Ordner.
+- **KI:** `ai_messages` baut die Prompts für `summarize`, `reply` und `overview`. Die Mail steht in `<email>`-Tags, und der Systemprompt sagt, dass ihr Inhalt Daten und keine Anweisungen sind. Gedächtnis-Notizen werden mitgegeben (z. B. der eigene Name für die Grußformel). Die Antwort wird nur ins Formular gestreamt. „Ask in chat“ hängt die Mail im Browser als Datei-Anhang namens „✉ Betreff“ an einen neuen Chat, genau wie eine Datei über 📎.
+- **Frontend:** Abschnitt „Mail“ in `app.js`: Konto- und Ordnerauswahl, Liste mit „Load older“, Leseansicht, Formular für neue Mail, Antwort, Weiterleiten. Senden fragt vorher nach. Die Einrichtung steht in Settings → Mail accounts (`editMailAccount`).
+
 ## Wissensbasis
 
 Hochgeladene Dateien gehen den Weg `extract.extract_text` → `knowledge.chunk` → `DB.kb_add`.
@@ -193,7 +218,7 @@ Alle Daten liegen in einer SQLite-Datei: `~/.sunak/sunak.db`, der Ordner lässt 
 | `kb_files`, `kb_chunks`, `kb_fts` | Wissensbasis: Dateien, ihre Textabschnitte und der Volltextindex |
 | `documents` | Markdown-Dokumente |
 | `notes` | Notizen; `is_memory = 1` bedeutet „im Gedächtnis“ |
-| `settings` | Schlüssel-Wert-Paare als JSON: `prefs`, `providers`, `personas` (fehlt der Eintrag, gelten `DEFAULT_PERSONAS`), `password_hash`, `secret` |
+| `settings` | Schlüssel-Wert-Paare als JSON: `prefs`, `providers`, `personas` (fehlt der Eintrag, gelten `DEFAULT_PERSONAS`), `mail_accounts`, `password_hash`, `secret` |
 
 Spalten, die später dazukamen, legt `DB.__init__` beim Start an (`MIGRATIONS`), ältere Datenbanken funktionieren also weiter. Die hochgeladenen Originaldateien werden nicht aufbewahrt, nur ihr Text.
 
@@ -223,7 +248,7 @@ Umgebungsvariablen: `SUNAK_HOST`, `SUNAK_PORT`, `SUNAK_DATA`, `SUNAK_PASSWORD`, 
 python3 -m unittest discover tests -v
 ```
 
-Die Tests starten Sunak und einen simulierten Server, der die Ollama-, Anthropic- und OpenAI-API nachbildet. Abgedeckt sind Chat, Personas, Robustheit (feindliche PDFs mit überlappenden Objekt-Offsets oder ohne `endstream`, falsche Datentypen in Anfragen, Login bleibt nach Neustart mit `SUNAK_PASSWORD` gültig, API-Keys werden bei Weiterleitung auf einen anderen Host nicht mitgeschickt, Beenden über einen Reverse-Proxy nur angemeldet), Installer (`install.ps1` nur ASCII, damit Windows PowerShell 5.1 es lesen kann; `sunak update` bleibt im gewählten `SUNAK_HOME`), Themes (gleiche Namen in CSS, JavaScript und Server, Kontrast aller Farben, Prüfung der Einstellungen), GPU-Erkennung (simulierte `nvidia-smi`-Ausgabe, sysfs-Bäume, Windows-Registry, Apple Silicon, `/api/ps`, Warnung, Katalog und Empfehlung), Update-Prüfung (echte Git-Repositories mit lokalem Remote, installierte Kopie, Fehlerfälle, Update-Knopf), Kommandozeile (bereits laufend, `status`, `stop`) und Autostart-Dateien, Chat-Suche und Export, Wissensbasis (Hochladen, Suche, Auszüge im Prompt, Quellen), Textauslese aus PDF, Word, OpenDocument und PowerPoint, Datenbank-Migration, Neu generieren, Denkprozess, Gedächtnis, Compare, Research (mit gestubbter Suche), Dokumente, Modell-Download mit Fortschritt, Ollama-Status und Katalog, Claude (Streaming, Header, Denkprozess, Ablehnung, falscher Key, Key-Maskierung), Agent-Modus (Ordnergrenze mit `..`, absoluten Pfaden und Symlinks, verbotene Ordner, Lesen, Suchen, Bearbeiten mit Diff und Windows-Zeilenenden, Befehle mit Zeitlimit, Ausgabelimit und Abbruch, Tool-Calling mit Claude, Ollama und OpenAI-kompatibel, Textprotokoll, Freigeben, Ablehnen, „für diesen Chat“, Stop, Zugriff von anderen Geräten), Login, CSRF-Schutz und Pfad-Traversal. GitHub Actions führt sie auf Linux, macOS und Windows aus (`.github/workflows/test.yml`).
+Die Tests starten Sunak und einen simulierten Server, der die Ollama-, Anthropic- und OpenAI-API nachbildet. Abgedeckt sind Chat, Personas, Robustheit (feindliche PDFs mit überlappenden Objekt-Offsets oder ohne `endstream`, falsche Datentypen in Anfragen, Login bleibt nach Neustart mit `SUNAK_PASSWORD` gültig, API-Keys werden bei Weiterleitung auf einen anderen Host nicht mitgeschickt, Beenden über einen Reverse-Proxy nur angemeldet), Installer (`install.ps1` nur ASCII, damit Windows PowerShell 5.1 es lesen kann; `sunak update` bleibt im gewählten `SUNAK_HOME`), Themes (gleiche Namen in CSS, JavaScript und Server, Kontrast aller Farben, Prüfung der Einstellungen), GPU-Erkennung (simulierte `nvidia-smi`-Ausgabe, sysfs-Bäume, Windows-Registry, Apple Silicon, `/api/ps`, Warnung, Katalog und Empfehlung), Update-Prüfung (echte Git-Repositories mit lokalem Remote, installierte Kopie, Fehlerfälle, Update-Knopf), Kommandozeile (bereits laufend, `status`, `stop`) und Autostart-Dateien, E-Mail (simulierter IMAP- und SMTP-Server: Konto anlegen ohne Passwort-Rückgabe, Verbindungstest, Nicht-ASCII-Passwort, Ordner mit UTF-7-Namen, Liste, Suche mit Umlauten, nur lesender Zugriff, HTML-Mail, Anhang, Senden mit Bcc und Kopie in Gesendet, Entwurf, KI-Antwort), Chat-Suche und Export, Wissensbasis (Hochladen, Suche, Auszüge im Prompt, Quellen), Textauslese aus PDF, Word, OpenDocument und PowerPoint, Datenbank-Migration, Neu generieren, Denkprozess, Gedächtnis, Compare, Research (mit gestubbter Suche), Dokumente, Modell-Download mit Fortschritt, Ollama-Status und Katalog, Claude (Streaming, Header, Denkprozess, Ablehnung, falscher Key, Key-Maskierung), Agent-Modus (Ordnergrenze mit `..`, absoluten Pfaden und Symlinks, verbotene Ordner, Lesen, Suchen, Bearbeiten mit Diff und Windows-Zeilenenden, Befehle mit Zeitlimit, Ausgabelimit und Abbruch, Tool-Calling mit Claude, Ollama und OpenAI-kompatibel, Textprotokoll, Freigeben, Ablehnen, „für diesen Chat“, Stop, Zugriff von anderen Geräten), Login, CSRF-Schutz und Pfad-Traversal. GitHub Actions führt sie auf Linux, macOS und Windows aus (`.github/workflows/test.yml`).
 
 ## Erweitern
 
