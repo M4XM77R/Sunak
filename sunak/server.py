@@ -35,6 +35,24 @@ DEFAULT_SETTINGS = {
     "theme": "dark",
 }
 
+# Built-in personas; the user can edit, add and delete them in Settings → Personas.
+DEFAULT_PERSONAS = [
+    {"id": "assistant", "icon": "⛵", "name": "Assistant", "prompt": ""},
+    {"id": "coder", "icon": "💻", "name": "Coder",
+     "prompt": "You are an expert software engineer. Give working, idiomatic code with short explanations. "
+               "Point out bugs and edge cases. Ask for the language or framework only if it really matters."},
+    {"id": "writer", "icon": "✍️", "name": "Writer",
+     "prompt": "You are a skilled writer and editor. Write clear, natural, engaging text in the user's language "
+               "and tone. When editing, keep the meaning and explain bigger changes briefly."},
+    {"id": "translator", "icon": "🌍", "name": "Translator",
+     "prompt": "You are a professional translator. Translate the user's text faithfully and idiomatically. "
+               "If no target language is given, translate German to English and any other language to German. "
+               "Reply with the translation only, unless asked for notes."},
+    {"id": "teacher", "icon": "🎓", "name": "Teacher",
+     "prompt": "You are a patient teacher. Explain step by step with simple words and examples, check "
+               "understanding with a short question at the end, and never make the user feel bad for asking."},
+]
+
 # Hardware-aware starter models (Ollama tags). RAM in GB -> model.
 RECOMMENDATIONS = [
     (6, "qwen3:1.7b", "1.4 GB"),
@@ -115,6 +133,7 @@ class App:
         s = dict(DEFAULT_SETTINGS)
         s.update(self.db.get_setting("prefs", {}))
         s["providers"] = self.db.get_setting("providers") or providers.default_providers()
+        s["personas"] = self.db.get_setting("personas") or DEFAULT_PERSONAS
         return s
 
     def save_settings(self, data):
@@ -138,6 +157,18 @@ class App:
                 clean.append({"id": pid, "name": p.get("name") or pid, "type": p["type"],
                               "base_url": p["base_url"].strip(), "api_key": key})
             self.db.set_setting("providers", clean)
+        if "personas" in data:
+            clean = []
+            for p in data["personas"]:
+                name = str(p.get("name") or "").strip()[:40]
+                if not name:
+                    raise ValueError("Each persona needs a name")
+                pid = re.sub(r"[^a-z0-9_-]", "", str(p.get("id") or "").lower())[:24] or re.sub(r"[^a-z0-9]", "", name.lower())[:24] or "persona"
+                while any(c["id"] == pid for c in clean):
+                    pid += "x"
+                clean.append({"id": pid, "icon": str(p.get("icon") or "").strip()[:8], "name": name,
+                              "prompt": str(p.get("prompt") or "").strip()})
+            self.db.set_setting("personas", clean)
         if "password" in data:
             pw = data["password"] or ""
             self.db.set_setting("password_hash", hash_password(pw) if pw else "")
@@ -201,11 +232,19 @@ class App:
                         "sha256").hexdigest()
 
     # chat -------------------------------------------------------------
+    def persona_prompt(self, pid, personas=None):
+        """System prompt of a persona id ('' for none or an unknown id)."""
+        for p in personas if personas is not None else self.settings()["personas"]:
+            if p["id"] == pid:
+                return p["prompt"]
+        return ""
+
     def build_messages(self, session, history, extra=""):
-        """Chat history for the model: system prompt, session prompt, memory notes, `extra`
+        """Chat history for the model: system prompt, persona, session prompt, memory notes, `extra`
         (knowledge-base excerpts), then the messages."""
         s = self.settings()
-        system = "\n\n".join(x for x in (s["system_prompt"], session.get("system", "")) if x.strip())
+        persona = self.persona_prompt(session.get("persona", ""), s["personas"])
+        system = "\n\n".join(x for x in (s["system_prompt"], persona, session.get("system", "")) if x.strip())
         if s["use_memory"]:
             mem = self.db.memories()
             if mem:
@@ -453,7 +492,7 @@ class Handler(BaseHTTPRequestHandler):
         """POST /api/sessions"""
         d = self.body()
         self.send_json(self.app.db.create_session(model=d.get("model", ""), system=d.get("system", ""),
-                                                  use_kb=d.get("use_kb", False)))
+                                                  use_kb=d.get("use_kb", False), persona=d.get("persona", "")))
 
     def get_session(self, sid):
         """GET /api/sessions/<id>: session with all messages."""
@@ -499,7 +538,8 @@ class Handler(BaseHTTPRequestHandler):
         """POST /api/chat: store the user message, stream the answer, store it.
 
         `truncate_from` deletes that message and everything after it first (regenerate / edit).
-        `use_kb` switches the knowledge base on or off for this chat (stored with the chat).
+        `use_kb` switches the knowledge base on or off for this chat, `persona` picks a persona id
+        (both are stored with the chat).
         Events: start, sources (knowledge base only), think, text, done | error.
         A partial answer is kept if the stream breaks."""
         d = self.body()
@@ -522,6 +562,8 @@ class Handler(BaseHTTPRequestHandler):
         updates = {"model": model_id}
         if "use_kb" in d:
             updates["use_kb"] = session["use_kb"] = bool(d["use_kb"])
+        if "persona" in d:
+            updates["persona"] = session["persona"] = str(d["persona"] or "")
         if session["title"] == "New chat":
             # name the chat after the question, not after attached files (File `x`: ``` … ```)
             first_msg = session["messages"][0]["content"]

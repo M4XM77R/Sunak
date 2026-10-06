@@ -344,6 +344,27 @@ class SunakTest(unittest.TestCase):
         self.assertNotIn("sk-test", json.dumps(backup))
         self.assertNotIn("api_key", json.dumps(backup))
 
+    def test_personas(self):
+        personas = self.call("GET", "/api/settings")["personas"]
+        self.assertEqual([p["id"] for p in personas], ["assistant", "coder", "writer", "translator", "teacher"])
+        s = self.call("POST", "/api/sessions", {"persona": "coder"})
+        self.call("POST", "/api/chat", {"session_id": s["id"], "model": "ollama::tiny:1b", "content": "x"})
+        self.assertIn("expert software engineer", FakeBackend.last_messages[0]["content"])
+        self.call("POST", "/api/chat", {"session_id": s["id"], "model": "ollama::tiny:1b", "content": "y", "persona": "assistant"})
+        self.assertNotIn("software engineer", FakeBackend.last_messages[0]["content"])
+        self.assertEqual(self.call("GET", f"/api/sessions/{s['id']}")["persona"], "assistant")
+        # own personas: edited prompts apply to existing chats, ids are unique
+        mine = [{"id": "assistant", "icon": "⛵", "name": "Assistant", "prompt": ""},
+                {"name": "Pirat", "icon": "🏴‍☠️", "prompt": "Talk like a pirate."}, {"name": "Pirat", "prompt": "Arr"}]
+        saved = self.call("PUT", "/api/settings", {"personas": mine})["personas"]
+        self.assertEqual([p["id"] for p in saved], ["assistant", "pirat", "piratx"])
+        self.call("PATCH", f"/api/sessions/{s['id']}", {"persona": "pirat"})
+        self.call("POST", "/api/chat", {"session_id": s["id"], "model": "ollama::tiny:1b", "content": "z"})
+        self.assertIn("Talk like a pirate.", FakeBackend.last_messages[0]["content"])
+        with self.assertRaises(urllib.error.HTTPError):
+            self.call("PUT", "/api/settings", {"personas": [{"name": " ", "prompt": "x"}]})
+        self.call("PUT", "/api/settings", {"personas": personas})
+
     def test_extract_and_bad_uploads(self):
         r = self.call("POST", "/api/extract", {"name": "n.txt", "data": base64.b64encode(b"note").decode()})
         self.assertEqual(r, {"name": "n.txt", "text": "note"})

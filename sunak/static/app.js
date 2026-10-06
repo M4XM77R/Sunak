@@ -189,6 +189,7 @@ function show(view) {
   $$('.view').forEach((v) => v.classList.toggle('active', v.id === `view-${view}`));
   $('#viewTitle').textContent = view === 'chat' && state.session ? state.session.title : TITLES[view];
   $('#modelSelect').classList.toggle('hidden', ['notes', 'settings', 'compare', 'models', 'knowledge'].includes(view));
+  $('#personaSelect').classList.toggle('hidden', view !== 'chat');
   syncExport();
   closeSidebar();
   if (view === 'documents') loadDocs();
@@ -228,6 +229,25 @@ function syncModelSelect() { $('#modelSelect').value = currentModel(); }
 $('#modelSelect').onchange = async (e) => {
   store.set('sunak-model', e.target.value);
   if (state.session) { state.session.model = e.target.value; await api(`/api/sessions/${state.session.id}`, { method: 'PATCH', body: { model: e.target.value } }); }
+};
+
+/* ---------------- Personas ---------------- */
+function currentPersona() {
+  const ids = (state.settings?.personas || []).map((p) => p.id);
+  for (const c of [state.session?.persona, state.session ? null : store.get('sunak-persona')]) if (c && ids.includes(c)) return c;
+  return ids[0] || '';
+}
+function renderPersonaSelect() {
+  const sel = $('#personaSelect');
+  sel.innerHTML = '';
+  for (const p of state.settings?.personas || []) sel.append(el('option', { value: p.id }, `${p.icon || '🙂'} ${p.name}`));
+  sel.value = currentPersona();
+}
+$('#personaSelect').onchange = async (e) => {
+  store.set('sunak-persona', e.target.value);
+  if (state.session?.id) { state.session.persona = e.target.value; await api(`/api/sessions/${state.session.id}`, { method: 'PATCH', body: { persona: e.target.value } }); }
+  const p = state.settings.personas.find((x) => x.id === e.target.value);
+  toast(`${p.icon || ''} ${p.name}${p.prompt ? '' : ' (no extra instructions)'}`);
 };
 
 /* ---------------- Sessions ---------------- */
@@ -271,6 +291,7 @@ async function openSession(id, messageId) {
   state.session = await api(`/api/sessions/${id}`);
   syncModelSelect();
   renderKbToggle();
+  renderPersonaSelect();
   renderMessages();
   renderSessions();
   show('chat');
@@ -284,6 +305,7 @@ function newChat() {
   state.attachments = [];
   renderAttachments();
   renderKbToggle();
+  renderPersonaSelect();
   renderMessages();
   renderSessions();
   show('chat');
@@ -393,7 +415,7 @@ async function send() {
   promptEl.value = ''; autosize();
   state.attachments = []; renderAttachments();
   if (!state.session) {
-    state.session = await api('/api/sessions', { method: 'POST', body: { model: currentModel(), use_kb: kbOn() } });
+    state.session = await api('/api/sessions', { method: 'POST', body: { model: currentModel(), use_kb: kbOn(), persona: currentPersona() } });
     state.session.messages = [];
   }
   await runChat({ content: text }, { role: 'user', content: text });
@@ -419,7 +441,7 @@ async function runChat(payload, localUserMsg) {
     if (nearBottom) box.scrollTop = box.scrollHeight;
   };
   try {
-    await stream('/api/chat', { session_id: s.id, model: currentModel(), use_kb: kbOn(), ...payload }, (ev) => {
+    await stream('/api/chat', { session_id: s.id, model: currentModel(), use_kb: kbOn(), persona: currentPersona(), ...payload }, (ev) => {
       if (ev.type === 'start') { s.title = ev.title; $('#viewTitle').textContent = ev.title; }
       else if (ev.type === 'sources') target.before(sourcesEl(ev.sources));
       else if (ev.type === 'think') { if (!thinking) { raw += '<think>'; thinking = true; } raw += ev.t; }
@@ -968,6 +990,8 @@ function renderSettings() {
   dm.append(el('option', { value: '' }, 'Last used model'), state.models.map((m) => el('option', { value: m.id, selected: s.default_model === m.id }, `${m.name} (${m.provider_name})`)));
   draftProviders = s.providers.map((p) => ({ ...p }));
   renderProviders();
+  draftPersonas = s.personas.map((p) => ({ ...p }));
+  renderPersonas();
   $('#sysPrompt').value = s.system_prompt;
   $('#temperature').value = s.temperature;
   $('#tempVal').textContent = s.temperature;
@@ -1020,15 +1044,37 @@ $('#providerPreset').onchange = (e) => {
   renderProviders();
 };
 $('#temperature').oninput = (e) => ($('#tempVal').textContent = e.target.value);
+let draftPersonas = [];
+function renderPersonas() {
+  const box = $('#personaList');
+  box.innerHTML = '';
+  draftPersonas.forEach((p, i) => {
+    const prompt = el('textarea', { rows: 3, placeholder: 'Instructions, e.g. “Answer like a friendly chef.” Empty = default behaviour' });
+    prompt.value = p.prompt;
+    prompt.oninput = () => (p.prompt = prompt.value);
+    box.append(el('div', { class: 'card persona' },
+      el('div', { class: 'row' },
+        el('input', { class: 'emoji', value: p.icon || '', placeholder: '🙂', 'aria-label': 'Icon', oninput: (e) => (p.icon = e.target.value) }),
+        el('input', { value: p.name, placeholder: 'Name', 'aria-label': 'Name', oninput: (e) => (p.name = e.target.value) }),
+        el('button', { class: 'icon-btn', title: 'Delete persona', onclick: () => {
+          if (draftPersonas.length === 1) return toast('Keep at least one persona');
+          draftPersonas.splice(i, 1); renderPersonas();
+        } }, '🗑')),
+      prompt));
+  });
+}
+$('#addPersona').onclick = () => { draftPersonas.push({ icon: '✨', name: 'New persona', prompt: '' }); renderPersonas(); $('#personaList .persona:last-child input:not(.emoji)').select(); };
+
 $('#saveSettings').onclick = async () => {
   const s = state.settings;
   try {
     state.settings = await api('/api/settings', { method: 'PUT', body: {
       providers: draftProviders.filter((p) => p.base_url.trim()), system_prompt: $('#sysPrompt').value,
       temperature: parseFloat($('#temperature').value), use_memory: $('#useMemory').checked,
-      accent: s.accent, default_model: $('#defaultModel').value,
+      accent: s.accent, default_model: $('#defaultModel').value, personas: draftPersonas,
     } });
     applyLook();
+    renderPersonaSelect();
     await loadModels();
     renderSettings();
     $('#settingsMsg').textContent = 'Saved ✓';
@@ -1063,6 +1109,7 @@ async function refreshAll() {
   [state.status, state.settings] = await Promise.all([api('/api/status'), api('/api/settings')]);
   applyLook();
   renderKbToggle();
+  renderPersonaSelect();
   await Promise.all([refreshAll(), loadSessions()]);
   renderMessages();
   promptEl.focus();

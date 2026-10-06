@@ -40,6 +40,7 @@
       <button class="icon-btn menu" id="menuBtn" aria-label="Menu">☰</button>
       <h1 id="viewTitle">Chat</h1>
       <div class="spacer"></div>
+      <select id="personaSelect" class="persona-select" aria-label="Persona" title="Persona: how Sunak answers in this chat"></select>
       <select id="modelSelect" class="model-select" aria-label="Model"></select>
       <div class="pop-wrap hidden" id="exportWrap">
         <button class="icon-btn" id="exportBtn" title="Export this chat" aria-haspopup="true">⬇</button>
@@ -198,6 +199,11 @@
         <label>System prompt<textarea id="sysPrompt" rows="3"></textarea></label>
         <label>Creativity (temperature): <b id="tempVal"></b><input type="range" id="temperature" min="0" max="1.5" step="0.1"></label>
         <label class="check"><input type="checkbox" id="useMemory"> Use memory notes in chats</label>
+
+        <h2>Personas</h2>
+        <p class="muted small">Pick a persona above the chat to change how Sunak answers, e.g. as a coder or translator. Edit them or add your own.</p>
+        <div id="personaList"></div>
+        <button class="btn" id="addPersona">＋ Add persona</button>
 
         <h2>Look</h2>
         <div class="row swatches" id="swatches"></div>

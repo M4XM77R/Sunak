@@ -198,7 +198,9 @@ details.think summary { cursor: pointer; user-select: none; }
   .sidebar.open { transform: none; }
   .scrim.open { display: block; position: fixed; inset: 0; background: #0008; z-index: 20; }
   .menu { display: block; }
-  .model-select { max-width: 150px; }
+  .model-select { max-width: 120px; }
+  .persona-select { max-width: 96px; }
+  .topbar { gap: 6px; padding: 10px; }
   .docs { flex-direction: column; }
   .doc-list { width: auto; max-height: 30vh; border-right: 0; border-bottom: 1px solid var(--border); }
   .inline-form { flex-direction: column; align-items: stretch; }
@@ -277,3 +279,10 @@ a.btn { text-decoration: none; color: inherit; display: inline-block; }
   html, body { background: #fff; color: #000; height: auto; }
   .msg.user .bubble { background: none; }
 }
+
+/* personas */
+.persona-select { max-width: 170px; }
+.card.persona { margin: 8px 0; padding: 10px 12px; }
+.card.persona .row { margin: 0 0 6px; }
+.card.persona input.emoji { width: 52px; min-width: 0; flex: none; text-align: center; }
+.card.persona textarea { width: 100%; }

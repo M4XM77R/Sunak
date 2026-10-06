@@ -61,6 +61,7 @@ CREATE INDEX IF NOT EXISTS idx_kb_chunks_file ON kb_chunks(file_id, idx);
 MIGRATIONS = [
     ("sessions", "use_kb", "INTEGER NOT NULL DEFAULT 0"),
     ("messages", "meta", "TEXT NOT NULL DEFAULT ''"),
+    ("sessions", "persona", "TEXT NOT NULL DEFAULT ''"),
 ]
 
 
@@ -135,18 +136,18 @@ class DB:
             s["use_kb"] = bool(s["use_kb"])
         return s
 
-    def create_session(self, title="New chat", model="", system="", use_kb=False):
+    def create_session(self, title="New chat", model="", system="", use_kb=False, persona=""):
         """Create an empty chat and return it."""
         sid, now = new_id(), time.time()
         self._q(
-            "INSERT INTO sessions(id, title, model, system, use_kb, created, updated) VALUES(?,?,?,?,?,?,?)",
-            (sid, title, model, system, int(bool(use_kb)), now, now),
+            "INSERT INTO sessions(id, title, model, system, use_kb, persona, created, updated) VALUES(?,?,?,?,?,?,?,?)",
+            (sid, title, model, system, int(bool(use_kb)), persona or "", now, now),
         )
         return self.get_session(sid)
 
     def update_session(self, sid, **fields):
-        """Update title, model, system prompt and/or knowledge-base switch (use_kb) of a chat."""
-        allowed = {k: v for k, v in fields.items() if k in ("title", "model", "system", "use_kb")}
+        """Update title, model, system prompt, knowledge-base switch (use_kb) and/or persona of a chat."""
+        allowed = {k: v for k, v in fields.items() if k in ("title", "model", "system", "use_kb", "persona")}
         if "use_kb" in allowed:
             allowed["use_kb"] = int(bool(allowed["use_kb"]))
         if not allowed:
