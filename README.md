@@ -26,9 +26,11 @@ irm https://raw.githubusercontent.com/M4XM77R/sunak/main/install.ps1 | iex
 Der Installer
 
 1. prüft Python 3.9+ und installiert es bei Bedarf,
-2. legt den Befehl `sunak` an (unter Windows zusätzlich Desktop- und Startmenü-Verknüpfung),
-3. bietet an, [Ollama](https://ollama.com) für lokale Modelle zu installieren,
-4. startet Sunak und öffnet den Browser auf `http://localhost:7000`.
+2. legt den Befehl `sunak` an,
+3. legt ein Sunak-Icon auf den Desktop (Linux zusätzlich ins App-Menü, macOS als `Sunak.app` in `~/Applications`, Windows zusätzlich ins Startmenü). Das Icon startet Sunak ohne Terminalfenster oder öffnet es, wenn es schon läuft,
+4. fragt, ob Sunak beim Anmelden automatisch im Hintergrund starten soll (Standard: nein),
+5. bietet an, [Ollama](https://ollama.com) für lokale Modelle zu installieren,
+6. startet Sunak und öffnet den Browser auf `http://localhost:7000`.
 
 Beim ersten Start erkennt Sunak deinen Arbeitsspeicher und schlägt ein passendes Modell vor. Ein Klick lädt es herunter, danach kannst du sofort chatten.
 
@@ -42,8 +44,10 @@ Sunak braucht **keine einzige Python-Abhängigkeit**. Klonen und starten reicht:
 ```bash
 git clone https://github.com/M4XM77R/sunak.git
 cd sunak
-python3 -m sunak
+python3 start.py
 ```
+
+Unter Windows reicht ein Doppelklick auf `start.py`.
 
 ### Docker (inklusive Ollama)
 
@@ -87,8 +91,13 @@ docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d   # mit NVI
 | Claude nutzen | Settings → Providers → Preset „Claude (Anthropic)“ → API-Key von [console.anthropic.com](https://console.anthropic.com) einfügen → Save settings. Alternativ beim ersten Start „Use Claude with an API key“ klicken |
 | Anderes Cloud-Modell nutzen | Settings → Providers → Preset wählen → API-Key eintragen → Save settings |
 | Vom Handy nutzen | `sunak --host 0.0.0.0`, in Settings ein Passwort setzen, dann `http://<PC-IP>:7000` öffnen |
-| Aktualisieren | `sunak update` |
-| Deinstallieren | `sunak uninstall` (macOS/Linux), Windows: Ordner `%LOCALAPPDATA%\sunak` löschen |
+| Sunak beenden | Settings → ⏻ Stop Sunak, oder `sunak stop` |
+| Läuft Sunak? | `sunak status` |
+| Automatisch beim Anmelden starten | `sunak autostart on` (aus: `sunak autostart off`) |
+| Desktop-Icon neu anlegen | `sunak shortcut` |
+| Aktualisieren | `sunak update` (holt die neueste Version und beendet ein laufendes Sunak, damit der nächste Start sie nutzt) |
+| Version anzeigen | `sunak version` |
+| Deinstallieren | `sunak uninstall` (macOS/Linux, entfernt auch Icons und Autostart). Windows: `sunak autostart off`, dann den Ordner `%LOCALAPPDATA%\sunak` und die Sunak-Icons löschen |
 
 ## Konfiguration
 
@@ -119,7 +128,9 @@ SUNAK_DEBUG=1 python3 -m sunak                    # mit Zugriffslog
 
 | Datei | Inhalt |
 |---|---|
+| `sunak/__main__.py` | Kommandozeile: Start, `stop`, `status`, `autostart`, `shortcut`, `version` |
 | `sunak/server.py` | HTTP-Server, alle API-Endpunkte, Einstellungen, Login |
+| `sunak/desktop.py` | Autostart, Desktop-Icon, laufendes Sunak finden und beenden |
 | `sunak/providers.py` | Anbindung von Ollama, Claude (Anthropic API) und OpenAI-kompatiblen APIs (Streaming) |
 | `sunak/ollama.py` | Ollama-Integration: Modellkatalog, Status, Ollama starten und installieren |
 | `sunak/research.py` | Websuche und Seitenauswertung für Research |

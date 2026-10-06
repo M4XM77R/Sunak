@@ -402,6 +402,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.login()
             if path == "/api/status" and method == "GET":
                 return self.status()
+            if path == "/api/shutdown" and method == "POST" and (self.is_loopback() or self.authed()):
+                return self.shutdown()
             if not self.authed():
                 return self.error("Login required", 401)
             for pattern, meth, fn in ROUTES:
@@ -413,6 +415,16 @@ class Handler(BaseHTTPRequestHandler):
             pass
         except (ValueError, providers.ProviderError) as e:
             self.error(str(e))
+
+    def is_loopback(self):
+        """True when the request comes from this computer."""
+        return self.client_address[0] in ("127.0.0.1", "::1", "::ffff:127.0.0.1")
+
+    def shutdown(self):
+        """POST /api/shutdown: stop the server (`sunak stop`, or the Stop button in Settings).
+        Allowed from this computer, or from elsewhere when logged in."""
+        self.send_json({"ok": True})
+        threading.Thread(target=self.server.shutdown, daemon=True).start()
 
     def static(self, path):
         """Serve a file from the static folder (login page instead of the app when not logged in)."""

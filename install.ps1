@@ -2,7 +2,8 @@
 #
 #   irm https://raw.githubusercontent.com/M4XM77R/sunak/main/install.ps1 | iex
 #
-# Set $env:SUNAK_YES = "1" before running for an unattended install.
+# Set $env:SUNAK_YES = "1" before running for an unattended install,
+# $env:SUNAK_AUTOSTART = "1" to start Sunak at every login, $env:SUNAK_NO_SHORTCUT = "1" for no icons.
 $ErrorActionPreference = "Stop"
 $Repo = if ($env:SUNAK_REPO) { $env:SUNAK_REPO } else { "M4XM77R/sunak" }
 $Branch = if ($env:SUNAK_BRANCH) { $env:SUNAK_BRANCH } else { "main" }
@@ -71,11 +72,14 @@ $pyCmd = $py
 $cmd = Join-Path $HomeDir "sunak.cmd"
 @"
 @echo off
+rem Sunak launcher: sunak, sunak stop, sunak status, sunak version, sunak shortcut, sunak autostart on/off, sunak update
+set "PYTHONPATH=$AppDir;%PYTHONPATH%"
 if /I "%~1"=="update" (
-  powershell -NoProfile -ExecutionPolicy Bypass -Command "`$env:SUNAK_YES='1'; `$env:SUNAK_NO_START='1'; irm https://raw.githubusercontent.com/$Repo/$Branch/install.ps1 | iex"
+  $pyCmd -m sunak stop >nul 2>&1
+  powershell -NoProfile -ExecutionPolicy Bypass -Command "`$env:SUNAK_YES='1'; `$env:SUNAK_NO_START='1'; `$env:SUNAK_NO_SHORTCUT='1'; irm https://raw.githubusercontent.com/$Repo/$Branch/install.ps1 | iex"
+  echo Updated. Start Sunak again with the desktop icon or: sunak
   exit /b
 )
-set "PYTHONPATH=$AppDir;%PYTHONPATH%"
 $pyCmd -m sunak %*
 "@ | Set-Content -Encoding ASCII $cmd
 
@@ -83,14 +87,20 @@ $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
 if (-not ($userPath -split ";" | Where-Object { $_ -eq $HomeDir })) {
   [Environment]::SetEnvironmentVariable("Path", "$userPath;$HomeDir", "User")
 }
-$ws = New-Object -ComObject WScript.Shell
-foreach ($dir in @([Environment]::GetFolderPath("Desktop"), (Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs"))) {
-  $lnk = $ws.CreateShortcut((Join-Path $dir "Sunak.lnk"))
-  $lnk.TargetPath = $cmd
-  $lnk.WorkingDirectory = $HomeDir
-  $lnk.Save()
+Say "Command sunak installed ✓"
+
+# Desktop + Start Menu icons start Sunak without a console window (or open it when it already runs).
+# Run from the app folder so the icons point at the installed copy.
+Push-Location $AppDir
+if ($env:SUNAK_NO_SHORTCUT -ne "1") {
+  & $cmd shortcut | Out-Null
+  Say "Icons on Desktop and Start Menu ✓"
 }
-Say "Shortcuts on Desktop and Start Menu ✓"
+if ($env:SUNAK_AUTOSTART -eq "1" -or ($env:SUNAK_YES -ne "1" -and (Read-Host "Start Sunak automatically in the background when you log in? [y/N]") -match '^[yY]')) {
+  & $cmd autostart on | Out-Null
+  Say "Autostart ✓ (turn off with: sunak autostart off)"
+}
+Pop-Location
 
 # 4. Ollama
 if ($env:SUNAK_NO_OLLAMA -ne "1" -and -not (Get-Command ollama -ErrorAction SilentlyContinue)) {

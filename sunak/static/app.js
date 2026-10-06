@@ -1091,6 +1091,11 @@ $('#savePassword').onclick = async () => {
   if (pw) location.reload();
   else renderSettings();
 };
+$('#stopBtn').onclick = async () => {
+  if (!confirm('Stop Sunak? Open it again with the Sunak icon or the “sunak” command.')) return;
+  await api('/api/shutdown', { method: 'POST' });
+  document.body.innerHTML = '<div class="welcome"><h2>Sunak stopped 👋</h2><p class="muted">Start it again with the Sunak icon or the <code>sunak</code> command.</p></div>';
+};
 $('#logoutBtn').onclick = async () => { await api('/api/logout', { method: 'POST' }); location.reload(); };
 
 /* ---------------- Boot ---------------- */

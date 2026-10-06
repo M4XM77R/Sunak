@@ -15,7 +15,9 @@ Browser (sunak/static)  ──HTTP/JSON, NDJSON-Streams──▶  sunak/server.p
 
 | Datei | Aufgabe |
 |---|---|
-| `sunak/__main__.py` | Kommandozeile (`python -m sunak`), sucht einen freien Port, startet den Server, öffnet den Browser |
+| `sunak/__main__.py` | Kommandozeile (`python -m sunak`): öffnet ein bereits laufendes Sunak im Browser, sonst sucht es einen freien Port, startet den Server und öffnet den Browser. Befehle `stop`, `status`, `autostart on\|off\|status`, `shortcut`, `version` |
+| `sunak/desktop.py` | Desktop-Integration: laufendes Sunak erkennen (`/api/status` mit `Server: Sunak/…`) und beenden, Autostart-Datei und Desktop-Icon je Betriebssystem |
+| `start.py` | Start direkt aus dem Repository-Ordner ohne Installation (Windows: Doppelklick) |
 | `sunak/server.py` | `App` (Zustand, Einstellungen, Modellauswahl, Login, Prompt-Aufbau) und `Handler` (HTTP-Routing, alle API-Endpunkte) |
 | `sunak/db.py` | SQLite-Speicher: Chats, Nachrichten, Dokumente, Notizen, Einstellungen |
 | `sunak/providers.py` | Backends: Ollama, Claude (Anthropic Messages API) und OpenAI-kompatible APIs, Streaming, Modell-Download |
@@ -47,6 +49,7 @@ Alle Endpunkte liegen unter `/api/`. Schreibende Anfragen brauchen den Header `X
 | Methode und Pfad | Zweck | Antwort |
 |---|---|---|
 | `GET /api/status` | Version, Login-Status, RAM, empfohlenes Modell | JSON |
+| `POST /api/shutdown` | Server beenden (`sunak stop`, Knopf in Settings); von diesem Rechner ohne Login, von anderen Geräten nur angemeldet | JSON |
 | `POST /api/login`, `POST /api/logout` | Anmelden, Abmelden | JSON |
 | `GET`/`PUT /api/settings` | Einstellungen und Provider | JSON |
 | `GET /api/models` | Modelle aller Provider, dazu Fehler nicht erreichbarer Provider | JSON |
@@ -121,6 +124,22 @@ Hochgeladene Dateien gehen den Weg `extract.extract_text` → `knowledge.chunk` 
 - **Prompt:** Ist die ganze Wissensbasis höchstens 8000 Zeichen groß, bekommt das Modell alles (dann klappen auch Fragen wie „fasse das zusammen“). Sonst bekommt es bis zu 6 passende Abschnitte mit höchstens 7000 Zeichen. Die Abschnitte stehen mit Dateinamen im Systemprompt, und das Modell soll die Datei in eckigen Klammern nennen.
 - **Quellen:** Die verwendeten Dateien werden als `sources`-Ereignis gesendet und in `messages.meta` gespeichert, damit sie auch später unter der Antwort stehen.
 
+## Start, Autostart und Desktop-Icon
+
+- **Nur ein Sunak:** Vor dem Start fragt `__main__` die Ports 7000 bis 7009 nach einem laufenden Sunak ab. Antwortet eines, wird nur der Browser geöffnet. Deshalb kann das Desktop-Icon beliebig oft angeklickt werden.
+- **Beenden:** `sunak stop` schickt `POST /api/shutdown` an das laufende Sunak. Wer Sunak über das Icon ohne Terminal gestartet hat, beendet es in Settings mit ⏻ Stop Sunak.
+- **Autostart** (`sunak autostart on`) startet Sunak beim Anmelden mit `--no-browser` im Hintergrund:
+
+| System | Datei |
+|---|---|
+| Linux | `~/.config/autostart/sunak.desktop` (XDG-Autostart, funktioniert in GNOME, KDE, Xfce usw.) |
+| macOS | `~/Library/LaunchAgents/dev.sunak.plist` (LaunchAgent mit `RunAtLoad`, Log in `~/.sunak/sunak.log`) |
+| Windows | `Sunak.vbs` im Autostart-Ordner; startet `pythonw` ohne Konsolenfenster |
+
+- **Desktop-Icon** (`sunak shortcut`): Linux legt `sunak.desktop` ins App-Menü und auf den Desktop (bei GNOME als vertrauenswürdig markiert), macOS ein kleines `Sunak.app` in `~/Applications` mit Verknüpfung auf dem Desktop, Windows `Sunak.lnk` auf Desktop und im Startmenü, das ein verstecktes `Sunak.vbs` startet.
+- Alle Einträge rufen den aktuellen Python-Interpreter mit `-m sunak` und setzen `PYTHONPATH` auf den Installationsordner, daher funktionieren sie auch ohne `sunak`-Befehl im `PATH`.
+- `sunak update` holt den neuen Code (`git pull` oder erneuter Installer-Download), zeigt alte und neue Version und beendet ein laufendes Sunak, damit der nächste Start die neue Version verwendet.
+
 ## Datenhaltung
 
 Alle Daten liegen in einer SQLite-Datei: `~/.sunak/sunak.db`, der Ordner lässt sich über `SUNAK_DATA` ändern.
@@ -148,6 +167,8 @@ Passwörter werden mit PBKDF2-SHA256 und Salt gespeichert. Das Login-Cookie ist 
 
 ## Konfiguration
 
+Installer-Optionen: `install.sh --yes --no-ollama --no-start --no-shortcut --autostart`; unter Windows entsprechend `SUNAK_YES`, `SUNAK_NO_START`, `SUNAK_NO_SHORTCUT`, `SUNAK_AUTOSTART`, `SUNAK_NO_OLLAMA` als Umgebungsvariablen.
+
 Umgebungsvariablen: `SUNAK_HOST`, `SUNAK_PORT`, `SUNAK_DATA`, `SUNAK_PASSWORD`, `SUNAK_NO_BROWSER`, `SUNAK_DEBUG` (Zugriffslog), `OLLAMA_BASE_URL`, `SEARXNG_URL`. Alles Weitere wird in der Oberfläche eingestellt und in der Datenbank gespeichert.
 
 ## Tests
@@ -156,7 +177,7 @@ Umgebungsvariablen: `SUNAK_HOST`, `SUNAK_PORT`, `SUNAK_DATA`, `SUNAK_PASSWORD`, 
 python3 -m unittest discover tests -v
 ```
 
-Die Tests starten Sunak und einen simulierten Server, der die Ollama-, Anthropic- und OpenAI-API nachbildet. Abgedeckt sind Chat, Personas, Chat-Suche und Export, Wissensbasis (Hochladen, Suche, Auszüge im Prompt, Quellen), Textauslese aus PDF, Word, OpenDocument und PowerPoint, Datenbank-Migration, Neu generieren, Denkprozess, Gedächtnis, Compare, Research (mit gestubbter Suche), Dokumente, Modell-Download mit Fortschritt, Ollama-Status und Katalog, Claude (Streaming, Header, Denkprozess, Ablehnung, falscher Key, Key-Maskierung), Login, CSRF-Schutz und Pfad-Traversal. GitHub Actions führt sie auf Linux, macOS und Windows aus (`.github/workflows/test.yml`).
+Die Tests starten Sunak und einen simulierten Server, der die Ollama-, Anthropic- und OpenAI-API nachbildet. Abgedeckt sind Chat, Personas, Kommandozeile (bereits laufend, `status`, `stop`) und Autostart-Dateien, Chat-Suche und Export, Wissensbasis (Hochladen, Suche, Auszüge im Prompt, Quellen), Textauslese aus PDF, Word, OpenDocument und PowerPoint, Datenbank-Migration, Neu generieren, Denkprozess, Gedächtnis, Compare, Research (mit gestubbter Suche), Dokumente, Modell-Download mit Fortschritt, Ollama-Status und Katalog, Claude (Streaming, Header, Denkprozess, Ablehnung, falscher Key, Key-Maskierung), Login, CSRF-Schutz und Pfad-Traversal. GitHub Actions führt sie auf Linux, macOS und Windows aus (`.github/workflows/test.yml`).
 
 ## Erweitern
 

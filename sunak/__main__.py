@@ -1,4 +1,6 @@
-"""Start Sunak:  python -m sunak  [--port 7000] [--host 127.0.0.1] [--no-browser]"""
+"""Start Sunak:  python -m sunak  [--port 7000] [--host 127.0.0.1] [--no-browser]
+
+Other commands:  stop | status | autostart on|off|status | shortcut | version"""
 
 import argparse
 import os
@@ -7,16 +9,74 @@ import threading
 import webbrowser
 from pathlib import Path
 
-from . import __version__
+from . import __version__, desktop
 from .server import make_server
 
 PINK = "\033[38;5;205m" if sys.stdout.isatty() else ""
 RESET = "\033[0m" if sys.stdout.isatty() else ""
 
 
+COMMANDS = ("stop", "status", "autostart", "shortcut", "version")
+
+
+def find_running(port):
+    """(port, version) of a Sunak already running on this computer in port..port+9, or None."""
+    for p in range(port, port + 10):
+        v = desktop.running(p)
+        if v:
+            return p, v
+    return None
+
+
+def run_command(cmd, rest, port):
+    """Commands besides starting the server. Returns the exit code."""
+    if cmd == "version":
+        print(__version__)
+    elif cmd == "status":
+        found = find_running(port)
+        print(f"Sunak {found[1]} is running at http://localhost:{found[0]}" if found else "Sunak is not running.")
+        print("Autostart: " + ("on" if desktop.autostart_enabled() else "off"))
+    elif cmd == "stop":
+        found = find_running(port)
+        if not found:
+            print("Sunak is not running.")
+        elif desktop.stop(found[0]):
+            print(f"Stopped Sunak on port {found[0]}.")
+        else:
+            print("Could not stop Sunak.")
+            return 1
+    elif cmd == "autostart":
+        what = rest[0] if rest else "status"
+        if what == "on":
+            print(f"Sunak now starts in the background when you log in ({desktop.enable_autostart()}).")
+        elif what == "off":
+            print("Autostart removed." if desktop.disable_autostart() else "Autostart was not on.")
+        elif what == "status":
+            print("Autostart: " + ("on" if desktop.autostart_enabled() else "off"))
+        else:
+            print("Usage: sunak autostart on|off|status")
+            return 2
+    elif cmd == "shortcut":
+        for path in desktop.create_shortcut():
+            print(f"Created {path}")
+    return 0
+
+
 def main(argv=None):
-    """Parse the command line, find a free port, start the server and open the browser."""
-    ap = argparse.ArgumentParser(prog="sunak", description="Self-hosted AI workspace")
+    """Parse the command line, find a free port, start the server and open the browser.
+    If Sunak already runs, just open it."""
+    argv = list(sys.argv[1:] if argv is None else argv)
+    port = int(os.environ.get("SUNAK_PORT", "7000"))
+    if argv and argv[0] in COMMANDS:
+        rest = argv[1:]
+        if "--port" in rest[:-1]:  # e.g. sunak stop --port 8123
+            i = rest.index("--port")
+            port = int(rest[i + 1])
+            rest = rest[:i] + rest[i + 2:]
+        return run_command(argv[0], rest, port)
+
+    ap = argparse.ArgumentParser(prog="sunak", description="Self-hosted AI workspace",
+                                 epilog="Commands: sunak stop | status | autostart on|off | shortcut | version")
     ap.add_argument("--host", default=os.environ.get("SUNAK_HOST", "127.0.0.1"),
                     help="address to listen on (use 0.0.0.0 for your LAN / phone)")
     ap.add_argument("--port", type=int, default=int(os.environ.get("SUNAK_PORT", "7000")))
@@ -24,6 +84,14 @@ def main(argv=None):
     ap.add_argument("--no-browser", action="store_true", default=bool(os.environ.get("SUNAK_NO_BROWSER")))
     ap.add_argument("--version", action="version", version=__version__)
     args = ap.parse_args(argv)
+
+    found = find_running(args.port) if args.host in ("127.0.0.1", "0.0.0.0", "localhost") else None
+    if found:
+        url = f"http://localhost:{found[0]}"
+        print(f"\n  {PINK}⛵ Sunak{RESET} is already running at {PINK}{url}{RESET} (stop it with: sunak stop)\n")
+        if not args.no_browser:
+            webbrowser.open(url)
+        return 0
 
     srv = None
     for port in range(args.port, args.port + 10):
@@ -47,8 +115,11 @@ def main(argv=None):
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
-        print("\n  Bye 👋")
+        pass
+    srv.server_close()
+    print("\n  Bye 👋")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
