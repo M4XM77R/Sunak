@@ -13,6 +13,7 @@ import queue
 import re
 import secrets
 import socket
+import socketserver
 import sqlite3
 import subprocess
 import threading
@@ -158,6 +159,16 @@ def lan_ip():
     return None if ip.startswith("127.") or ip == "0.0.0.0" else ip
 
 
+class Server(ThreadingHTTPServer):
+    """ThreadingHTTPServer without the reverse DNS lookup of the address when it starts (HTTPServer looks
+    up a name for it, which can take many seconds for a network address, e.g. on macOS)."""
+    daemon_threads = True
+
+    def server_bind(self):
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
+
+
 def hash_password(pw, salt=None):
     """PBKDF2-SHA256 hash, stored as 'salt$hex'."""
     salt = salt or secrets.token_hex(16)
@@ -292,10 +303,9 @@ class App:
                 if not (self.lan and self.lan.server_address[0] == ip):
                     self._close_lan()
                     try:
-                        srv = ThreadingHTTPServer((ip, self.port), self.handler)
+                        srv = Server((ip, self.port), self.handler)
                     except OSError as e:
                         raise ValueError(f"Could not open {ip}:{self.port} ({e.strerror or e}).") from None
-                    srv.daemon_threads = True
                     threading.Thread(target=srv.serve_forever, daemon=True).start()
                     self.lan = srv
         self.lan_error = ""
@@ -1592,7 +1602,6 @@ def make_server(host, port, data_dir):
     """Create a threaded HTTP server bound to host:port with its own App for `data_dir`."""
     app = App(data_dir)
     handler = type("BoundHandler", (Handler,), {"app": app})
-    srv = ThreadingHTTPServer((host, port), handler)
-    srv.daemon_threads = True
+    srv = Server((host, port), handler)
     app.host, app.port, app.handler = host, srv.server_address[1], handler
     return srv

@@ -37,6 +37,16 @@ class QrTest(unittest.TestCase):
         self.assertIn(auto, [qr.encode("http://10.0.0.2:7000", mask=m) for m in range(8)])
 
 
+class ServerBindTest(unittest.TestCase):
+    def test_no_name_lookup_on_start(self):
+        # HTTPServer looks up a host name for its address, which took over 10 s on a macOS test machine
+        with mock.patch("socket.getfqdn", side_effect=AssertionError("name lookup")):
+            srv = server.Server(("127.0.0.1", 0), server.Handler)
+        srv.server_close()
+        self.assertEqual(srv.server_name, "127.0.0.1")
+        self.assertTrue(srv.daemon_threads)
+
+
 class LanTest(unittest.TestCase):
     def setUp(self):
         self.ip = server.lan_ip()
