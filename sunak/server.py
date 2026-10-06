@@ -12,6 +12,7 @@ import platform
 import queue
 import re
 import secrets
+import socket
 import sqlite3
 import subprocess
 import threading
@@ -22,7 +23,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlparse
 
-from . import __version__, agent, extract, gpu, images, knowledge, mail, ollama, providers, research, updates
+from . import __version__, agent, extract, gpu, images, knowledge, mail, ollama, providers, qr, research, updates
 from .db import DB, new_id
 
 STATIC = Path(__file__).parent / "static"
@@ -141,6 +142,17 @@ def _check_pref(key, value, default):
     return value
 
 
+def lan_ip():
+    """This computer's address in the local network (the one it uses for outgoing traffic), or None."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("10.254.254.254", 1))  # UDP connect sends nothing, it only picks the route
+            ip = s.getsockname()[0]
+    except OSError:
+        return None
+    return None if ip.startswith("127.") or ip == "0.0.0.0" else ip
+
+
 def hash_password(pw, salt=None):
     """PBKDF2-SHA256 hash, stored as 'salt$hex'."""
     salt = salt or secrets.token_hex(16)
@@ -174,6 +186,9 @@ class App:
         self._update_lock = threading.Lock()
         self._checking = False
         self.agents = agent.Registry()
+        self.host, self.port, self.handler = None, None, None  # set by make_server
+        self.lan, self.lan_error = None, ""  # second server on the network address (phone access)
+        self._lan_lock = threading.Lock()
 
     def _detect_gpu(self):
         try:
@@ -240,7 +255,65 @@ class App:
         if "password" in data:
             pw = data["password"] or ""
             self.db.set_setting("password_hash", hash_password(pw) if pw else "")
+            if not pw and self.lan is not None:  # never reachable from the network without a password
+                self.stop_lan()
         return self.settings()
+
+    # phone access -------------------------------------------------------
+    def listens_everywhere(self):
+        return self.host in ("0.0.0.0", "::", "")
+
+    def lan_info(self):
+        """Phone access: on/off, the address for other devices and its QR code (SVG)."""
+        ip = lan_ip()
+        on = self.listens_everywhere() or self.lan is not None
+        if self.lan is not None:
+            ip = self.lan.server_address[0]
+        url = f"http://{ip}:{self.port}" if ip and self.port else None
+        return {"enabled": on, "fixed": self.listens_everywhere(), "url": url if on else None,
+                "address": url, "password_set": self.auth_required(), "error": self.lan_error,
+                "qr": qr.svg(url) if on and url else None}
+
+    def start_lan(self):
+        """Also listen on the network address, so phones and tablets in the same network can connect.
+        Needs a password. Raises ValueError with a message for the user."""
+        if not self.auth_required():
+            raise ValueError("Set a password first (Settings → Security). Otherwise anyone in your network could use Sunak.")
+        if not self.listens_everywhere():
+            ip = lan_ip()
+            if not ip:
+                raise ValueError("No local network found. Is this computer connected to Wi-Fi or a network cable?")
+            with self._lan_lock:
+                if not (self.lan and self.lan.server_address[0] == ip):
+                    self._close_lan()
+                    try:
+                        srv = ThreadingHTTPServer((ip, self.port), self.handler)
+                    except OSError as e:
+                        raise ValueError(f"Could not open {ip}:{self.port} ({e.strerror or e}).") from None
+                    srv.daemon_threads = True
+                    threading.Thread(target=srv.serve_forever, daemon=True).start()
+                    self.lan = srv
+        self.lan_error = ""
+        self.db.set_setting("lan_access", True)
+
+    def stop_lan(self):
+        with self._lan_lock:
+            self._close_lan()
+        self.db.set_setting("lan_access", False)
+
+    def _close_lan(self):
+        srv, self.lan = self.lan, None
+        if srv:
+            srv.shutdown()
+            srv.server_close()
+
+    def restore_lan(self):
+        """At start: switch phone access back on when it was on (silently off when that fails)."""
+        if self.db.get_setting("lan_access") and not self.listens_everywhere():
+            try:
+                self.start_lan()
+            except ValueError as e:
+                self.lan_error = str(e)
 
     def _clean_providers(self, items):
         if not isinstance(items, list) or not all(isinstance(p, dict) for p in items):
@@ -793,6 +866,22 @@ class Handler(BaseHTTPRequestHandler):
         self.app.db.delete_session(sid)
         self.app.clean_images()
         self.send_json({"ok": True})
+
+    def lan_get(self):
+        """GET /api/lan: phone access state, address and QR code."""
+        self.send_json(self.app.lan_info())
+
+    def lan_set(self):
+        """POST /api/lan {enabled}: switch phone access on (needs a password) or off."""
+        d = self.body()
+        if self.flag(d, "enabled"):
+            self.app.start_lan()
+        elif self.app.listens_everywhere():
+            raise ValueError("Sunak was started with --host 0.0.0.0 and is always reachable in the network. "
+                             "Start it without that option to switch this off.")
+        else:
+            self.app.stop_lan()
+        self.send_json(self.app.lan_info())
 
     def get_image(self, name):
         """GET /api/images/<name>: an image attached to a chat message."""
@@ -1455,6 +1544,8 @@ ROUTES = [
     (r"/api/search", "GET", Handler.search),
     (r"/api/export", "GET", Handler.export_all),
     (r"/api/chat", "POST", Handler.chat),
+    (r"/api/lan", "GET", Handler.lan_get),
+    (r"/api/lan", "POST", Handler.lan_set),
     (r"/api/images/([a-f0-9]{16}\.(?:png|jpg|gif|webp))", "GET", Handler.get_image),
     (r"/api/agent", "POST", Handler.agent_chat),
     (r"/api/agent/confirm", "POST", Handler.agent_confirm),
@@ -1494,7 +1585,9 @@ ROUTES = [
 
 def make_server(host, port, data_dir):
     """Create a threaded HTTP server bound to host:port with its own App for `data_dir`."""
-    handler = type("BoundHandler", (Handler,), {"app": App(data_dir)})
+    app = App(data_dir)
+    handler = type("BoundHandler", (Handler,), {"app": app})
     srv = ThreadingHTTPServer((host, port), handler)
     srv.daemon_threads = True
+    app.host, app.port, app.handler = host, srv.server_address[1], handler
     return srv

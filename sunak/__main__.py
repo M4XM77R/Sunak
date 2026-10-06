@@ -138,6 +138,10 @@ def main(argv=None):
     print("  Press Ctrl+C to stop.\n")
     if not args.no_browser:
         threading.Timer(0.8, lambda: webbrowser.open(url)).start()
+    app = srv.RequestHandlerClass.app
+    app.restore_lan()  # phone access, if it was on
+    if app.lan is not None:
+        print(f"  Phone access is on: {PINK}{app.lan_info()['url']}{RESET}\n")
     srv.RequestHandlerClass.app.check_updates()  # in the background; the page shows "Update available"
     try:
         srv.serve_forever()

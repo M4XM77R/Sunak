@@ -5,6 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Sunak</title>
   <meta name="theme-color" content="#ff4fa3">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Sunak">
   <link rel="icon" href="/icon.svg" type="image/svg+xml">
   <link rel="manifest" href="/manifest.json">
   <link rel="stylesheet" href="/app.css">
@@ -292,6 +295,10 @@
 
         <h2>Updates</h2>
         <label class="check"><input type="checkbox" id="checkUpdates"> Check for updates and show a hint (never installs without your click)</label>
+
+        <h2>Phone &amp; tablet</h2>
+        <p class="muted small">Use Sunak on your phone or tablet in the same Wi-Fi: switch this on, then scan the code with the phone's camera. Needs a password (below), so nobody else in the network can get in. Your computer has to stay on.</p>
+        <div id="lanBox"></div>
 
         <h2>Security</h2>
         <p class="muted small">Set a password if Sunak is reachable from other devices. Leave empty to disable.</p>

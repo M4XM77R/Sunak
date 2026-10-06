@@ -1754,6 +1754,7 @@ function renderSettings() {
   renderLook();
   renderMailAccounts();
   $('#logoutBtn').classList.toggle('hidden', !s.password_set);
+  renderLan();
   $('#aboutLine').textContent = `Sunak ${state.status?.version || ''} · ${state.status?.ram_gb ? state.status.ram_gb + ' GB RAM' : ''}`;
 }
 const CLAUDE_URL = 'https://api.anthropic.com';
@@ -1854,7 +1855,34 @@ $('#savePassword').onclick = async () => {
   toast(pw ? 'Password set. Log in again on other devices.' : 'Password removed');
   if (pw) location.reload();
   else $('#logoutBtn').classList.add('hidden'); // other unsaved settings stay as they are
+  renderLan(); // removing the password also switches phone access off
 };
+/* ---------------- Phone access ----------------
+   A second listener on the network address (see App.start_lan), only with a password. */
+async function renderLan(info) {
+  const box = $('#lanBox');
+  try { info = info || await api('/api/lan'); } catch (e) { box.replaceChildren(el('p', { class: 'err small' }, e.message)); return; }
+  const toggle = el('label', { class: 'check' }, el('input', { type: 'checkbox', checked: info.enabled, disabled: info.fixed || (!info.enabled && !info.password_set),
+    onchange: async (e) => {
+      try { await renderLan(await api('/api/lan', { method: 'POST', body: { enabled: e.target.checked } })); }
+      catch (err) { toast(err.message); e.target.checked = !e.target.checked; }
+    } }), ' Allow phones and tablets in my network');
+  const kids = [toggle];
+  if (!info.password_set && !info.enabled) kids.push(el('p', { class: 'muted small' }, '🔒 Set a password below first.'));
+  if (info.error) kids.push(el('p', { class: 'err small' }, info.error));
+  if (info.enabled && info.url) {
+    kids.push(el('div', { class: 'lan-card' },
+      el('div', { class: 'qr', html: info.qr }),
+      el('div', {},
+        el('p', {}, 'Scan with the phone camera, or type this address into its browser:'),
+        el('p', {}, el('code', { class: 'lan-url' }, info.url), ' ',
+          el('button', { class: 'btn', type: 'button', onclick: () => navigator.clipboard.writeText(info.url).then(() => toast('Copied')) }, 'Copy')),
+        el('p', { class: 'muted small' }, 'Log in with your password. To get an app icon: in the phone browser’s menu choose “Add to Home screen”. If the phone cannot connect, allow Python in your computer’s firewall.'),
+        info.fixed ? el('p', { class: 'muted small' }, 'Sunak was started with --host 0.0.0.0, so it is always reachable in your network.') : '')));
+  } else if (info.enabled) kids.push(el('p', { class: 'err small' }, 'No network address found. Is this computer connected to Wi-Fi or a cable?'));
+  box.replaceChildren(...kids);
+}
+
 $('#stopBtn').onclick = async () => {
   if (!confirm('Stop Sunak? Open it again with the Sunak icon or the “sunak” command.')) return;
   await api('/api/shutdown', { method: 'POST' });
