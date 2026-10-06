@@ -44,10 +44,12 @@ CREATE TABLE IF NOT EXISTS settings (
 
 
 def new_id():
+    """Random 16-character hex id."""
     return uuid.uuid4().hex[:16]
 
 
 class DB:
+    """Thread-safe wrapper around one SQLite connection."""
     def __init__(self, path):
         self.path = path
         self._lock = threading.Lock()
@@ -59,6 +61,7 @@ class DB:
         self.conn.commit()
 
     def _q(self, sql, args=(), one=False):
+        """Run one statement under the lock and return rows as dicts (or the first row with one=True)."""
         with self._lock:
             cur = self.conn.execute(sql, args)
             rows = [dict(r) for r in cur.fetchall()]
@@ -69,10 +72,12 @@ class DB:
 
     # settings ---------------------------------------------------------
     def get_setting(self, key, default=None):
+        """Read a JSON-encoded setting."""
         row = self._q("SELECT value FROM settings WHERE key = ?", (key,), one=True)
         return json.loads(row["value"]) if row else default
 
     def set_setting(self, key, value):
+        """Store a JSON-encodable setting."""
         self._q(
             "INSERT INTO settings(key, value) VALUES(?, ?) "
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -81,9 +86,11 @@ class DB:
 
     # sessions ---------------------------------------------------------
     def list_sessions(self):
+        """All chats, newest first, without messages."""
         return self._q("SELECT id, title, model, updated FROM sessions ORDER BY updated DESC")
 
     def get_session(self, sid):
+        """One chat including its messages, or None."""
         s = self._q("SELECT * FROM sessions WHERE id = ?", (sid,), one=True)
         if s:
             s["messages"] = self._q(
@@ -94,6 +101,7 @@ class DB:
         return s
 
     def create_session(self, title="New chat", model="", system=""):
+        """Create an empty chat and return it."""
         sid, now = new_id(), time.time()
         self._q(
             "INSERT INTO sessions(id, title, model, system, created, updated) VALUES(?,?,?,?,?,?)",
@@ -102,6 +110,7 @@ class DB:
         return self.get_session(sid)
 
     def update_session(self, sid, **fields):
+        """Update title, model and/or system prompt of a chat."""
         allowed = {k: v for k, v in fields.items() if k in ("title", "model", "system")}
         if not allowed:
             return
@@ -112,9 +121,11 @@ class DB:
         )
 
     def delete_session(self, sid):
+        """Delete a chat and its messages."""
         self._q("DELETE FROM sessions WHERE id = ?", (sid,))
 
     def add_message(self, sid, role, content, model=""):
+        """Append a message to a chat and bump its timestamp."""
         now = time.time()
         self._q(
             "INSERT INTO messages(session_id, role, content, model, created) VALUES(?,?,?,?,?)",
@@ -128,12 +139,15 @@ class DB:
 
     # documents --------------------------------------------------------
     def list_documents(self):
+        """All documents, newest first, without content."""
         return self._q("SELECT id, title, updated FROM documents ORDER BY updated DESC")
 
     def get_document(self, did):
+        """One document, or None."""
         return self._q("SELECT * FROM documents WHERE id = ?", (did,), one=True)
 
     def save_document(self, did, title, content):
+        """Update the document `did`, or create it when it does not exist. Returns the document."""
         now = time.time()
         if did and self.get_document(did):
             self._q(
@@ -149,13 +163,16 @@ class DB:
         return self.get_document(did)
 
     def delete_document(self, did):
+        """Delete a document."""
         self._q("DELETE FROM documents WHERE id = ?", (did,))
 
     # notes / memory ---------------------------------------------------
     def list_notes(self):
+        """All notes, newest first."""
         return self._q("SELECT * FROM notes ORDER BY created DESC")
 
     def add_note(self, content, is_memory=False):
+        """Create a note; `is_memory` notes are added to every chat's system prompt."""
         nid = new_id()
         self._q(
             "INSERT INTO notes(id, content, is_memory, created) VALUES(?,?,?,?)",
@@ -164,13 +181,16 @@ class DB:
         return self._q("SELECT * FROM notes WHERE id = ?", (nid,), one=True)
 
     def update_note(self, nid, content=None, is_memory=None):
+        """Change the text and/or memory flag of a note."""
         if content is not None:
             self._q("UPDATE notes SET content = ? WHERE id = ?", (content, nid))
         if is_memory is not None:
             self._q("UPDATE notes SET is_memory = ? WHERE id = ?", (int(bool(is_memory)), nid))
 
     def delete_note(self, nid):
+        """Delete a note."""
         self._q("DELETE FROM notes WHERE id = ?", (nid,))
 
     def memories(self):
+        """Texts of all memory notes, oldest first."""
         return [r["content"] for r in self._q("SELECT content FROM notes WHERE is_memory = 1 ORDER BY created")]

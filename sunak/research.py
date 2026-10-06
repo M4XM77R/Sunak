@@ -15,6 +15,7 @@ MAX_PAGE_CHARS = 6000
 
 
 class _TextExtractor(HTMLParser):
+    """HTMLParser that keeps readable text and the <title>, skipping scripts, menus and footers."""
     SKIP = {"script", "style", "noscript", "svg", "nav", "footer", "header", "form", "aside"}
 
     def __init__(self):
@@ -42,6 +43,7 @@ class _TextExtractor(HTMLParser):
             self.parts.append(data)
 
     def text(self):
+        """Collected text with collapsed whitespace."""
         t = "".join(self.parts)
         t = re.sub(r"[ \t\r\f\v]+", " ", t)
         t = re.sub(r"\n\s*\n+", "\n\n", t)
@@ -49,12 +51,14 @@ class _TextExtractor(HTMLParser):
 
 
 def html_to_text(raw):
+    """Return (title, plain text) of an HTML page."""
     p = _TextExtractor()
     p.feed(raw)
     return p.title.strip(), p.text()
 
 
 def _get(url, data=None, timeout=10):
+    """GET (or POST when `data` is given) a URL with a browser user agent. Returns (content type, text)."""
     req = urllib.request.Request(url, data=data, headers={"User-Agent": UA, "Accept-Language": "en,de;q=0.8"})
     with urllib.request.urlopen(req, timeout=timeout) as r:
         ctype = r.headers.get("Content-Type", "")
@@ -64,6 +68,7 @@ def _get(url, data=None, timeout=10):
 
 
 def parse_ddg(page):
+    """Extract result links from a DuckDuckGo HTML results page."""
     results = []
     for m in re.finditer(r'<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>(.*?)</a>', page, re.S):
         href, title = html.unescape(m.group(1)), re.sub(r"<[^>]+>", "", html.unescape(m.group(2))).strip()
@@ -77,6 +82,7 @@ def parse_ddg(page):
 
 
 def search_searxng(base, query):
+    """Search via a SearXNG instance's JSON API."""
     url = base.rstrip("/") + "/search?" + urllib.parse.urlencode({"q": query, "format": "json"})
     _, raw = _get(url)
     return [{"title": r.get("title", ""), "url": r["url"]} for r in json.loads(raw).get("results", []) if r.get("url")]
@@ -99,11 +105,13 @@ def search(query, limit=6):
 
 
 def _ddg(query):
+    """Fetch the DuckDuckGo HTML results page for a query."""
     _, page = _get("https://html.duckduckgo.com/html/", urllib.parse.urlencode({"q": query}).encode())
     return page
 
 
 def read_page(url):
+    """Download a page and return (title, text) truncated to MAX_PAGE_CHARS; empty for non-text files."""
     ctype, raw = _get(url)
     if "html" not in ctype and "text" not in ctype:
         return "", ""
@@ -112,6 +120,7 @@ def read_page(url):
 
 
 def report_prompt(question, sources):
+    """Build the chat messages that ask the model for a cited Markdown report."""
     blocks = "\n\n".join(f"[{i + 1}] {s['title']} ({s['url']})\n{s['text']}" for i, s in enumerate(sources))
     return [
         {

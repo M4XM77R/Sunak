@@ -167,16 +167,16 @@ document.addEventListener('click', (e) => {
 
 /* ---------------- Theme ---------------- */
 function applyLook() {
-  const theme = store.get('ody-theme', state.settings?.theme || 'dark');
-  const accent = state.settings?.accent || store.get('ody-accent', ACCENTS[0]);
+  const theme = store.get('sunak-theme', state.settings?.theme || 'dark');
+  const accent = state.settings?.accent || store.get('sunak-accent', ACCENTS[0]);
   document.documentElement.dataset.theme = theme;
   document.documentElement.style.setProperty('--accent', accent);
   $('meta[name="theme-color"]').content = accent;
-  store.set('ody-accent', accent);
+  store.set('sunak-accent', accent);
 }
 $('#themeBtn').onclick = () => {
   const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
-  store.set('ody-theme', next);
+  store.set('sunak-theme', next);
   applyLook();
 };
 
@@ -217,12 +217,12 @@ async function loadModels() {
 }
 function currentModel() {
   const ids = state.models.map((m) => m.id);
-  for (const c of [state.session?.model, store.get('ody-model'), state.settings?.default_model]) if (c && ids.includes(c)) return c;
+  for (const c of [state.session?.model, store.get('sunak-model'), state.settings?.default_model]) if (c && ids.includes(c)) return c;
   return ids[0] || '';
 }
 function syncModelSelect() { $('#modelSelect').value = currentModel(); }
 $('#modelSelect').onchange = async (e) => {
-  store.set('ody-model', e.target.value);
+  store.set('sunak-model', e.target.value);
   if (state.session) { state.session.model = e.target.value; await api(`/api/sessions/${state.session.id}`, { method: 'PATCH', body: { model: e.target.value } }); }
 };
 
@@ -437,7 +437,7 @@ async function pullModel(name, progBox, btn) {
     if (failed) throw new Error(failed);
     bar.firstChild.style.width = '100%';
     label.textContent = `✓ ${name} is ready`;
-    store.set('ody-model', `ollama::${name}`);
+    store.set('sunak-model', `ollama::${name}`);
     await loadModels();
     toast(`${name} installed`);
     if (state.view === 'chat') renderMessages();

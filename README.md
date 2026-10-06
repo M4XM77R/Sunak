@@ -92,14 +92,28 @@ Alles lässt sich in der Oberfläche einstellen. Optional per Umgebungsvariable:
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama-Adresse beim ersten Start |
 | `SEARXNG_URL` | – | eigene SearXNG-Instanz für Research statt DuckDuckGo |
 
-## Entwicklung
+## Entwickeln
+
+Voraussetzung ist nur Python 3.9+. Es gibt nichts zu installieren und keinen Build-Schritt.
 
 ```bash
-python3 -m sunak --no-browser     # Server starten
-python3 -m unittest discover tests   # Tests (mit simulierten Ollama- und OpenAI-Backends)
+git clone https://github.com/M4XM77R/sunak.git && cd sunak
+SUNAK_DATA=./data python3 -m sunak --no-browser   # Server mit eigenem Datenordner starten
+python3 -m unittest discover tests -v             # Tests mit simulierten Ollama- und OpenAI-Backends
+SUNAK_DEBUG=1 python3 -m sunak                    # mit Zugriffslog
 ```
 
-Aufbau: `sunak/server.py` (HTTP-API, nur Python-Standardbibliothek), `providers.py` (Ollama und OpenAI-kompatibel, Streaming), `research.py` (Websuche), `db.py` (SQLite), `static/` (Oberfläche ohne Build-Schritt).
+Änderungen an `sunak/static/` sind nach einem Neuladen im Browser sichtbar. Änderungen an Python-Dateien brauchen einen Neustart.
+
+| Datei | Inhalt |
+|---|---|
+| `sunak/server.py` | HTTP-Server, alle API-Endpunkte, Einstellungen, Login |
+| `sunak/providers.py` | Anbindung von Ollama und OpenAI-kompatiblen APIs (Streaming) |
+| `sunak/research.py` | Websuche und Seitenauswertung für Research |
+| `sunak/db.py` | SQLite-Speicher |
+| `sunak/static/` | Oberfläche (HTML, CSS, ein JavaScript-File) |
+
+Aufbau, Datenfluss, alle API-Endpunkte, Backends und Erweiterungspunkte beschreibt [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Lizenz
 

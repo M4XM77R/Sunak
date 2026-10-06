@@ -42,6 +42,7 @@ RECOMMENDATIONS = [
 
 
 def total_ram_gb():
+    """Total system memory in GB (Linux, macOS, Windows), or None if unknown."""
     try:
         system = platform.system()
         if system == "Linux":
@@ -72,6 +73,7 @@ def total_ram_gb():
 
 
 def recommend(ram):
+    """Pick a starter model that fits into `ram` GB of memory."""
     for limit, model, size in RECOMMENDATIONS:
         if ram is None or ram < limit:
             return {"model": model, "size": size}
@@ -79,17 +81,20 @@ def recommend(ram):
 
 
 def hash_password(pw, salt=None):
+    """PBKDF2-SHA256 hash, stored as 'salt$hex'."""
     salt = salt or secrets.token_hex(16)
     digest = hashlib.pbkdf2_hmac("sha256", pw.encode(), salt.encode(), 200_000).hex()
     return f"{salt}${digest}"
 
 
 def check_password(pw, stored):
+    """Compare `pw` with a stored hash in constant time."""
     salt, _, digest = stored.partition("$")
     return hmac.compare_digest(hash_password(pw, salt).split("$")[1], digest)
 
 
 class App:
+    """Application state shared by all requests: database, settings, model resolution, auth and prompt building."""
     def __init__(self, data_dir):
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -103,12 +108,14 @@ class App:
 
     # settings ---------------------------------------------------------
     def settings(self):
+        """User preferences merged over DEFAULT_SETTINGS, plus the provider list."""
         s = dict(DEFAULT_SETTINGS)
         s.update(self.db.get_setting("prefs", {}))
         s["providers"] = self.db.get_setting("providers") or providers.default_providers()
         return s
 
     def save_settings(self, data):
+        """Validate and store the keys present in `data` (prefs, providers, password)."""
         prefs = self.db.get_setting("prefs", {})
         for k in DEFAULT_SETTINGS:
             if k in data:
@@ -131,12 +138,14 @@ class App:
         return self.settings()
 
     def provider(self, pid):
+        """Look up a configured provider by id."""
         for p in self.settings()["providers"]:
             if p["id"] == pid:
                 return p
         raise providers.ProviderError(f"Unknown provider '{pid}'. Check Settings.")
 
     def resolve(self, model_id):
+        """Turn a model id 'provider::model' (or the default) into (provider, model name)."""
         if not model_id:
             model_id = self.settings()["default_model"]
         if not model_id:
@@ -150,6 +159,7 @@ class App:
         return self.provider(pid), name
 
     def models(self):
+        """Ask all providers in parallel for their models; unreachable providers are listed in `errors`."""
         out, errors = [], []
         provs = self.settings()["providers"]
 
@@ -169,14 +179,17 @@ class App:
 
     # auth -------------------------------------------------------------
     def auth_required(self):
+        """True when a password is set."""
         return bool(self.db.get_setting("password_hash"))
 
     def token(self):
+        """Login cookie value; changes whenever the password changes."""
         return hmac.new(self.db.get_setting("secret").encode(), (self.db.get_setting("password_hash") or "").encode(),
                         "sha256").hexdigest()
 
     # chat -------------------------------------------------------------
     def build_messages(self, session, history):
+        """Chat history for the model: system prompt, session prompt, memory notes, then the messages."""
         s = self.settings()
         system = "\n\n".join(x for x in (s["system_prompt"], session.get("system", "")) if x.strip())
         if s["use_memory"]:
@@ -190,6 +203,7 @@ class App:
         return msgs
 
     def options(self):
+        """Generation options (temperature) from the settings."""
         try:
             return {"temperature": float(self.settings()["temperature"])}
         except (TypeError, ValueError):
@@ -213,6 +227,9 @@ def stream_to_text(chunks):
 
 
 class Handler(BaseHTTPRequestHandler):
+    """HTTP request handler. Static files are served from STATIC; JSON API routes are listed in ROUTES.
+
+    Streaming endpoints answer with NDJSON: one JSON object per line, e.g. {"type": "text", "t": "Hello"}."""
     app: App = None
     server_version = "Sunak/" + __version__
 
@@ -222,6 +239,7 @@ class Handler(BaseHTTPRequestHandler):
 
     # helpers ----------------------------------------------------------
     def send_json(self, obj, status=200):
+        """Send `obj` as a JSON response."""
         body = json.dumps(obj).encode()
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
@@ -231,9 +249,11 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def error(self, msg, status=400):
+        """Send {"error": msg} with the given status."""
         self.send_json({"error": msg}, status)
 
     def body(self):
+        """Parse the JSON request body (max MAX_BODY bytes)."""
         n = int(self.headers.get("Content-Length") or 0)
         if n > MAX_BODY:
             raise ValueError("Request too large")
@@ -241,6 +261,7 @@ class Handler(BaseHTTPRequestHandler):
         return json.loads(raw) if raw else {}
 
     def start_stream(self):
+        """Send headers for an NDJSON stream; the connection closes when it ends."""
         self.send_response(200)
         self.send_header("Content-Type", "application/x-ndjson")
         self.send_header("Cache-Control", "no-store")
@@ -249,14 +270,16 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def emit(self, obj):
+        """Write one NDJSON event and flush it to the browser."""
         self.wfile.write((json.dumps(obj) + "\n").encode())
         self.wfile.flush()
 
     def authed(self):
+        """True when no password is set or the request carries a valid login cookie."""
         if not self.app.auth_required():
             return True
         cookies = self.headers.get("Cookie", "")
-        m = re.search(r"(?:^|;\s*)ody_token=([a-f0-9]+)", cookies)
+        m = re.search(r"(?:^|;\s*)sunak_token=([a-f0-9]+)", cookies)
         return bool(m) and hmac.compare_digest(m.group(1), self.app.token())
 
     # routing ----------------------------------------------------------
@@ -276,6 +299,7 @@ class Handler(BaseHTTPRequestHandler):
         self.route("DELETE")
 
     def route(self, method):
+        """Dispatch a request: static files, CSRF header check, login, auth check, then ROUTES."""
         path = urlparse(self.path).path
         try:
             if not path.startswith("/api/"):
@@ -301,6 +325,7 @@ class Handler(BaseHTTPRequestHandler):
             self.error(str(e))
 
     def static(self, path):
+        """Serve a file from the static folder (login page instead of the app when not logged in)."""
         if path in ("/", "/index.html"):
             path = "/index.html" if self.authed() else "/login.html"
         target = (STATIC / path.lstrip("/")).resolve()
@@ -319,6 +344,7 @@ class Handler(BaseHTTPRequestHandler):
 
     # endpoints --------------------------------------------------------
     def status(self):
+        """GET /api/status: version, auth state, RAM and recommended model."""
         self.send_json({
             "version": __version__,
             "auth_required": self.app.auth_required(),
@@ -328,6 +354,7 @@ class Handler(BaseHTTPRequestHandler):
         })
 
     def login(self):
+        """POST /api/login: check the password and set the login cookie."""
         data = self.body()
         stored = self.app.db.get_setting("password_hash")
         if stored and not check_password(data.get("password", ""), stored):
@@ -337,49 +364,62 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Set-Cookie", f"ody_token={self.app.token()}; Path=/; HttpOnly; SameSite=Strict; Max-Age=31536000")
+        self.send_header("Set-Cookie", f"sunak_token={self.app.token()}; Path=/; HttpOnly; SameSite=Strict; Max-Age=31536000")
         self.end_headers()
         self.wfile.write(body)
 
     def logout(self):
+        """POST /api/logout: clear the login cookie."""
         self.send_response(200)
-        self.send_header("Set-Cookie", "ody_token=; Path=/; Max-Age=0")
+        self.send_header("Set-Cookie", "sunak_token=; Path=/; Max-Age=0")
         self.send_header("Content-Length", "0")
         self.end_headers()
 
     def get_settings(self):
+        """GET /api/settings"""
         s = self.app.settings()
         s["password_set"] = self.app.auth_required()
         self.send_json(s)
 
     def put_settings(self):
+        """PUT /api/settings"""
         self.app.save_settings(self.body())
         self.get_settings()
 
     def get_models(self):
+        """GET /api/models: all models of all providers."""
         self.send_json(self.app.models())
 
     # sessions
     def list_sessions(self):
+        """GET /api/sessions"""
         self.send_json(self.app.db.list_sessions())
 
     def create_session(self):
+        """POST /api/sessions"""
         d = self.body()
         self.send_json(self.app.db.create_session(model=d.get("model", ""), system=d.get("system", "")))
 
     def get_session(self, sid):
+        """GET /api/sessions/<id>: session with all messages."""
         s = self.app.db.get_session(sid)
         return self.send_json(s) if s else self.error("Not found", 404)
 
     def patch_session(self, sid):
+        """PATCH /api/sessions/<id>: change title, model or system prompt."""
         self.app.db.update_session(sid, **self.body())
         self.get_session(sid)
 
     def delete_session(self, sid):
+        """DELETE /api/sessions/<id>"""
         self.app.db.delete_session(sid)
         self.send_json({"ok": True})
 
     def chat(self):
+        """POST /api/chat: store the user message, stream the answer, store it.
+
+        `truncate_from` deletes that message and everything after it first (regenerate / edit).
+        Events: start, think, text, done | error. A partial answer is kept if the stream breaks."""
         d = self.body()
         db = self.app.db
         session = db.get_session(d.get("session_id", ""))
@@ -425,6 +465,7 @@ class Handler(BaseHTTPRequestHandler):
         self.emit({"type": "done"})
 
     def compare(self):
+        """POST /api/compare: stream one prompt to 2-4 models in parallel. Events carry `i`, the model index."""
         d = self.body()
         prompt = (d.get("prompt") or "").strip()
         model_ids = d.get("models") or []
@@ -464,6 +505,9 @@ class Handler(BaseHTTPRequestHandler):
             stop.set()
 
     def research(self):
+        """POST /api/research: plan queries, search, read pages, stream a cited report.
+
+        Events: status, sources, think, text, done | error."""
         d = self.body()
         question = (d.get("question") or "").strip()
         if not question:
@@ -514,25 +558,31 @@ class Handler(BaseHTTPRequestHandler):
 
     # documents
     def list_documents(self):
+        """GET /api/documents"""
         self.send_json(self.app.db.list_documents())
 
     def create_document(self):
+        """POST /api/documents"""
         d = self.body()
         self.send_json(self.app.db.save_document(None, d.get("title") or "Untitled", d.get("content", "")))
 
     def get_document(self, did):
+        """GET /api/documents/<id>"""
         doc = self.app.db.get_document(did)
         return self.send_json(doc) if doc else self.error("Not found", 404)
 
     def put_document(self, did):
+        """PUT /api/documents/<id>"""
         d = self.body()
         self.send_json(self.app.db.save_document(did, d.get("title") or "Untitled", d.get("content", "")))
 
     def delete_document(self, did):
+        """DELETE /api/documents/<id>"""
         self.app.db.delete_document(did)
         self.send_json({"ok": True})
 
     def document_ai(self):
+        """POST /api/documents/ai: stream a rewrite of the document or of `selection` following `instruction`."""
         d = self.body()
         instruction = (d.get("instruction") or "").strip()
         if not instruction:
@@ -560,9 +610,11 @@ class Handler(BaseHTTPRequestHandler):
 
     # notes
     def list_notes(self):
+        """GET /api/notes"""
         self.send_json(self.app.db.list_notes())
 
     def create_note(self):
+        """POST /api/notes"""
         d = self.body()
         content = (d.get("content") or "").strip()
         if not content:
@@ -570,16 +622,19 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json(self.app.db.add_note(content, d.get("is_memory", False)))
 
     def patch_note(self, nid):
+        """PATCH /api/notes/<id>: change text or memory flag."""
         d = self.body()
         self.app.db.update_note(nid, d.get("content"), d.get("is_memory"))
         self.send_json({"ok": True})
 
     def delete_note(self, nid):
+        """DELETE /api/notes/<id>"""
         self.app.db.delete_note(nid)
         self.send_json({"ok": True})
 
     # model management (Ollama)
     def pull(self):
+        """POST /api/models/pull: download an Ollama model and stream its progress."""
         d = self.body()
         prov = self.app.provider(d.get("provider") or "ollama")
         if prov["type"] != "ollama":
@@ -596,6 +651,7 @@ class Handler(BaseHTTPRequestHandler):
             self.emit({"type": "error", "error": str(e)})
 
     def delete_model(self):
+        """POST /api/models/delete: remove an Ollama model from disk."""
         d = self.body()
         prov, model = self.app.resolve(d.get("model"))
         if prov["type"] != "ollama":
@@ -634,6 +690,7 @@ ROUTES = [
 
 
 def make_server(host, port, data_dir):
+    """Create a threaded HTTP server bound to host:port with its own App for `data_dir`."""
     handler = type("BoundHandler", (Handler,), {"app": App(data_dir)})
     srv = ThreadingHTTPServer((host, port), handler)
     srv.daemon_threads = True

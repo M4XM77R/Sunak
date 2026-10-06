@@ -15,6 +15,7 @@ RESET = "\033[0m" if sys.stdout.isatty() else ""
 
 
 def main(argv=None):
+    """Parse the command line, find a free port, start the server and open the browser."""
     ap = argparse.ArgumentParser(prog="sunak", description="Self-hosted AI workspace")
     ap.add_argument("--host", default=os.environ.get("SUNAK_HOST", "127.0.0.1"),
                     help="address to listen on (use 0.0.0.0 for your LAN / phone)")

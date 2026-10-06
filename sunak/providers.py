@@ -15,10 +15,12 @@ THINK_RE = re.compile(r"<think>.*?(</think>|$)", re.S)
 
 
 class ProviderError(Exception):
+    """A backend could not be reached or returned an error. The message is shown to the user."""
     pass
 
 
 def default_providers():
+    """Providers used on first start: a local Ollama (address from OLLAMA_BASE_URL)."""
     return [
         {
             "id": "ollama",
@@ -31,6 +33,7 @@ def default_providers():
 
 
 def strip_think(text):
+    """Remove <think>…</think> reasoning blocks so they are not sent back to the model."""
     return THINK_RE.sub("", text).strip()
 
 
@@ -50,6 +53,7 @@ def _is_local(url):
 
 
 def _request(url, data=None, api_key="", timeout=TIMEOUT, method=None):
+    """Open an HTTP request to a backend and return the response. Raises ProviderError."""
     headers = {"Content-Type": "application/json", "User-Agent": "sunak"}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
@@ -73,6 +77,7 @@ def _request(url, data=None, api_key="", timeout=TIMEOUT, method=None):
 
 
 def _base(p):
+    """Provider base URL without trailing slash."""
     return p["base_url"].rstrip("/")
 
 
@@ -156,5 +161,6 @@ def ollama_pull(p, model):
 
 
 def ollama_delete(p, model):
+    """Delete a downloaded model from Ollama."""
     with _request(_base(p) + "/api/delete", {"model": model}, p.get("api_key", ""), method="DELETE"):
         pass
