@@ -31,6 +31,7 @@ async function api(path, opts = {}) {
   const r = await fetch(path, init);
   if (r.status === 401) { location.reload(); throw new Error('Login required'); }
   const data = await r.json().catch(() => ({}));
+  if (r.status === 409 && data.error === 'Choose a profile') { showProfilePicker(); throw new Error(data.error); }
   if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
   return data;
 }
@@ -594,9 +595,10 @@ async function runChat(payload, localUserMsg) {
    The model works in a project folder: steps (tool calls) appear between its text, writes and
    commands wait for a click. See sunak/agent.py. */
 const agentFolder = () => $('#agentFolder').value.trim();
-const agentOn = () => !!state.settings?.agent_enabled && store.get('sunak-agent') === '1';
+const isAdmin = () => !!state.settings?.profile?.admin;
+const agentOn = () => isAdmin() && !!state.settings?.agent_enabled && store.get('sunak-agent') === '1';
 // 🔌 tools of the MCP servers (Settings → Tools); every call asks first, like a change in agent mode
-const mcpReady = () => (state.settings?.mcp_servers || []).some((m) => m.enabled);
+const mcpReady = () => isAdmin() && (state.settings?.mcp_servers || []).some((m) => m.enabled);
 const mcpOn = () => mcpReady() && store.get('sunak-mcp') === '1';
 function renderAgentToggle() {
   const b = $('#agentToggle');
@@ -2303,8 +2305,8 @@ function renderSettings() {
   renderLook();
   renderMailAccounts();
   renderCalSources();
-  $('#logoutBtn').classList.toggle('hidden', !s.password_set);
-  renderLan();
+  renderProfile();
+  if (isAdmin()) renderLan();
   $('#aboutLine').textContent = `Sunak ${state.status?.version || ''} · ${state.status?.ram_gb ? state.status.ram_gb + ' GB RAM' : ''}`;
 }
 const CLAUDE_URL = 'https://api.anthropic.com';
@@ -2441,14 +2443,16 @@ $('#saveSettings').onclick = async () => {
   // only when changed: from another device without a password the server refuses MCP changes
   const mcpChanged = JSON.stringify(draftMcp) !== mcpSaved;
   try {
-    state.settings = await api('/api/settings', { method: 'PUT', body: {
+    // installation settings only from admin profiles (the server refuses them from others)
+    const install = !isAdmin() ? {} : {
       ...(mcpChanged ? { mcp_servers: draftMcp.map(mcpBody) } : {}),
-      providers: draftProviders.filter((p) => p.base_url.trim()), system_prompt: $('#sysPrompt').value,
-      temperature: parseFloat($('#temperature').value), use_memory: $('#useMemory').checked,
-      check_updates: $('#checkUpdates').checked,
+      providers: draftProviders.filter((p) => p.base_url.trim()), check_updates: $('#checkUpdates').checked,
       agent_enabled: $('#agentEnabled').checked, agent_timeout: Number($('#agentTimeout').value),
       agent_max_steps: Number($('#agentSteps').value),
       speech_input: $('#speechInput').value, whisper_url: $('#whisperUrl').value, whisper_model: $('#whisperModel').value,
+    };
+    state.settings = await api('/api/settings', { method: 'PUT', body: { ...install,
+      system_prompt: $('#sysPrompt').value, temperature: parseFloat($('#temperature').value), use_memory: $('#useMemory').checked,
       accent: s.accent, theme: s.theme, default_model: $('#defaultModel').value, personas: draftPersonas,
     } });
     applyLook();
@@ -2476,7 +2480,7 @@ $('#savePassword').onclick = async () => {
   $('#password').value = '';
   toast(pw ? 'Password set. Log in again on other devices.' : 'Password removed');
   if (pw) location.reload();
-  else $('#logoutBtn').classList.add('hidden'); // other unsaved settings stay as they are
+  else renderProfile(); // other unsaved settings stay as they are
   renderLan(); // removing the password also switches phone access off
 };
 /* ---------------- Phone access ----------------
@@ -2542,7 +2546,117 @@ $('#updateBtn').onclick = async () => {
   $('#updateText').textContent = 'Sunak did not come back. Start it with the Sunak icon or “sunak”.';
   btn.classList.add('hidden');
 };
-$('#logoutBtn').onclick = async () => { await api('/api/logout', { method: 'POST' }); location.reload(); };
+
+/* ---------------- Profiles ----------------
+   Each profile has its own chats, documents, notes, knowledge base, mail, calendar and preferences
+   (see App.view). Installation settings (providers, agent, tools, password …) belong to admin profiles. */
+const profileName = (p) => p.name || tr('Main profile');
+async function showProfilePicker(res) {
+  if ($('#profilePicker')) return;
+  try { res = res || await api('/api/profiles'); } catch (e) { toast(e.message); return; }
+  const pinBox = el('form', { class: 'login hidden' });
+  const box = el('div', { class: 'profile-picker', id: 'profilePicker', role: 'dialog', 'aria-modal': 'true' },
+    el('img', { src: '/icon.svg', alt: '', width: 48, height: 48 }),
+    el('h1', {}, 'Who is using Sunak?'),
+    el('div', { class: 'profile-tiles' }, res.profiles.map((p) => el('button', { class: 'profile-tile', type: 'button', onclick: () => pick(p) },
+      el('span', { class: 'profile-emoji', 'data-no-i18n': '' }, p.emoji || '🙂'),
+      el('span', p.name ? { 'data-no-i18n': '' } : {}, profileName(p)), p.has_pin ? el('span', { class: 'muted small' }, '🔒') : null))),
+    pinBox);
+  async function select(p, pin) {
+    try { await api('/api/profiles/select', { method: 'POST', body: { id: p.id, pin } }); location.reload(); }
+    catch (e) { toast(e.message); pinBox.querySelector('input')?.select(); }
+  }
+  function pick(p) {
+    if (!p.has_pin) return select(p, '');
+    const input = el('input', { type: 'password', inputmode: 'numeric', autocomplete: 'off', placeholder: 'PIN', 'aria-label': 'PIN' });
+    pinBox.replaceChildren(el('p', { 'data-no-i18n': '' }, tr('PIN for {name}', { name: profileName(p) })), input, el('button', { class: 'btn primary', type: 'submit' }, 'Open'));
+    pinBox.onsubmit = (e) => { e.preventDefault(); select(p, input.value); };
+    pinBox.classList.remove('hidden');
+    input.focus();
+  }
+  document.body.append(box);
+}
+function renderProfileChip() {
+  const me = state.settings.profile, chip = $('#profileChip');
+  chip.classList.toggle('hidden', state.settings.profiles_count < 2);
+  chip.replaceChildren(el('span', { 'data-no-i18n': '' }, me.emoji || '🙂'), ' ', el('span', me.name ? { 'data-no-i18n': '' } : {}, profileName(me)), el('span', { class: 'muted' }, ' ⇄'));
+  chip.onclick = switchProfile;
+}
+async function switchProfile() {
+  await api('/api/profiles/leave', { method: 'POST' }).catch(() => {});
+  location.reload();
+}
+function profileForm(p, onSave, isNew) {
+  const emoji = el('input', { class: 'emoji', value: p.emoji || '🙂', 'aria-label': 'Icon', 'data-no-i18n': '' });
+  const name = el('input', { value: p.name || '', placeholder: p.id === 'default' ? tr('Main profile') : 'Name', 'aria-label': 'Name', 'data-no-i18n': '' });
+  const pin = el('input', { type: 'password', autocomplete: 'new-password', inputmode: 'numeric', 'aria-label': 'PIN',
+    placeholder: p.has_pin ? '•••• saved (type to change)' : 'PIN (optional, at least 4 characters)' });
+  const admin = el('input', { type: 'checkbox', checked: !!p.admin, disabled: p.id === 'default' || p.id === state.settings.profile.id });
+  const save = el('button', { class: 'btn primary', type: 'submit' }, isNew ? 'Add profile' : 'Save profile');
+  const form = el('form', { class: 'card persona profile-form' },
+    el('div', { class: 'row' }, emoji, name),
+    el('div', { class: 'row' }, pin,
+      p.has_pin ? el('button', { class: 'btn', type: 'button', onclick: () => onSave({ pin: '' }) }, 'Remove PIN') : null),
+    isAdmin() ? el('label', { class: 'check' }, admin, 'Admin: may change providers, agent, tools, password and profiles') : null,
+    el('div', { class: 'row' }, save, isNew ? el('button', { class: 'btn', type: 'button', onclick: () => renderProfile() }, 'Cancel') : null));
+  form.onsubmit = (e) => {
+    e.preventDefault();
+    const body = { name: name.value, emoji: emoji.value };
+    if (pin.value) body.pin = pin.value;
+    if (isAdmin() && !admin.disabled) body.admin = admin.checked;
+    if (p.id === 'default' && !name.value.trim()) delete body.name; // the main profile may stay unnamed
+    onSave(body);
+  };
+  return form;
+}
+async function renderProfile() {
+  const box = $('#profileBox');
+  const me = state.settings.profile;
+  const update = (pid) => async (body) => {
+    try {
+      const out = await api(`/api/profiles/${pid}`, { method: 'PATCH', body });
+      if (pid === me.id) { state.settings.profile = out; renderProfileChip(); }
+      toast('Saved ✓');
+    } catch (e) { toast(e.message); return; }
+    renderProfile();
+  };
+  const kids = [
+    el('p', { class: 'muted small' }, 'Every profile has its own chats, documents, notes, knowledge base, mail, calendar and look. Providers and models are shared. A PIN keeps others out of your profile in the app, but not out of the files on this computer.'),
+    profileForm(me, update(me.id)),
+    el('div', { class: 'row' },
+      state.settings.profiles_count > 1 || me.has_pin ? el('button', { class: 'btn', type: 'button', onclick: switchProfile }, '⇄ Switch profile') : null,
+      state.settings.password_set ? el('button', { class: 'btn', type: 'button', onclick: async () => { await api('/api/logout', { method: 'POST' }); location.reload(); } }, 'Log out') : null),
+  ];
+  box.replaceChildren(...kids);
+  if (!isAdmin()) return;
+  let res;
+  try { res = await api('/api/profiles'); } catch (e) { box.append(el('p', { class: 'err small' }, e.message)); return; }
+  state.settings.profiles_count = res.profiles.length;
+  renderProfileChip();
+  const list = el('div', { class: 'profile-list' });
+  for (const p of res.profiles) {
+    if (p.id === me.id) continue;
+    const row = el('div', { class: 'card persona profile-row' },
+      el('div', { class: 'row' },
+        el('span', { class: 'profile-emoji', 'data-no-i18n': '' }, p.emoji || '🙂'),
+        el('b', p.name ? { 'data-no-i18n': '' } : {}, profileName(p)),
+        p.admin ? el('span', { class: 'muted small' }, 'Admin') : null,
+        p.has_pin ? el('span', { class: 'muted small' }, '🔒') : null,
+        el('span', { class: 'spacer' }),
+        el('button', { class: 'icon-btn', type: 'button', title: 'Edit profile', onclick: () => row.replaceWith(profileForm(p, update(p.id))) }, '✎'),
+        p.id === 'default' ? null : el('button', { class: 'icon-btn', type: 'button', title: 'Delete profile', onclick: async () => {
+          if (!confirm(`${tr('Delete the profile “{name}”?', { name: profileName(p) })}\n\n${tr('All its chats, documents, notes, knowledge base, mail and calendar links are deleted for good.')}`)) return;
+          try { await api(`/api/profiles/${p.id}`, { method: 'DELETE' }); } catch (e) { toast(e.message); }
+          renderProfile();
+        } }, '🗑')));
+    list.append(row);
+  }
+  const add = el('button', { class: 'btn', type: 'button', onclick: () => add.replaceWith(profileForm({ id: '', emoji: '🙂' }, async (body) => {
+    try { await api('/api/profiles', { method: 'POST', body }); toast('Profile added ✓'); } catch (e) { toast(e.message); return; }
+    renderProfile();
+  }, true)) }, '＋ Add profile');
+  box.append(el('h3', {}, 'Other profiles'), list, add);
+}
 
 /* ---------------- Boot ---------------- */
 document.addEventListener('keydown', (e) => {
@@ -2558,7 +2672,11 @@ async function refreshAll(poll = false) {
 }
 (async function boot() {
   applyLook();
+  const profiles = await api('/api/profiles');
+  if (profiles.need_choice) { showProfilePicker(profiles); return; }
   [state.status, state.settings] = await Promise.all([api('/api/status'), api('/api/settings')]);
+  document.body.classList.toggle('not-admin', !isAdmin());
+  renderProfileChip();
   // the language is a setting; the browser keeps a copy, so the page starts in it right away
   const lang = state.settings.language || '';
   if (lang !== sunakLangPref) {

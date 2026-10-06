@@ -13,6 +13,7 @@ import platform
 import queue
 import re
 import secrets
+import shutil
 import socket
 import socketserver
 import sqlite3
@@ -49,6 +50,10 @@ DEFAULT_SETTINGS = {
     "whisper_model": "",     # model name for OpenAI-compatible Whisper servers ("" = whisper-1)
 }
 INT_PREFS = {"agent_timeout": (5, 3600), "agent_max_steps": (1, 200)}  # allowed ranges
+# Settings of the whole installation (only admin profiles change them); all other prefs are per profile.
+GLOBAL_PREFS = {"check_updates", "agent_enabled", "agent_timeout", "agent_max_steps", "speech_input", "whisper_url", "whisper_model"}
+GLOBAL_KEYS = GLOBAL_PREFS | {"providers", "mcp_servers", "password"}
+MAX_PROFILES = 20
 
 # Themes: [data-theme] blocks in static/app.css, THEMES in static/app.js.
 THEMES = ("dark", "light", "retro", "cyberpunk", "ocean", "forest", "sunset", "corporate")
@@ -195,17 +200,22 @@ def check_password(pw, stored):
 
 
 class App:
-    """Application state shared by all requests: database, settings, model resolution, auth and prompt building."""
+    """Application state shared by all requests: database, settings, model resolution, auth and prompt building.
+
+    Profiles: `main` is the database of the installation (global settings, and the data of the main
+    profile); `db` and `user_dir` belong to the profile a request is made for (see ProfileView)."""
     def __init__(self, data_dir):
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(parents=True, exist_ok=True)
-        self.db = DB(str(self.data_dir / "sunak.db"))
-        if not self.db.get_setting("secret"):
-            self.db.set_setting("secret", secrets.token_hex(32))
+        self.db = self.main = DB(str(self.data_dir / "sunak.db"))
+        self.root, self.profile, self.user_dir = self, "default", self.data_dir
+        self._profile_dbs, self._profiles_lock = {}, threading.Lock()
+        if not self.main.get_setting("secret"):
+            self.main.set_setting("secret", secrets.token_hex(32))
         env_pw = os.environ.get("SUNAK_PASSWORD")
-        stored = self.db.get_setting("password_hash")
+        stored = self.main.get_setting("password_hash")
         if env_pw and not (stored and check_password(env_pw, stored)):  # same password: keep logins valid
-            self.db.set_setting("password_hash", hash_password(env_pw))
+            self.main.set_setting("password_hash", hash_password(env_pw))
         self.ram = total_ram_gb()
         self.gpu = None  # gpu.summary(), filled in the background (nvidia-smi can take a moment)
         threading.Thread(target=self._detect_gpu, daemon=True).start()
@@ -255,10 +265,14 @@ class App:
 
     # settings ---------------------------------------------------------
     def settings(self):
-        """User preferences merged over DEFAULT_SETTINGS, plus the provider list."""
+        """Preferences merged over DEFAULT_SETTINGS (GLOBAL_PREFS of the installation, the others of this
+        profile), plus the provider list and this profile's personas."""
         s = dict(DEFAULT_SETTINGS)
-        s.update(self.db.get_setting("prefs", {}))
-        stored = self.db.get_setting("providers")
+        main_prefs = self.main.get_setting("prefs", {})
+        own = main_prefs if self.db is self.main else self.db.get_setting("prefs", {})
+        s.update({k: v for k, v in main_prefs.items() if k in GLOBAL_PREFS})
+        s.update({k: v for k, v in own.items() if k not in GLOBAL_PREFS})
+        stored = self.main.get_setting("providers")
         s["providers"] = providers.default_providers() if stored is None else stored  # [] = all removed
         personas = self.db.get_setting("personas")
         s["personas"] = DEFAULT_PERSONAS if personas is None else personas
@@ -266,33 +280,36 @@ class App:
 
     def mcp_servers(self):
         """The MCP servers with their secrets (environment values, tokens); never send these to the browser."""
-        return self.db.get_setting("mcp_servers") or []
+        return self.main.get_setting("mcp_servers") or []
 
     def save_settings(self, data):
         """Validate everything in `data` (prefs, providers, personas, password), then store it.
         Nothing is saved when any part is invalid."""
         if not isinstance(data, dict):
             raise ValueError("Settings must be a JSON object")
-        prefs = self.db.get_setting("prefs", {})
+        main_prefs = self.main.get_setting("prefs", {})
+        own = main_prefs if self.db is self.main else self.db.get_setting("prefs", {})
         for k, default in DEFAULT_SETTINGS.items():
             if k in data:
-                prefs[k] = _check_pref(k, data[k], default)
+                (main_prefs if k in GLOBAL_PREFS else own)[k] = _check_pref(k, data[k], default)
         new_providers = self._clean_providers(data["providers"]) if "providers" in data else None
         new_personas = self._clean_personas(data["personas"]) if "personas" in data else None
         new_mcp = mcp.clean(data["mcp_servers"], self.mcp_servers()) if "mcp_servers" in data else None
         if "password" in data and not isinstance(data["password"], (str, type(None))):
             raise ValueError("Password must be text")
-        self.db.set_setting("prefs", prefs)
+        self.main.set_setting("prefs", main_prefs)
+        if own is not main_prefs:
+            self.db.set_setting("prefs", own)
         if new_providers is not None:
-            self.db.set_setting("providers", new_providers)
+            self.main.set_setting("providers", new_providers)
         if new_personas is not None:
             self.db.set_setting("personas", new_personas)
         if new_mcp is not None:
-            self.db.set_setting("mcp_servers", new_mcp)
+            self.main.set_setting("mcp_servers", new_mcp)
             self.mcp.configure(new_mcp)
         if "password" in data:
             pw = data["password"] or ""
-            self.db.set_setting("password_hash", hash_password(pw) if pw else "")
+            self.main.set_setting("password_hash", hash_password(pw) if pw else "")
             if not pw and self.lan is not None:  # never reachable from the network without a password
                 self.stop_lan()
         return self.settings()
@@ -331,12 +348,12 @@ class App:
                     threading.Thread(target=srv.serve_forever, daemon=True).start()
                     self.lan = srv
         self.lan_error = ""
-        self.db.set_setting("lan_access", True)
+        self.main.set_setting("lan_access", True)
 
     def stop_lan(self):
         with self._lan_lock:
             self._close_lan()
-        self.db.set_setting("lan_access", False)
+        self.main.set_setting("lan_access", False)
 
     def _close_lan(self):
         srv, self.lan = self.lan, None
@@ -346,7 +363,7 @@ class App:
 
     def restore_lan(self):
         """At start: switch phone access back on when it was on (silently off when that fails)."""
-        if self.db.get_setting("lan_access") and not self.listens_everywhere():
+        if self.main.get_setting("lan_access") and not self.listens_everywhere():
             try:
                 self.start_lan()
             except ValueError as e:
@@ -443,7 +460,7 @@ class App:
 
     def clean_images(self):
         """Delete image files that no message refers to any more."""
-        images.cleanup(self.data_dir, self.db.image_refs())
+        images.cleanup(self.user_dir, self.db.image_refs())
 
     def models(self):
         """Ask all providers in parallel for their models; unreachable providers are listed in `errors`."""
@@ -485,12 +502,54 @@ class App:
     # auth -------------------------------------------------------------
     def auth_required(self):
         """True when a password is set."""
-        return bool(self.db.get_setting("password_hash"))
+        return bool(self.main.get_setting("password_hash"))
 
     def token(self):
         """Login cookie value; changes whenever the password changes."""
-        return hmac.new(self.db.get_setting("secret").encode(), (self.db.get_setting("password_hash") or "").encode(),
+        return hmac.new(self.main.get_setting("secret").encode(), (self.main.get_setting("password_hash") or "").encode(),
                         "sha256").hexdigest()
+
+    # profiles ---------------------------------------------------------
+    def profiles(self):
+        """All profiles (with their PIN hashes); the main profile ("default") always exists and is an admin."""
+        out = self.main.get_setting("profiles") or []
+        if not any(p["id"] == "default" for p in out):
+            out = [{"id": "default", "name": "", "emoji": "🙂", "admin": True, "pin_hash": ""}] + out
+        return out
+
+    def profile_info(self, pid):
+        return next((p for p in self.profiles() if p["id"] == pid), None)
+
+    def profile_dir(self, pid):
+        return self.data_dir if pid == "default" else self.data_dir / "profiles" / pid
+
+    def profile_db(self, pid):
+        """The database of a profile (opened once)."""
+        if pid == "default":
+            return self.main
+        with self._profiles_lock:
+            db = self._profile_dbs.get(pid)
+            if db is None:
+                path = self.profile_dir(pid)
+                path.mkdir(parents=True, exist_ok=True)
+                db = self._profile_dbs[pid] = DB(str(path / "sunak.db"))
+            return db
+
+    def close_profile(self, pid):
+        with self._profiles_lock:
+            db = self._profile_dbs.pop(pid, None)
+        if db:
+            db.close()
+
+    def view(self, pid):
+        """The App as profile `pid` sees it."""
+        return self if pid == "default" else ProfileView(self, pid, self.profile_db(pid), self.profile_dir(pid))
+
+    def profile_cookie(self, p):
+        """Cookie value proving the profile was chosen (with its PIN, if it has one); changes with the PIN."""
+        sig = hmac.new(self.main.get_setting("secret").encode(), f"profile|{p['id']}|{p.get('pin_hash', '')}".encode(),
+                       "sha256").hexdigest()
+        return f"{p['id']}.{sig}"
 
     # chat -------------------------------------------------------------
     def persona_prompt(self, pid, personas=None):
@@ -518,7 +577,7 @@ class App:
             content = providers.strip_think(m["content"]) if m["role"] == "assistant" else m["content"]
             msgs.append({"role": m["role"], "content": content})
         if with_images:
-            images.attach(self.data_dir, history, msgs, vision)
+            images.attach(self.user_dir, history, msgs, vision)
         return msgs
 
     def options(self):
@@ -527,6 +586,25 @@ class App:
             return {"temperature": float(self.settings()["temperature"])}
         except (TypeError, ValueError):
             return {}
+
+
+class ProfileView(App):
+    """The App for one profile other than the main one: its own database and image folder, everything else
+    (settings of the installation, running agents, MCP servers, phone access) shared with the root App."""
+    _OWN = ("root", "profile", "db", "user_dir")
+
+    def __init__(self, root, pid, db, user_dir):  # noqa: super().__init__ is not called on purpose
+        for k, v in zip(self._OWN, (root, pid, db, user_dir)):
+            object.__setattr__(self, k, v)
+
+    def __getattr__(self, name):
+        return getattr(self.root, name)
+
+    def __setattr__(self, name, value):
+        if name in self._OWN:
+            object.__setattr__(self, name, value)
+        else:
+            setattr(self.root, name, value)
 
 
 def stream_to_text(chunks):
@@ -644,6 +722,7 @@ class Handler(BaseHTTPRequestHandler):
         return v
 
     streaming = False
+    profile = None       # the profile of this request (set by route)
     sent_images = False  # set by prepare_chat: the request carried images
 
     def start_stream(self):
@@ -702,13 +781,26 @@ class Handler(BaseHTTPRequestHandler):
                 return self.login()
             if path == "/api/status" and method == "GET":
                 return self.status()
-            if path == "/api/shutdown" and method == "POST" and (self.is_direct_local() or self.authed()):
+            if path == "/api/shutdown" and method == "POST" and (self.is_direct_local() or self.authed() and (self.chosen_profile() or {}).get("admin")):
                 return self.shutdown()
             if not self.authed():
                 return self.error("Login required", 401)
+            if path == "/api/profiles" and method == "GET":
+                return self.profiles_list()
+            if path == "/api/profiles/select" and method == "POST":
+                return self.profile_select()
+            if path in ("/api/profiles/leave", "/api/logout") and method == "POST":
+                return self.profile_leave() if path == "/api/profiles/leave" else self.logout()
+            prof = self.chosen_profile()
+            if prof is None:
+                return self.error("Choose a profile", 409)
+            self.profile = prof
+            self.app = self.app.view(prof["id"])
             for pattern, meth, fn in ROUTES:
                 m = re.fullmatch(pattern, path)
                 if m and meth == method:
+                    if (meth, pattern) in ADMIN_ONLY and not prof.get("admin"):
+                        return self.error("Only an admin profile can do this", 403)
                     return fn(self, *m.groups())
             return self.error("Not found", 404)
         except (BrokenPipeError, ConnectionResetError):
@@ -807,7 +899,7 @@ class Handler(BaseHTTPRequestHandler):
     def login(self):
         """POST /api/login: check the password and set the login cookie."""
         data = self.body()
-        stored = self.app.db.get_setting("password_hash")
+        stored = self.app.main.get_setting("password_hash")
         if stored and not check_password(self.text(data, "password"), stored):
             time.sleep(1)
             return self.error("Wrong password", 401)
@@ -834,15 +926,140 @@ class Handler(BaseHTTPRequestHandler):
         s["providers"] = [dict({k: v for k, v in p.items() if k != "api_key"}, has_key=bool(p.get("api_key")))
                           for p in s["providers"]]
         s["mcp_servers"] = [mcp.public(c) for c in self.app.mcp_servers()]  # without environment values and tokens
+        s["profile"] = self.profile_public(self.profile)
+        s["profiles_count"] = len(self.app.profiles())
         self.send_json(s)
 
     def put_settings(self):
-        """PUT /api/settings"""
+        """PUT /api/settings: the profile's own preferences; settings of the installation (GLOBAL_KEYS)
+        only from an admin profile."""
         d = self.body()
+        if isinstance(d, dict) and GLOBAL_KEYS & set(d) and not self.profile.get("admin"):
+            return self.error("Only an admin profile can change this setting", 403)
         if isinstance(d, dict) and "mcp_servers" in d and not self.tools_allowed():
             return
         self.app.save_settings(d)
         self.get_settings()
+
+    # profiles ---------------------------------------------------------
+    @staticmethod
+    def profile_public(p):
+        return {"id": p["id"], "name": p.get("name", ""), "emoji": p.get("emoji", ""), "admin": bool(p.get("admin")),
+                "has_pin": bool(p.get("pin_hash"))}
+
+    def chosen_profile(self):
+        """The profile of this request: from the profile cookie, or the only profile when there is one
+        without a PIN. None when the user has to choose."""
+        profiles = self.app.profiles()
+        m = re.search(r"(?:^|;\s*)sunak_profile=([a-z0-9]+)\.([a-f0-9]+)", self.headers.get("Cookie", ""))
+        if m:
+            p = next((p for p in profiles if p["id"] == m.group(1)), None)
+            if p and hmac.compare_digest(f"{m.group(1)}.{m.group(2)}", self.app.profile_cookie(p)):
+                return p
+        if len(profiles) == 1 and not profiles[0].get("pin_hash"):
+            return profiles[0]
+        return None
+
+    def profiles_list(self):
+        """GET /api/profiles: all profiles (no PINs), the current one, and whether the user must choose."""
+        cur = self.chosen_profile()
+        self.send_json({"profiles": [self.profile_public(p) for p in self.app.profiles()],
+                        "current": cur["id"] if cur else None, "need_choice": cur is None})
+
+    def set_profile_cookie(self, value, max_age=31536000):
+        body = b'{"ok": true}'
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Set-Cookie", f"sunak_profile={value}; Path=/; HttpOnly; SameSite=Strict; Max-Age={max_age}")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def profile_select(self):
+        """POST /api/profiles/select {id, pin}: switch to a profile (its PIN, if it has one)."""
+        d = self.body()
+        p = self.app.profile_info(self.text(d, "id"))
+        if not p:
+            return self.error("Unknown profile", 404)
+        if p.get("pin_hash") and not check_password(self.text(d, "pin"), p["pin_hash"]):
+            time.sleep(1)
+            return self.error("Wrong PIN", 403)
+        self.set_profile_cookie(self.app.profile_cookie(p))
+
+    def profile_leave(self):
+        """POST /api/profiles/leave: forget the chosen profile on this device (back to the choice)."""
+        self.set_profile_cookie("", 0)
+
+    def clean_profile_fields(self, d, p):
+        if "name" in d:
+            name = d["name"]
+            if not isinstance(name, str) or not name.strip():
+                raise ValueError("Give the profile a name")
+            p["name"] = name.strip()[:40]
+        if "emoji" in d:
+            p["emoji"] = str(d["emoji"] or "").strip()[:8] or "🙂"
+        if "pin" in d:
+            pin = d["pin"]
+            if pin is not None and not isinstance(pin, str):
+                raise ValueError("pin must be text")
+            if pin and len(pin) < 4:
+                raise ValueError("Use at least 4 characters for the PIN")
+            p["pin_hash"] = hash_password(pin) if pin else ""
+
+    def profile_create(self):
+        """POST /api/profiles {name, emoji, pin, admin}: add a profile (admins only). It starts empty."""
+        d = self.body()
+        profiles = self.app.profiles()
+        if len(profiles) >= MAX_PROFILES:
+            raise ValueError(f"At most {MAX_PROFILES} profiles")
+        p = {"id": secrets.token_hex(6), "name": "", "emoji": "🙂", "admin": self.flag(d, "admin"), "pin_hash": ""}
+        self.clean_profile_fields(dict(d, name=d.get("name", "")), p)
+        self.app.main.set_setting("profiles", profiles + [p])
+        self.send_json(self.profile_public(p))
+
+    def profile_update(self, pid):
+        """PATCH /api/profiles/<id> {name, emoji, pin, admin}: an admin changes any profile, everyone their own
+        (but not their admin rights). The main profile stays an admin."""
+        d = self.body()
+        if pid != self.profile["id"] and not self.profile.get("admin"):
+            return self.error("Only an admin profile can change other profiles", 403)
+        profiles = self.app.profiles()
+        p = next((x for x in profiles if x["id"] == pid), None)
+        if not p:
+            return self.error("Unknown profile", 404)
+        self.clean_profile_fields(d, p)
+        if "admin" in d:
+            admin = self.flag(d, "admin")
+            if admin != bool(p.get("admin")):
+                if not self.profile.get("admin"):
+                    return self.error("Only an admin profile can change admin rights", 403)
+                if pid == "default" and not admin:
+                    raise ValueError("The main profile always stays an admin")
+                p["admin"] = admin
+        self.app.main.set_setting("profiles", profiles)
+        out = self.profile_public(p)
+        if pid == self.profile["id"] and "pin" in d:  # keep this device in the profile after a PIN change
+            body = json.dumps(out).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Set-Cookie", f"sunak_profile={self.app.profile_cookie(p)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=31536000")
+            self.end_headers()
+            return self.wfile.write(body)
+        self.send_json(out)
+
+    def profile_delete(self, pid):
+        """DELETE /api/profiles/<id>: delete a profile with all its chats, documents, notes, knowledge base,
+        mail and calendar links (admins only; not the main profile and not the own one)."""
+        if pid in ("default", self.profile["id"]):
+            raise ValueError("The main profile and the one you are using cannot be deleted")
+        profiles = self.app.profiles()
+        if not any(p["id"] == pid for p in profiles):
+            return self.error("Unknown profile", 404)
+        self.app.main.set_setting("profiles", [p for p in profiles if p["id"] != pid])
+        self.app.close_profile(pid)
+        shutil.rmtree(self.app.profile_dir(pid), ignore_errors=True)
+        self.send_json({"ok": True})
 
     def get_models(self):
         """GET /api/models: all models of all providers."""
@@ -933,7 +1150,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def get_image(self, name):
         """GET /api/images/<name>: an image attached to a chat message."""
-        found = images.load(self.app.data_dir, name)
+        found = images.load(self.app.user_dir, name)
         if not found:
             return self.error("Not found", 404)
         data, ctype = found
@@ -965,7 +1182,7 @@ class Handler(BaseHTTPRequestHandler):
         prov, model = self.app.resolve(model_id)
         model_id = f"{prov['id']}::{model}"
         sid = session["id"]
-        refs = images.existing(self.app.data_dir, d.get("image_refs"))
+        refs = images.existing(self.app.user_dir, d.get("image_refs"))
         if d.get("images") or refs:
             if not allow_images:
                 raise ValueError("Agent mode and tools (MCP) cannot look at images yet. Switch them off (🛠, 🔌) to ask about the image.")
@@ -974,7 +1191,7 @@ class Handler(BaseHTTPRequestHandler):
                                  "qwen2.5vl, gemma3 or llama3.2-vision, or Claude.")
             if len(refs) + len(d.get("images") or []) > images.MAX_IMAGES:
                 raise ValueError(f"At most {images.MAX_IMAGES} images per message")
-        names = refs + images.save(self.app.data_dir, d.get("images"))
+        names = refs + images.save(self.app.user_dir, d.get("images"))
         self.sent_images = bool(names)
         if d.get("truncate_from"):
             from_id = d["truncate_from"]
@@ -1823,7 +2040,9 @@ class Handler(BaseHTTPRequestHandler):
 
 ID = r"([a-f0-9]{16})"
 ROUTES = [
-    (r"/api/logout", "POST", Handler.logout),
+    (r"/api/profiles", "POST", Handler.profile_create),
+    (r"/api/profiles/([a-z0-9]{1,16})", "PATCH", Handler.profile_update),
+    (r"/api/profiles/([a-z0-9]{1,16})", "DELETE", Handler.profile_delete),
     (r"/api/settings", "GET", Handler.get_settings),
     (r"/api/settings", "PUT", Handler.put_settings),
     (r"/api/update", "GET", Handler.update_get),
@@ -1890,6 +2109,14 @@ ROUTES = [
     (rf"/api/notes/{ID}", "PATCH", Handler.patch_note),
     (rf"/api/notes/{ID}", "DELETE", Handler.delete_note),
 ]
+
+
+# what only admin profiles may do: things that change the installation or reach beyond one profile's data
+ADMIN_ONLY = {(m, p) for p, m, _ in ROUTES if (m, p) in {
+    ("POST", r"/api/profiles"), ("DELETE", r"/api/profiles/([a-z0-9]{1,16})"), ("POST", r"/api/update"),
+    ("POST", r"/api/models/pull"), ("POST", r"/api/models/delete"), ("POST", r"/api/ollama/start"),
+    ("POST", r"/api/ollama/install"), ("POST", r"/api/lan"), ("POST", r"/api/agent"), ("POST", r"/api/agent/confirm"),
+    ("POST", r"/api/mcp/test")}}
 
 
 def make_server(host, port, data_dir):

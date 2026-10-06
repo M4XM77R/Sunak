@@ -505,3 +505,22 @@ a.btn { text-decoration: none; color: inherit; display: inline-block; }
   .cal-chip, .cal-chip.all { width: 7px; height: 7px; padding: 0; border: 0; border-radius: 50%; background: var(--c); font-size: 0; }
   .cal-more { font-size: 9px; }
 }
+
+/* profiles */
+body.not-admin .admin-only { display: none !important; }
+.profile-chip { display: flex; align-items: center; gap: 2px; width: 100%; margin: 0 0 8px; padding: 6px 10px; background: transparent;
+  border: 1px solid var(--border); border-radius: var(--radius); color: inherit; font: inherit; cursor: pointer; text-align: left; }
+.profile-chip:hover { border-color: var(--accent); }
+.profile-chip.hidden { display: none; }
+.profile-picker { position: fixed; inset: 0; z-index: 100; background: var(--bg); display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 14px; padding: 16px; overflow: auto; }
+.profile-picker h1 { margin: 0; color: var(--accent); text-align: center; }
+.profile-tiles { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; max-width: 640px; }
+.profile-tile { display: flex; flex-direction: column; align-items: center; gap: 6px; width: 130px; padding: 16px 8px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); color: inherit; font: inherit; cursor: pointer; }
+.profile-tile:hover, .profile-tile:focus-visible { border-color: var(--accent); }
+.profile-tile span:nth-child(2) { overflow-wrap: anywhere; }
+.profile-emoji { font-size: 2.2em; line-height: 1; }
+.profile-row .profile-emoji { font-size: 1.4em; }
+.profile-row .row { align-items: center; margin: 0; }
+#profileBox { margin-bottom: 28px; }

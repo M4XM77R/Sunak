@@ -104,6 +104,10 @@ class DB:
             self.fts = False
         self.conn.commit()
 
+    def close(self):
+        with self._lock:
+            self.conn.close()
+
     def _q(self, sql, args=(), one=False):
         """Run one statement under the lock and return rows as dicts (or the first row with one=True)."""
         with self._lock:

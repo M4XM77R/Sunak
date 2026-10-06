@@ -87,6 +87,9 @@ Alle Endpunkte liegen unter `/api/`. Schreibende Anfragen brauchen den Header `X
 | `PUT /api/calendar/events` | `{source, uid, href, etag, recurring, event}` Termin ändern | JSON |
 | `POST /api/calendar/events/delete` | `{source, uid, href, etag}` Termin (bei Wiederholung die Serie) löschen | JSON |
 | `POST /api/calendar/parse` | `{text, now, model}`: das Modell liest einen Termin aus Text, Antwort füllt das Formular | JSON |
+| `GET /api/profiles` | Alle Profile (ohne PINs: `has_pin`), `current` und `need_choice`; geht auch vor der Profilwahl | JSON |
+| `POST /api/profiles/select`, `POST /api/profiles/leave` | `{id, pin}` setzt das Cookie `sunak_profile`, falsche PIN: 403 nach einer Sekunde; `leave` löscht es | JSON |
+| `POST /api/profiles`, `PATCH`/`DELETE /api/profiles/<id>` | Profil `{name, emoji, pin, admin}` anlegen (Admin), ändern (Admin oder das eigene, ohne Admin-Recht), löschen mit allen Daten (Admin; nicht das Hauptprofil und nicht das eigene) | JSON |
 | `POST /api/mcp/test` | `{server}` (wie im Einstellungsformular, noch nicht gespeichert) einmal starten; Antwort `{tools: [{name, description}]}` | JSON |
 | `POST /api/agent/cancel` | `{run}` stoppt den Agenten, ein laufender Befehl wird beendet | JSON |
 | `POST /api/agent/revoke` | `{session_id}` vergisst „für diesen Chat erlauben“ | JSON |
@@ -277,9 +280,21 @@ Alle Daten liegen in einer SQLite-Datei: `~/.sunak/sunak.db`, der Ordner lässt 
 | `settings` | Schlüssel-Wert-Paare als JSON: `prefs` (u. a. Theme, Sprache), `providers`, `personas` (fehlt der Eintrag, gelten `DEFAULT_PERSONAS`), `mail_accounts`, `calendars`, `mcp_servers`, `password_hash`, `secret` |
 | `calendar_events` | Sunaks eigener Kalender: `uid`, iCalendar-Text, Änderungszeit |
 
+Jedes weitere Profil hat eine eigene Datei mit denselben Tabellen unter `profiles/<id>/` (siehe Profile).
+
 Spalten, die später dazukamen, legt `DB.__init__` beim Start an (`MIGRATIONS`), ältere Datenbanken funktionieren also weiter. Die hochgeladenen Originaldateien werden nicht aufbewahrt, nur ihr Text.
 
 Passwörter werden mit PBKDF2-SHA256 und Salt gespeichert. Das Login-Cookie ist ein HMAC aus dem Geheimnis der Installation und dem Passwort-Hash. Wird das Passwort geändert, sind daher alle Sitzungen abgemeldet.
+
+## Profile
+
+Ein Profil ist eine eigene Datenbank: das Hauptprofil (`default`) nutzt `~/.sunak/sunak.db`, jedes weitere `~/.sunak/profiles/<id>/sunak.db` mit eigenem `images/`-Ordner. Die Liste der Profile (Name, Emoji, `admin`, PIN als PBKDF2-Hash) steht in der Einstellung `profiles` der Hauptdatenbank.
+
+- `Handler.route` bestimmt vor jedem Endpunkt das Profil: aus dem Cookie `sunak_profile=<id>.<hmac>` (HMAC aus dem Geheimnis der Installation, der Id und dem PIN-Hash; eine geänderte PIN meldet daher andere Geräte aus dem Profil ab) oder, wenn es nur ein Profil ohne PIN gibt, dieses. Sonst antworten alle Endpunkte außer Profilwahl, Login und Status mit 409 „Choose a profile“, die Seite zeigt dann die Auswahl.
+- `App.view(id)` liefert eine `ProfileView`: dieselbe `App`, aber mit `db` und `user_dir` des Profils. Alles andere (Provider, MCP-Manager, Agent-Läufe, Handy-Zugriff) leitet sie an die `App` weiter. Die Endpunkte merken davon nichts, sie benutzen wie bisher `self.app.db`.
+- Einstellungen: `GLOBAL_PREFS` (Update-Prüfung, Agent, Spracheingabe) sowie `providers`, `mcp_servers` und das Passwort gelten für die Installation und liegen in der Hauptdatenbank; Theme, Sprache, Systemprompt, Personas, Mail-Konten und Kalender je Profil.
+- Admin-Rechte: `ADMIN_ONLY` listet die Endpunkte, die nur Admin-Profile aufrufen dürfen (Profile anlegen und löschen, Modelle laden und löschen, Ollama, Updates, Handy-Zugriff, Agent und MCP), `put_settings` weist globale Einstellungen von anderen Profilen mit 403 ab. Die Seite blendet diese Bereiche für sie aus (`body.not-admin .admin-only`).
+- Grenzen: Die PIN trennt die Profile in der App. Wer am Computer angemeldet ist, kann die Dateien aller Profile lesen; ein Admin-Profil mit Agent-Modus oder MCP-Werkzeugen ebenfalls. Das Passwort (Login) gilt für die ganze Installation.
 
 ## Handy-Zugriff
 
