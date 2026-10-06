@@ -1,6 +1,6 @@
 """Start Sunak:  python -m sunak  [--port 7000] [--host 127.0.0.1] [--no-browser]
 
-Other commands:  stop | status | gpu | autostart on|off|status | shortcut | version"""
+Other commands:  stop | status | gpu | autostart on|off|status | shortcut | version | uninstall [--yes] [--purge]"""
 
 import argparse
 import os
@@ -86,9 +86,11 @@ def main(argv=None):
         port = int(os.environ.get("SUNAK_PORT") or 7000)
     except ValueError:
         sys.exit("SUNAK_PORT must be a number, e.g. 7000.")
-    if argv and argv[0] in ("update", "uninstall"):
-        sys.exit(f"'{argv[0]}' is part of the installed sunak command. Without installing: "
-                 + ("git pull in this folder." if argv[0] == "update" else "just delete this folder (data: ~/.sunak)."))
+    if argv and argv[0] == "update":
+        sys.exit("'update' is part of the installed sunak command. Without installing: git pull in this folder.")
+    if argv and argv[0] == "uninstall":
+        from . import uninstall
+        return uninstall.main(argv[1:])
     if argv and argv[0] in COMMANDS:
         rest = argv[1:]
         if "--port" in rest[:-1]:  # e.g. sunak stop --port 8123
@@ -100,7 +102,7 @@ def main(argv=None):
         return run_command(argv[0], rest, port)
 
     ap = argparse.ArgumentParser(prog="sunak", description="Self-hosted AI workspace",
-                                 epilog="Commands: sunak stop | status | gpu | autostart on|off | shortcut | version")
+                                 epilog="Commands: sunak stop | status | gpu | autostart on|off | shortcut | version | uninstall")
     ap.add_argument("--host", default=os.environ.get("SUNAK_HOST", "127.0.0.1"),
                     help="address to listen on (use 0.0.0.0 for your LAN / phone)")
     ap.add_argument("--port", type=int, default=port)

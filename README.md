@@ -41,6 +41,18 @@ Beim ersten Start erkennt Sunak deinen Arbeitsspeicher und schlägt ein passende
 > `git clone https://github.com/M4XM77R/sunak.git && cd sunak && ./install.sh` (Windows: `.\install.ps1`).
 > Der Installer merkt sich den Klon, `sunak update` holt Neuerungen dann per `git pull` mit deinen Git-Zugangsdaten. Sunak prüft beim Start und danach höchstens alle 6 Stunden per `git fetch`, ob es Neuerungen gibt, und zeigt dann oben links „✨ Update available“. Installiert wird nur, wenn du auf **Update** klickst.
 
+### Deinstallieren
+
+```bash
+sunak uninstall
+```
+
+Das entfernt den Befehl `sunak`, den App-Ordner, Desktop- und Menü-Icons, den Autostart und den PATH-Eintrag. Läuft Sunak noch, wird es vorher beendet. Sunaks Docker-Container werden nur nach Rückfrage entfernt. **Deine Daten bleiben erhalten** (Chats, Einstellungen, API-Keys, Mail-Konten in `~/.sunak`), außer du antwortest bei der Frage mit `y`. Heruntergeladene Ollama-Modelle werden ebenfalls nur auf Nachfrage gelöscht. Ollama selbst bleibt installiert, weil andere Programme es nutzen können; Sunak sagt dir, wie du es entfernst. Zweimal ausführen schadet nicht.
+
+- Ohne Fragen: `sunak uninstall --yes` (Programm weg, Daten bleiben), alles inklusive Daten: `sunak uninstall --yes --purge`.
+- Als Einzeiler, auch wenn der Befehl `sunak` fehlt: `curl -fsSL https://raw.githubusercontent.com/M4XM77R/sunak/main/uninstall.sh | bash` (Optionen: `| bash -s -- --yes`), unter Windows `irm https://raw.githubusercontent.com/M4XM77R/sunak/main/uninstall.ps1 | iex` (ohne Fragen vorher `$env:SUNAK_YES = "1"`, mit Daten zusätzlich `$env:SUNAK_PURGE = "1"`). Im Klon: `./uninstall.sh` bzw. `.\uninstall.ps1`.
+- Wer Sunak vor diesem Stand installiert hat, macht erst `sunak update` oder nimmt das Skript; der alte Befehl `sunak uninstall` löschte nach einer Frage auch die Daten.
+
 ### Ohne Installation ausprobieren
 
 Sunak braucht **keine einzige Python-Abhängigkeit**. Klonen und starten reicht:
@@ -121,7 +133,7 @@ Sunak rechnet nicht selbst, die Modelle laufen in Ollama. Ollama nutzt eine pass
 | Aktualisieren | Bei „✨ Update available“ oben links auf **Update** klicken: Sunak installiert die neue Version und startet neu. Oder im Terminal `sunak update` (holt die neueste Version und beendet ein laufendes Sunak, damit der nächste Start sie nutzt) |
 | Update-Hinweis abschalten | Settings → Updates → Haken bei „Check for updates“ entfernen → Save settings |
 | Version anzeigen | `sunak version` |
-| Deinstallieren | `sunak uninstall` (macOS/Linux, entfernt auch Icons und Autostart). Windows: `sunak autostart off`, dann den Ordner `%LOCALAPPDATA%\sunak` und die Sunak-Icons löschen |
+| Deinstallieren | `sunak uninstall`: entfernt das Programm, fragt vor dem Löschen der Daten (Standard: behalten). Details unter [Deinstallieren](#deinstallieren) |
 
 ## E-Mail
 

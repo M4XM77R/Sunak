@@ -82,8 +82,7 @@ class DesktopTest(unittest.TestCase):
         self.assertTrue(out.getvalue().startswith(__version__))
 
     def test_bad_ports_and_launcher_only_commands_give_a_message(self):
-        for argv, env in ((["stop", "--port", "abc"], {}), (["version"], {"SUNAK_PORT": "x"}), (["update"], {}),
-                          (["uninstall"], {})):
+        for argv, env in ((["stop", "--port", "abc"], {}), (["version"], {"SUNAK_PORT": "x"}), (["update"], {})):
             with mock.patch.dict(os.environ, env), self.assertRaises(SystemExit) as e:
                 cli.main(argv)
             self.assertIsInstance(e.exception.code, str)  # a message, not a traceback

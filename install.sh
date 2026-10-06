@@ -104,6 +104,7 @@ cat > "$BIN_DIR/sunak" <<EOF
 APP_DIR="$APP_DIR"
 export PYTHONPATH="\$APP_DIR\${PYTHONPATH:+:\$PYTHONPATH}"
 case "\${1:-}" in
+  uninstall) cd "\$HOME" && exec python3 -m sunak "\$@" ;;  # keeps your data unless you say otherwise
   update)
     export SUNAK_HOME="$HOME_DIR" SUNAK_REPO="$REPO" SUNAK_BRANCH="$BRANCH"  # reinstall into the same place
     old=\$(python3 -m sunak version)
@@ -122,19 +123,6 @@ case "\${1:-}" in
     if python3 -m sunak status | grep -q "is running"; then
       python3 -m sunak stop >/dev/null && echo "Sunak was running and has been stopped. Start it again with: sunak"
     fi
-    exit ;;
-  uninstall)
-    read -r -p "Remove Sunak and ALL its data in $HOME_DIR? [y/N] " a
-    case "\$a" in [yY]*)
-      python3 -m sunak stop >/dev/null 2>&1; python3 -m sunak autostart off >/dev/null 2>&1
-      rm -rf "$HOME_DIR" "$BIN_DIR/sunak" "\$HOME/.local/share/applications/sunak.desktop" "\$HOME/Applications/Sunak.app"
-      for d in "\$HOME/Desktop" "\$(xdg-user-dir DESKTOP 2>/dev/null)"; do
-        [ -n "\$d" ] || continue
-        rm -f "\$d/sunak.desktop"
-        [ -L "\$d/Sunak.app" ] && rm -f "\$d/Sunak.app"
-      done
-      echo "Removed.";;
-    esac
     exit ;;
 esac
 exec python3 -m sunak "\$@"
