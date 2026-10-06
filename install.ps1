@@ -125,6 +125,10 @@ if ($env:SUNAK_AUTOSTART -eq "1" -or ($env:SUNAK_YES -ne "1" -and (Read-Host "St
 Pop-Location
 
 # 4. Ollama
+# Ollama uses a GPU on its own (CUDA for NVIDIA, ROCm for AMD); its installer brings what the GPU needs.
+Push-Location $AppDir
+try { & $cmd gpu | ForEach-Object { Say $_ } } catch { }
+Pop-Location
 if ($env:SUNAK_NO_OLLAMA -ne "1" -and -not (Get-Command ollama -ErrorAction SilentlyContinue)) {
   if (Ask "Install Ollama to run AI models on this computer? (recommended)") {
     try { winget install -e --id Ollama.Ollama --accept-package-agreements --accept-source-agreements }

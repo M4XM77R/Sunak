@@ -204,6 +204,14 @@ def ollama_tags(p, timeout=4):
     return sorted(out, key=lambda m: m["name"])
 
 
+def ollama_ps(p, timeout=3):
+    """Models Ollama has loaded right now, with how much of each sits in GPU memory (size_vram)."""
+    with _request(_base(p) + "/api/ps", api_key=p.get("api_key", ""), timeout=timeout) as r:
+        data = json.load(r)
+    return [{"name": m.get("name", ""), "size": m.get("size") or 0, "size_vram": m.get("size_vram") or 0}
+            for m in data.get("models", []) if isinstance(m, dict)]
+
+
 def ollama_delete(p, model):
     """Delete a downloaded model from Ollama."""
     with _request(_base(p) + "/api/delete", {"model": model}, p.get("api_key", ""), method="DELETE"):

@@ -772,11 +772,43 @@ function useModel(name) {
   syncModelSelect();
 }
 
+/* GPU: which one this computer has, and whether Ollama really uses it */
+function gpuBanners(o) {
+  const out = [];
+  const g = o.gpu;
+  const box = el('div', { class: 'banner' });
+  if (g?.usable) {
+    const best = g.gpus.find((x) => x.usable && x.vendor === g.vendor) || {};
+    box.append(el('span', {}, `⚡ GPU: ${best.name || g.vendor}`), el('span', { class: 'muted small' },
+      g.unified ? ` · Metal, shares the ${o.ram_gb || '?'} GB memory` : ` · ${g.vram_gb} GB VRAM · models marked ⚡ run fully on it`));
+  } else if (g) {
+    box.append(el('span', {}, '🖥 No GPU that Ollama can use was found.'), el('span', { class: 'muted small' }, ' Models run on the CPU, smaller models answer faster.'));
+  } else if (!o.local) {
+    box.append(el('span', {}, o.gpu_expected ? `⚡ GPU: ${o.gpu_expected === 'nvidia' ? 'NVIDIA' : 'AMD'} via Docker` : `Ollama runs at ${o.base_url} and uses that computer’s GPU, if it has one.`));
+  } else return out; // still detecting
+  if (o.running) {
+    const loaded = el('div', { class: 'gpu-loaded small' });
+    if (!o.loaded?.length) loaded.append(el('span', { class: 'muted' }, 'Chat with a model to see whether it runs on the GPU.'));
+    for (const m of o.loaded || []) {
+      const where = m.gpu_pct >= 100 ? '100% GPU' : m.gpu_pct > 0 ? `${m.gpu_pct}% GPU, rest CPU (model is bigger than the VRAM)` : 'CPU';
+      loaded.append(el('span', { class: `chip${m.gpu_pct > 0 ? ' on' : ''}` }, `${m.name}: ${where}`));
+    }
+    box.append(loaded);
+  }
+  out.push(box);
+  const warn = o.gpu_warning || g?.hint;
+  if (warn) out.push(el('div', { class: 'banner warn-banner' }, el('p', {}, `⚠ ${warn}`)));
+  return out;
+}
+
 function renderModelsView() {
   const o = state.ollama;
   const banner = $('#ollamaBanner');
   banner.innerHTML = '';
   banner.append(ollamaBanner());
+  const gbox = $('#gpuBox');
+  gbox.innerHTML = '';
+  if (o) gbox.append(...gpuBanners(o));
   const list = $('#installedList');
   list.innerHTML = '';
   if (!o?.models?.length) list.append(el('p', { class: 'muted' }, o?.running ? 'No models yet. Pick one below.' : '–'));
@@ -804,7 +836,8 @@ function renderModelsView() {
   if (!items.length) cat.append(el('p', { class: 'muted' }, o ? 'Nothing in this category fits your computer. Try “All”.' : ''));
   for (const m of items) {
     cat.append(el('div', { class: 'model-card' },
-      el('div', { class: 'mc-head' }, el('b', {}, m.title), el('span', { class: `badge ${m.fits ? 'fit' : 'nofit'}` }, m.fits ? '✓ fits' : 'needs more RAM')),
+      el('div', { class: 'mc-head' }, el('b', {}, m.title), el('span', { class: `badge ${m.gpu ? 'gpu' : m.fits ? 'fit' : 'nofit'}`, title: m.gpu ? 'Runs fully on your GPU' : m.fits ? 'Runs, on the CPU or partly on the GPU' : '' },
+        m.gpu ? '⚡ fits GPU' : m.fits ? '✓ fits' : 'needs more RAM')),
       el('code', { class: 'small' }, m.name),
       el('p', { class: 'muted small' }, m.description),
       el('div', { class: 'mc-foot' }, el('span', { class: 'small' }, `≈ ${m.size_gb} GB`), ...m.tags.map((t) => el('span', { class: 'chip' }, t))),

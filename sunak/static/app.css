@@ -242,6 +242,9 @@ h2.section { font-size: 15px; margin: 24px 0 8px; padding-bottom: 6px; border-bo
 .badge { font-size: 11px; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
 .badge.fit { background: color-mix(in srgb, #3ecf8e 18%, transparent); color: #3ecf8e; }
 .badge.nofit { background: var(--panel-2); color: var(--muted); }
+.badge.gpu { background: var(--accent-soft); color: var(--accent); }
+#gpuBox .banner { margin-top: 10px; }
+.gpu-loaded { display: flex; flex-wrap: wrap; gap: 6px; flex-basis: 100%; }
 .installed .model-row b { font-weight: 600; }
 
 /* knowledge base */
@@ -299,3 +302,4 @@ a.btn { text-decoration: none; color: inherit; display: inline-block; }
   .model-select { max-width: 96px; }
   body[data-view="chat"] #viewTitle { display: none; } /* the chat list shows the title */
 }
+.gpu-loaded .chip:not(.on) { background: var(--panel-2); color: var(--muted); }

@@ -15,7 +15,8 @@ Browser (sunak/static)  ──HTTP/JSON, NDJSON-Streams──▶  sunak/server.p
 
 | Datei | Aufgabe |
 |---|---|
-| `sunak/__main__.py` | Kommandozeile (`python -m sunak`): öffnet ein bereits laufendes Sunak im Browser, sonst sucht es einen freien Port, startet den Server und öffnet den Browser. Befehle `stop`, `status`, `autostart on\|off\|status`, `shortcut`, `version` |
+| `sunak/__main__.py` | Kommandozeile (`python -m sunak`): öffnet ein bereits laufendes Sunak im Browser, sonst sucht es einen freien Port, startet den Server und öffnet den Browser. Befehle `stop`, `status`, `gpu`, `autostart on\|off\|status`, `shortcut`, `version` |
+| `sunak/gpu.py` | GPU-Erkennung ohne Zusatzpakete: `nvidia-smi`, `/sys/class/drm` (Linux), Registry (Windows), Apple Silicon; Auswertung von Ollamas `/api/ps` und Warnung bei CPU-Betrieb |
 | `sunak/updates.py` | Update-Prüfung per git (neue Commits im Klon, aus dem installiert wurde) und Hilfsprozess für den Update-Knopf: wartet auf das Ende des Servers, installiert das Update, startet Sunak neu |
 | `sunak/desktop.py` | Desktop-Integration: laufendes Sunak erkennen (`/api/status` mit `Server: Sunak/…`) und beenden, Autostart-Datei und Desktop-Icon je Betriebssystem |
 | `start.py` | Start direkt aus dem Repository-Ordner ohne Installation (Windows: Doppelklick) |
@@ -30,7 +31,7 @@ Browser (sunak/static)  ──HTTP/JSON, NDJSON-Streams──▶  sunak/server.p
 | `tests/test_server.py` | End-to-End-Tests gegen simulierte Backends |
 | `tests/test_extract.py` | Tests für Textauslese und Wissensbasis (die Testdateien werden im Test erzeugt) |
 | `install.sh`, `install.ps1` | Installer für macOS/Linux und Windows |
-| `Dockerfile`, `docker-compose*.yml` | Container mit Ollama, optional mit NVIDIA-GPU |
+| `Dockerfile`, `docker-compose*.yml` | Container mit Ollama: nur CPU (`docker-compose.yml`), NVIDIA (`+ docker-compose.gpu.yml`) oder AMD/ROCm (`+ docker-compose.amd.yml`) |
 
 ## Datenfluss einer Chat-Nachricht
 
@@ -56,7 +57,7 @@ Alle Endpunkte liegen unter `/api/`. Schreibende Anfragen brauchen den Header `X
 | `POST /api/login`, `POST /api/logout` | Anmelden, Abmelden | JSON |
 | `GET`/`PUT /api/settings` | Einstellungen und Provider | JSON |
 | `GET /api/models` | Modelle aller Provider, dazu Fehler nicht erreichbarer Provider | JSON |
-| `GET /api/ollama` | Ollama-Status (installiert, läuft, Version), installierte Modelle mit Größe, Katalog mit `fits`, Installationsweg | JSON |
+| `GET /api/ollama` | Ollama-Status (installiert, läuft, Version), installierte Modelle mit Größe, Katalog mit `fits` und `gpu`, Installationsweg, GPU (`gpu`, `gpu_expected`), geladene Modelle mit GPU-Anteil (`loaded`), `gpu_warning` | JSON |
 | `POST /api/ollama/start` | Lokales Ollama im Hintergrund starten | JSON |
 | `POST /api/ollama/install` | Ollama per winget bzw. Homebrew installieren | NDJSON `status` |
 | `POST /api/models/pull` | Ollama-Modell herunterladen; Fortschritt aller Layer summiert | NDJSON `progress` (`completed`, `total` in Bytes) |
@@ -108,6 +109,16 @@ Die Seite „Models“ und die Einrichtung beim ersten Start nutzen `sunak/ollam
 - **Katalog**: `CATALOG` ist eine kuratierte Liste mit Name, ungefährer Größe, Tags und Beschreibung. `fits()` markiert Modelle, die zum Arbeitsspeicher passen. Die Faustregel lautet: Größe × 1,3 + 2 GB.
 - **Download**: `POST /api/models/pull` streamt `/api/pull` von Ollama und summiert den Fortschritt aller Layer. Bricht der Browser die Anfrage ab („Cancel“), schließt der Server die Verbindung zu Ollama und der Download stoppt. Bereits geladene Teile bleiben erhalten, ein neuer Start setzt dort fort.
 - **Frontend**: Laufende Downloads liegen in `state.pulls` und laufen weiter, wenn man die Seite wechselt. Jedes Element mit `data-slot`/`data-pull` zeigt denselben Fortschritt, zum Beispiel Katalogkarte, Download-Liste und Einrichtungskarte im Chat.
+
+## GPU
+
+Sunak rechnet nicht selbst; Ollama nutzt die GPU von sich aus (CUDA, ROCm, Metal). Sunak sorgt dafür, dass man sieht, ob das klappt, und passt die Empfehlungen an.
+
+- **Erkennung** (`sunak/gpu.py`): NVIDIA über `nvidia-smi` (Name, VRAM; fehlt der Treiber, findet Linux die Karte trotzdem über `/sys/class/drm` und Sunak rät zum Treiber), AMD und Intel unter Linux über `/sys/class/drm` (`mem_info_vram_total`), unter Windows über die Registry (`HardwareInformation.qwMemorySize` der Grafikadapter, ohne Zusatzprogramme), Apple Silicon über `platform.machine()`. Nutzbar für Ollama gilt eine NVIDIA- oder AMD-Karte mit Treiber und mindestens 3 GB VRAM oder Apple Silicon (gemeinsamer Speicher). Intel-Grafik und kleine integrierte AMD-GPUs zählen nicht. Die Erkennung läuft einmal beim Start im Hintergrund (`App.gpu`); jeder Fehler heißt einfach „keine GPU“.
+- **Nutzung prüfen:** `GET /api/ollama` fragt zusätzlich `/api/ps` ab. Pro geladenem Modell steht dort `size_vram`, daraus wird der GPU-Anteil. Liegt kein Byte auf der GPU, obwohl eine nutzbare GPU da ist, liefert `gpu.cpu_warning` einen Hilfetext je Hersteller.
+- **Nur lokal:** Die GPU dieses Rechners zählt nur, wenn der Ollama-Provider auf `localhost` zeigt. Bei Docker läuft Ollama in einem eigenen Container; die GPU-Compose-Dateien setzen deshalb `SUNAK_GPU=nvidia|amd` im Sunak-Container, damit die Warnung auch dort greift.
+- **Empfehlungen:** Der Katalog markiert Modelle mit `gpu`, die komplett in den VRAM passen (Größe × 1,2 + 1 GB), auf Apple Silicon gilt die RAM-Regel. `recommend()` nimmt ein größeres Startmodell, wenn es ganz in den VRAM passt, aber nie ein kleineres als nach RAM.
+- **Installer und Kommandozeile:** `sunak gpu` gibt das Ergebnis als Text aus; `install.sh` und `install.ps1` zeigen es vor der Ollama-Installation an. Den GPU-Teil (CUDA- bzw. ROCm-Bibliotheken) bringt der offizielle Ollama-Installer selbst mit.
 
 ## Deep Research
 
@@ -188,7 +199,7 @@ Umgebungsvariablen: `SUNAK_HOST`, `SUNAK_PORT`, `SUNAK_DATA`, `SUNAK_PASSWORD`, 
 python3 -m unittest discover tests -v
 ```
 
-Die Tests starten Sunak und einen simulierten Server, der die Ollama-, Anthropic- und OpenAI-API nachbildet. Abgedeckt sind Chat, Personas, Update-Prüfung (echte Git-Repositories mit lokalem Remote, installierte Kopie, Fehlerfälle, Update-Knopf), Kommandozeile (bereits laufend, `status`, `stop`) und Autostart-Dateien, Chat-Suche und Export, Wissensbasis (Hochladen, Suche, Auszüge im Prompt, Quellen), Textauslese aus PDF, Word, OpenDocument und PowerPoint, Datenbank-Migration, Neu generieren, Denkprozess, Gedächtnis, Compare, Research (mit gestubbter Suche), Dokumente, Modell-Download mit Fortschritt, Ollama-Status und Katalog, Claude (Streaming, Header, Denkprozess, Ablehnung, falscher Key, Key-Maskierung), Login, CSRF-Schutz und Pfad-Traversal. GitHub Actions führt sie auf Linux, macOS und Windows aus (`.github/workflows/test.yml`).
+Die Tests starten Sunak und einen simulierten Server, der die Ollama-, Anthropic- und OpenAI-API nachbildet. Abgedeckt sind Chat, Personas, GPU-Erkennung (simulierte `nvidia-smi`-Ausgabe, sysfs-Bäume, Windows-Registry, Apple Silicon, `/api/ps`, Warnung, Katalog und Empfehlung), Update-Prüfung (echte Git-Repositories mit lokalem Remote, installierte Kopie, Fehlerfälle, Update-Knopf), Kommandozeile (bereits laufend, `status`, `stop`) und Autostart-Dateien, Chat-Suche und Export, Wissensbasis (Hochladen, Suche, Auszüge im Prompt, Quellen), Textauslese aus PDF, Word, OpenDocument und PowerPoint, Datenbank-Migration, Neu generieren, Denkprozess, Gedächtnis, Compare, Research (mit gestubbter Suche), Dokumente, Modell-Download mit Fortschritt, Ollama-Status und Katalog, Claude (Streaming, Header, Denkprozess, Ablehnung, falscher Key, Key-Maskierung), Login, CSRF-Schutz und Pfad-Traversal. GitHub Actions führt sie auf Linux, macOS und Windows aus (`.github/workflows/test.yml`).
 
 ## Erweitern
 

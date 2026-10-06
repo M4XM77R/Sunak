@@ -1,4 +1,5 @@
-# docker compose up -d   ->   http://localhost:7000
+# docker compose up -d   ->   http://localhost:7000   (CPU only)
+# NVIDIA GPU: add -f docker-compose.gpu.yml, AMD GPU: add -f docker-compose.amd.yml (see the README)
 services:
   sunak:
     build: .

@@ -23,6 +23,7 @@ class FakeBackend(BaseHTTPRequestHandler):
     last_messages = None
     last_body = None
     last_headers = None
+    ps_vram = 1000  # /api/ps: how much of the loaded model sits on the GPU
 
     def log_message(self, *a):
         pass
@@ -40,6 +41,8 @@ class FakeBackend(BaseHTTPRequestHandler):
             return self._json({"version": "0.12.3"})
         if self.path == "/api/tags":
             return self._json({"models": [{"name": "tiny:1b"}, {"name": "think:1b"}]})
+        if self.path == "/api/ps":
+            return self._json({"models": [{"name": "tiny:1b", "size": 1000, "size_vram": type(self).ps_vram}]})
         if self.path == "/v1/models":
             return self._json({"data": [{"id": "gpt-fake"}]})
         if self.path.startswith("/anthropic/v1/models"):
@@ -226,6 +229,32 @@ class SunakTest(unittest.TestCase):
         self.assertIn("qwen3:4b", [m["name"] for m in st["catalog"]])
         self.assertTrue(all("fits" in m for m in st["catalog"]))
         self.assertIn(st["install"]["method"], ("winget", "brew", "script", "download"))
+
+    def test_gpu_on_models_page(self):
+        app = self.app.RequestHandlerClass.app
+        nvidia = {"gpus": [{"vendor": "nvidia", "name": "RTX Fake", "vram_gb": 12.0, "driver": True,
+                            "unified": False, "usable": True}],
+                  "usable": True, "vendor": "nvidia", "vram_gb": 12.0, "unified": False, "hint": None}
+        old = app.gpu
+        try:
+            app.gpu = nvidia
+            st = self.call("GET", "/api/ollama")
+            self.assertEqual(st["gpu"]["vram_gb"], 12.0)
+            self.assertEqual(st["loaded"], [{"name": "tiny:1b", "size": 1000, "size_vram": 1000, "gpu_pct": 100}])
+            self.assertIsNone(st["gpu_warning"])
+            cat = {m["name"]: m for m in st["catalog"]}
+            self.assertTrue(cat["qwen3:8b"]["gpu"])      # 5.2 GB fits into 12 GB VRAM
+            self.assertFalse(cat["gemma3:27b"]["gpu"])   # 17 GB does not
+            self.assertEqual(self.call("GET", "/api/status")["recommended"]["model"], "qwen3:8b" if (app.ram or 0) < 24 else "qwen3:14b")
+            FakeBackend.ps_vram = 0                      # Ollama fell back to the CPU
+            st = self.call("GET", "/api/ollama")
+            self.assertEqual(st["loaded"][0]["gpu_pct"], 0)
+            self.assertIn("NVIDIA", st["gpu_warning"])
+            app.gpu = None                               # no GPU known: no warning
+            self.assertIsNone(self.call("GET", "/api/ollama")["gpu_warning"])
+        finally:
+            app.gpu = old
+            FakeBackend.ps_vram = 1000
 
     def test_ollama_start_refuses_remote(self):
         with self.assertRaises(ProviderError):

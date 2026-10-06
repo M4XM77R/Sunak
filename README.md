@@ -56,9 +56,21 @@ Unter Windows reicht ein Doppelklick auf `start.py`.
 ### Docker (inklusive Ollama)
 
 ```bash
-docker compose up -d                      # http://localhost:7000
+docker compose up -d                                                   # nur CPU, http://localhost:7000
 docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d   # mit NVIDIA-GPU
+docker compose -f docker-compose.yml -f docker-compose.amd.yml up -d   # mit AMD-GPU (Linux)
 ```
+
+Für NVIDIA braucht der Rechner den NVIDIA-Treiber und das [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html), für AMD den `amdgpu`-Treiber (Linux, ROCm-Image `ollama/ollama:rocm`). Auf dem Mac kann Docker die GPU nicht nutzen; dort ist die normale Installation mit der Ollama-App schneller.
+
+### GPU
+
+Sunak rechnet nicht selbst, die Modelle laufen in Ollama. Ollama nutzt eine passende GPU automatisch: NVIDIA über CUDA, AMD über ROCm, Apple Silicon über Metal. Der Ollama-Installer richtet dafür alles ein, die NVIDIA-Karte braucht nur den normalen Treiber. Ohne passende GPU laufen die Modelle auf dem Prozessor, dann sind kleine Modelle die bessere Wahl.
+
+- `sunak gpu` zeigt, welche GPU Sunak gefunden hat; die Installer melden das ebenfalls.
+- Die Seite **Models** zeigt GPU und Grafikspeicher, markiert Modelle, die komplett hineinpassen, mit ⚡ und zeigt pro geladenem Modell, ob es auf der GPU oder dem Prozessor läuft. Läuft Ollama trotz GPU auf dem Prozessor, erscheint eine Warnung mit Lösungshinweis.
+- Das empfohlene Startmodell richtet sich nach Arbeitsspeicher und Grafikspeicher.
+- AMD-Karten, die ROCm nicht offiziell unterstützt, laufen oft mit `HSA_OVERRIDE_GFX_VERSION` (zum Beispiel `10.3.0` für RX 6000, `11.0.0` für RX 7000), gesetzt für den Ollama-Dienst bzw. im `ollama`-Container. Details: [docs.ollama.com/gpu](https://docs.ollama.com/gpu).
 
 ## Funktionen
 
@@ -72,7 +84,7 @@ docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d   # mit NVI
 | 🔎 **Research** | Sucht im Web, liest die besten Seiten und schreibt einen Bericht mit Quellenangaben; als Dokument speicherbar |
 | 📝 **Documents** | Markdown-Editor mit Autosave, Vorschau, Export und KI-Bearbeitung („kürzer“, „Grammatik korrigieren“), auch nur für markierten Text, mit Rückgängig |
 | 🧠 **Notes & Memory** | Notizen; als „memory“ markierte Notizen kennt die KI in jedem Chat |
-| 🧩 **Modelle** | Eingebaute Ollama-Verwaltung: Modellkatalog mit Empfehlungen passend zu deinem RAM, Download per Klick mit Fortschrittsbalken und Abbrechen, jedes Ollama-Modell per Name, installierte Modelle anzeigen und löschen. Ollama lässt sich aus Sunak heraus starten und unter Windows (winget) und macOS (Homebrew) auch installieren. Zusätzlich jede OpenAI-kompatible API: OpenAI, OpenRouter, Groq, LM Studio, llama.cpp, vLLM |
+| 🧩 **Modelle** | Eingebaute Ollama-Verwaltung: GPU-Erkennung (NVIDIA, AMD, Apple Silicon) mit Warnung, wenn Ollama sie nicht nutzt, Modellkatalog mit Empfehlungen passend zu RAM und Grafikspeicher, Download per Klick mit Fortschrittsbalken und Abbrechen, jedes Ollama-Modell per Name, installierte Modelle anzeigen und löschen. Ollama lässt sich aus Sunak heraus starten und unter Windows (winget) und macOS (Homebrew) auch installieren. Zusätzlich jede OpenAI-kompatible API: OpenAI, OpenRouter, Groq, LM Studio, llama.cpp, vLLM |
 | 🎨 **Look** | Dunkel/Hell, Pink als Standard-Akzent, weitere Akzentfarben in den Einstellungen, als App installierbar (PWA), handytauglich |
 | 🔒 **Sicherheit** | Läuft standardmäßig nur auf `localhost`; optionales Passwort; Daten in einer SQLite-Datei unter `~/.sunak` |
 
@@ -97,6 +109,7 @@ docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d   # mit NVI
 | Vom Handy nutzen | `sunak --host 0.0.0.0`, in Settings ein Passwort setzen, dann `http://<PC-IP>:7000` öffnen |
 | Sunak beenden | Settings → ⏻ Stop Sunak, oder `sunak stop` |
 | Läuft Sunak? | `sunak status` |
+| Welche GPU wird genutzt? | `sunak gpu`, oder die Seite Models |
 | Automatisch beim Anmelden starten | `sunak autostart on` (aus: `sunak autostart off`) |
 | Desktop-Icon neu anlegen | `sunak shortcut` |
 | Aktualisieren | Bei „✨ Update available“ oben links auf **Update** klicken: Sunak installiert die neue Version und startet neu. Oder im Terminal `sunak update` (holt die neueste Version und beendet ein laufendes Sunak, damit der nächste Start sie nutzt) |

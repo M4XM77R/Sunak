@@ -1,0 +1,12 @@
+# AMD GPU (Linux, ROCm):  docker compose -f docker-compose.yml -f docker-compose.amd.yml up -d
+# Needs the amdgpu driver on the host (/dev/kfd and /dev/dri). Supported cards:
+# https://docs.ollama.com/gpu  (other cards may work with HSA_OVERRIDE_GFX_VERSION, see the README)
+services:
+  sunak:
+    environment:
+      - SUNAK_GPU=amd   # lets Sunak warn when Ollama still runs on the CPU
+  ollama:
+    image: ollama/ollama:rocm
+    devices:
+      - /dev/kfd
+      - /dev/dri

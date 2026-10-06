@@ -22,7 +22,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlparse
 
-from . import __version__, extract, knowledge, ollama, providers, research, updates
+from . import __version__, extract, gpu, knowledge, ollama, providers, research, updates
 from .db import DB
 
 STATIC = Path(__file__).parent / "static"
@@ -97,12 +97,17 @@ def total_ram_gb():
     return None
 
 
-def recommend(ram):
-    """Pick a starter model that fits into `ram` GB of memory."""
-    for limit, model, size in RECOMMENDATIONS:
-        if ram is None or ram < limit:
-            return {"model": model, "size": size}
-    return {"model": RECOMMENDATIONS[-1][1], "size": RECOMMENDATIONS[-1][2]}
+def recommend(ram, gpu_info=None):
+    """Pick a starter model that fits into `ram` GB of memory, or a bigger one when it fits
+    completely into the GPU's memory (then it is fast)."""
+    pick = next((i for i, (limit, _, _) in enumerate(RECOMMENDATIONS) if ram is None or ram < limit),
+                len(RECOMMENDATIONS) - 1)
+    vram = (gpu_info or {}).get("vram_gb") if (gpu_info or {}).get("usable") else None
+    for i, (_, model, size) in enumerate(RECOMMENDATIONS):
+        if i > pick and ollama.fits_gpu(float(size.split()[0]), vram):
+            pick = i
+    _, model, size = RECOMMENDATIONS[pick]
+    return {"model": model, "size": size}
 
 
 def _check_pref(key, value, default):
@@ -145,10 +150,18 @@ class App:
         if env_pw:
             self.db.set_setting("password_hash", hash_password(env_pw))
         self.ram = total_ram_gb()
+        self.gpu = None  # gpu.summary(), filled in the background (nvidia-smi can take a moment)
+        threading.Thread(target=self._detect_gpu, daemon=True).start()
         self.instance = secrets.token_hex(8)  # changes with every start, so the page sees a restart
         self.update = {"behind": None, "checked": 0.0}
         self._update_lock = threading.Lock()
         self._checking = False
+
+    def _detect_gpu(self):
+        try:
+            self.gpu = gpu.summary(gpu.detect())
+        except Exception:  # noqa: BLE001 - no GPU info is fine, the app works without it
+            traceback.print_exc()
 
     # updates ----------------------------------------------------------
     def check_updates(self):
@@ -266,6 +279,13 @@ class App:
             if p["type"] == "ollama":
                 return p
         raise providers.ProviderError("No Ollama provider configured. Add one in Settings → Providers.")
+
+    def local_gpu(self):
+        """GPU info of this computer when Ollama runs here, else None (a remote Ollama has its own GPU)."""
+        try:
+            return self.gpu if ollama.is_local(self.ollama_provider()) else None
+        except providers.ProviderError:
+            return None
 
     def resolve(self, model_id):
         """Turn a model id 'provider::model' (or the default) into (provider, model name)."""
@@ -587,7 +607,7 @@ class Handler(BaseHTTPRequestHandler):
             "auth_required": self.app.auth_required(),
             "authed": self.authed(),
             "ram_gb": self.app.ram,
-            "recommended": recommend(self.app.ram),
+            "recommended": recommend(self.app.ram, self.app.local_gpu()),
             "instance": self.app.instance,
         })
 
@@ -1031,7 +1051,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def ollama_status(self):
         """GET /api/ollama: installed / running / version, installed models, catalog, install method."""
-        self.send_json(ollama.status(self.app.ollama_provider(), self.app.ram))
+        self.send_json(ollama.status(self.app.ollama_provider(), self.app.ram, self.app.gpu))
 
     def ollama_start(self):
         """POST /api/ollama/start: start the local Ollama server in the background."""

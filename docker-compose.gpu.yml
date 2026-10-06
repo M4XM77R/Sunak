@@ -1,5 +1,10 @@
 # NVIDIA GPU:  docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
+# Needs the NVIDIA driver and the NVIDIA Container Toolkit on the host:
+# https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html
 services:
+  sunak:
+    environment:
+      - SUNAK_GPU=nvidia   # lets Sunak warn when Ollama still runs on the CPU
   ollama:
     deploy:
       resources:

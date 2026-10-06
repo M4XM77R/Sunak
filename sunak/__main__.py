@@ -1,6 +1,6 @@
 """Start Sunak:  python -m sunak  [--port 7000] [--host 127.0.0.1] [--no-browser]
 
-Other commands:  stop | status | autostart on|off|status | shortcut | version"""
+Other commands:  stop | status | gpu | autostart on|off|status | shortcut | version"""
 
 import argparse
 import os
@@ -9,14 +9,14 @@ import threading
 import webbrowser
 from pathlib import Path
 
-from . import __version__, desktop
+from . import __version__, desktop, gpu
 from .server import make_server
 
 PINK = "\033[38;5;205m" if sys.stdout.isatty() else ""
 RESET = "\033[0m" if sys.stdout.isatty() else ""
 
 
-COMMANDS = ("stop", "status", "autostart", "shortcut", "version")
+COMMANDS = ("stop", "status", "gpu", "autostart", "shortcut", "version")
 
 
 def find_running(port):
@@ -28,6 +28,20 @@ def find_running(port):
     return None
 
 
+def gpu_report(info):
+    """Lines that tell the user which GPU Ollama can use (printed by `sunak gpu` and the installers)."""
+    if info["hint"]:
+        return [info["hint"]]
+    if not info["usable"]:
+        return ["No GPU that Ollama can use was found. Models run on the CPU; smaller models answer faster."]
+    best = next(g for g in info["gpus"] if g["usable"] and g["vendor"] == info["vendor"])
+    how = {"nvidia": "Ollama uses it automatically (CUDA, needs the NVIDIA driver).",
+           "amd": "Ollama uses it automatically (ROCm, set up by the Ollama installer).",
+           "apple": "Ollama uses the GPU automatically (Metal)."}[info["vendor"]]
+    mem = "shares the main memory" if info["unified"] else f"{info['vram_gb']} GB VRAM"
+    return [f"GPU: {best['name']} ({mem}). {how}"]
+
+
 def run_command(cmd, rest, port):
     """Commands besides starting the server. Returns the exit code."""
     if cmd == "version":
@@ -36,6 +50,9 @@ def run_command(cmd, rest, port):
         found = find_running(port)
         print(f"Sunak {found[1]} is running at http://localhost:{found[0]}" if found else "Sunak is not running.")
         print("Autostart: " + ("on" if desktop.autostart_enabled() else "off"))
+    elif cmd == "gpu":
+        for line in gpu_report(gpu.summary(gpu.detect())):
+            print(line)
     elif cmd == "stop":
         found = find_running(port)
         if not found:
@@ -76,7 +93,7 @@ def main(argv=None):
         return run_command(argv[0], rest, port)
 
     ap = argparse.ArgumentParser(prog="sunak", description="Self-hosted AI workspace",
-                                 epilog="Commands: sunak stop | status | autostart on|off | shortcut | version")
+                                 epilog="Commands: sunak stop | status | gpu | autostart on|off | shortcut | version")
     ap.add_argument("--host", default=os.environ.get("SUNAK_HOST", "127.0.0.1"),
                     help="address to listen on (use 0.0.0.0 for your LAN / phone)")
     ap.add_argument("--port", type=int, default=int(os.environ.get("SUNAK_PORT", "7000")))

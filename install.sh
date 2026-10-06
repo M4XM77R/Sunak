@@ -166,6 +166,8 @@ if [ "$AUTOSTART" = 1 ] || ask_no "Start Sunak automatically in the background w
 fi
 
 # 4. Ollama (local models) -----------------------------------------------
+# Ollama uses a GPU on its own (CUDA, ROCm, Metal); its installer sets up what the GPU needs.
+(cd "$APP_DIR" && python3 -m sunak gpu 2>/dev/null) | while IFS= read -r line; do say "$line"; done || true
 if [ "$NO_OLLAMA" = 0 ] && ! command -v ollama >/dev/null; then
   if ask "Install Ollama to run AI models on this computer? (recommended)"; then
     if [ "$(uname)" = Darwin ]; then

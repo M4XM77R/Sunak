@@ -9,7 +9,7 @@ import time
 import urllib.parse
 from pathlib import Path
 
-from . import providers
+from . import gpu, providers
 
 # Curated starter models (Ollama tags). size_gb is the approximate download size.
 CATALOG = [
@@ -59,9 +59,20 @@ def fits(size_gb, ram_gb):
     return ram_gb is None or ram_gb >= size_gb * 1.3 + 2
 
 
-def catalog(ram_gb):
-    """The catalog with a `fits` flag for this machine."""
-    return [dict(m, fits=fits(m["size_gb"], ram_gb)) for m in CATALOG]
+def fits_gpu(size_gb, vram_gb):
+    """True when a model of `size_gb` fits completely into `vram_gb` of GPU memory (fast)."""
+    return bool(vram_gb) and vram_gb >= size_gb * 1.2 + 1
+
+
+def catalog(ram_gb, gpu_info=None):
+    """The catalog with flags for this machine: `fits` (runs at all) and `gpu` (runs fully on the GPU)."""
+    g = gpu_info or {}
+    out = []
+    for m in CATALOG:
+        ok = fits(m["size_gb"], ram_gb)
+        on_gpu = ok if g.get("unified") else fits_gpu(m["size_gb"], g.get("vram_gb")) if g.get("usable") else False
+        out.append(dict(m, fits=ok or on_gpu, gpu=on_gpu))
+    return out
 
 
 def find_binary():
@@ -108,8 +119,9 @@ def install_command(method):
     return None
 
 
-def status(provider, ram_gb):
-    """Everything the Models page needs in one call."""
+def status(provider, ram_gb, gpu_info=None):
+    """Everything the Models page needs in one call. `gpu_info` (gpu.summary) describes this computer
+    and is only used when Ollama runs here."""
     binary = find_binary()
     method, command = install_method()
     out = {
@@ -121,14 +133,21 @@ def status(provider, ram_gb):
         "models": [],
         "install": {"method": method, "command": command, "automatic": install_command(method) is not None},
         "ram_gb": ram_gb,
-        "catalog": catalog(ram_gb),
     }
+    local_gpu = gpu_info if out["local"] else None
+    out["gpu"] = local_gpu
+    out["gpu_expected"] = gpu.expected()
+    out["catalog"] = catalog(ram_gb, local_gpu)
+    out["loaded"] = []
+    out["gpu_warning"] = None
     try:
         out["version"] = providers.ollama_version(provider)
         out["running"] = True
         out["installed"] = True
         out["models"] = providers.ollama_tags(provider)
-    except providers.ProviderError:
+        out["loaded"] = gpu.loaded_info(providers.ollama_ps(provider))
+        out["gpu_warning"] = gpu.cpu_warning(local_gpu, out["loaded"], out["gpu_expected"])
+    except (providers.ProviderError, ValueError):
         pass
     return out
 
