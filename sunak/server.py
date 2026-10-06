@@ -122,15 +122,18 @@ class App:
                 prefs[k] = data[k]
         self.db.set_setting("prefs", prefs)
         if "providers" in data:
+            old_keys = {p["id"]: p.get("api_key", "") for p in self.settings()["providers"]}
             clean = []
             for p in data["providers"]:
-                if p.get("type") not in ("ollama", "openai") or not p.get("base_url"):
-                    raise ValueError("Each provider needs a type (ollama/openai) and a base URL")
+                if p.get("type") not in ("ollama", "openai", "anthropic") or not p.get("base_url"):
+                    raise ValueError("Each provider needs a type (ollama/openai/anthropic) and a base URL")
                 pid = re.sub(r"[^a-z0-9_-]", "", (p.get("id") or p.get("name") or "p").lower())[:24] or "p"
                 while any(c["id"] == pid for c in clean):
                     pid += "x"
+                # The browser never sees saved keys; an empty field means "keep the saved key".
+                key = (p.get("api_key") or "").strip() or (old_keys.get(p.get("id"), "") if p.get("id") else "")
                 clean.append({"id": pid, "name": p.get("name") or pid, "type": p["type"],
-                              "base_url": p["base_url"].strip(), "api_key": p.get("api_key", "").strip()})
+                              "base_url": p["base_url"].strip(), "api_key": key})
             self.db.set_setting("providers", clean)
         if "password" in data:
             pw = data["password"] or ""
@@ -386,6 +389,9 @@ class Handler(BaseHTTPRequestHandler):
         """GET /api/settings"""
         s = self.app.settings()
         s["password_set"] = self.app.auth_required()
+        # API keys stay on the server: the browser only learns whether one is saved.
+        s["providers"] = [dict({k: v for k, v in p.items() if k != "api_key"}, has_key=bool(p.get("api_key")))
+                          for p in s["providers"]]
         self.send_json(s)
 
     def put_settings(self):

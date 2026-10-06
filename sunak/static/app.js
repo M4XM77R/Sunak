@@ -284,7 +284,8 @@ function setupCard() {
   const o = state.ollama;
   if (!o || !o.running) {
     return el('div', { class: 'card' }, el('h3', {}, 'Let’s get a model running'), ollamaBanner(),
-      el('p', { class: 'muted small' }, 'Prefer the cloud? ', el('a', { href: '#', onclick: (e) => { e.preventDefault(); show('settings'); } }, 'Add an API key in Settings'), '.'));
+      el('p', { class: 'muted small' }, 'Prefer the cloud? ', el('a', { href: '#', onclick: (e) => { e.preventDefault(); connectClaude(); } }, 'Use Claude with an API key'),
+        ' or ', el('a', { href: '#', onclick: (e) => { e.preventDefault(); show('settings'); } }, 'another provider'), '.'));
   }
   const rec = state.status?.recommended || { model: 'qwen3:4b', size: '2.6 GB' };
   const ram = state.status?.ram_gb ? `${state.status.ram_gb} GB RAM detected. ` : '';
@@ -797,6 +798,16 @@ function renderSettings() {
   $('#logoutBtn').classList.toggle('hidden', !s.password_set);
   $('#aboutLine').textContent = `Sunak ${state.status?.version || ''} · ${state.status?.ram_gb ? state.status.ram_gb + ' GB RAM' : ''}`;
 }
+const CLAUDE_URL = 'https://api.anthropic.com';
+function connectClaude() {
+  show('settings');
+  let i = draftProviders.findIndex((p) => p.type === 'anthropic');
+  if (i < 0) { draftProviders.push({ name: 'Claude', type: 'anthropic', base_url: CLAUDE_URL, api_key: '' }); i = draftProviders.length - 1; renderProviders(); }
+  const input = $$('#providerList .key-input')[i];
+  input.scrollIntoView({ block: 'center' });
+  input.focus();
+  toast('Paste your Claude API key, then click “Save settings”');
+}
 function renderProviders() {
   const box = $('#providerList');
   box.innerHTML = '';
@@ -806,11 +817,16 @@ function renderProviders() {
     const bind = (k) => (e) => { p[k] = e.target.value; };
     box.append(el('div', { class: 'provider' },
       el('input', { value: p.name, placeholder: 'Name', oninput: bind('name') }),
-      el('select', { onchange: bind('type') }, el('option', { value: 'ollama', selected: p.type === 'ollama' }, 'Ollama'),
+      el('select', { onchange: (e) => {
+        p.type = e.target.value;
+        if (p.type === 'anthropic' && !p.base_url) { p.base_url = CLAUDE_URL; renderProviders(); }
+      } }, el('option', { value: 'ollama', selected: p.type === 'ollama' }, 'Ollama'),
+        el('option', { value: 'anthropic', selected: p.type === 'anthropic' }, 'Claude (Anthropic)'),
         el('option', { value: 'openai', selected: p.type === 'openai' }, 'OpenAI-compatible')),
       el('input', { value: p.base_url, placeholder: 'Base URL', oninput: bind('base_url') }),
-      el('input', { value: p.api_key || '', placeholder: 'API key (optional)', type: 'password', oninput: bind('api_key') }),
-      el('span', { class: `status ${err ? 'bad' : 'ok'}`, title: err?.error || '' }, err ? '● offline' : p.id ? `● ${count} models` : ''),
+      el('input', { value: p.api_key || '', type: 'password', autocomplete: 'off', class: 'key-input', oninput: bind('api_key'),
+        placeholder: p.has_key ? '•••••• saved (type to replace)' : p.type === 'anthropic' ? 'API key (sk-ant-…)' : 'API key (optional)' }),
+      el('span', { class: `status ${err ? 'bad' : 'ok'}`, title: err?.error || '' }, err ? (p.type === 'ollama' ? '● offline' : '● not connected') : p.id ? `● ${count} models` : ''),
       el('button', { class: 'icon-btn', title: 'Remove', onclick: () => { draftProviders.splice(i, 1); renderProviders(); } }, '✕')));
   });
 }

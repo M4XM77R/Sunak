@@ -18,7 +18,7 @@ Browser (sunak/static)  ──HTTP/JSON, NDJSON-Streams──▶  sunak/server.p
 | `sunak/__main__.py` | Kommandozeile (`python -m sunak`), sucht einen freien Port, startet den Server, öffnet den Browser |
 | `sunak/server.py` | `App` (Zustand, Einstellungen, Modellauswahl, Login, Prompt-Aufbau) und `Handler` (HTTP-Routing, alle API-Endpunkte) |
 | `sunak/db.py` | SQLite-Speicher: Chats, Nachrichten, Dokumente, Notizen, Einstellungen |
-| `sunak/providers.py` | Backends: Ollama und OpenAI-kompatible APIs, Streaming, Modell-Download |
+| `sunak/providers.py` | Backends: Ollama, Claude (Anthropic Messages API) und OpenAI-kompatible APIs, Streaming, Modell-Download |
 | `sunak/ollama.py` | Native Ollama-Integration: Modellkatalog, Status, lokales Ollama finden, starten und installieren |
 | `sunak/research.py` | Websuche, Seiten lesen, Prompt für den Recherchebericht |
 | `sunak/static/` | Oberfläche: `index.html`, `app.js` (gesamte Logik), `app.css`, `login.html`, Icon, PWA-Manifest |
@@ -67,11 +67,19 @@ Fehler kommen immer als `{"error": "…"}` mit HTTP-Status 4xx. Fehler, die erst
 Ein Provider ist ein Eintrag `{id, name, type, base_url, api_key}`, gespeichert in der Einstellung `providers`.
 
 - **`ollama`** nutzt `/api/tags`, `/api/chat` (Streaming, Denkprozess im Feld `thinking`), `/api/pull` und `/api/delete`.
+- **`anthropic`** (Claude) nutzt die Anthropic-API direkt per HTTP, ohne SDK, damit Sunak ohne Abhängigkeiten bleibt. `GET /v1/models` (seitenweise) liefert die Modelle; ist der Endpunkt nicht erreichbar, nimmt Sunak eine eingebaute Liste (`CLAUDE_FALLBACK_MODELS`), ein abgelehnter Key wird dagegen als Fehler angezeigt. Chats laufen über `POST /v1/messages` mit `stream: true`, und die Server-Sent Events werden in Text (`text_delta`) und Denkprozess (`thinking_delta`) zerlegt. Dabei gilt:
+  - Der Systemprompt steht als eigenes Feld `system`; aufeinanderfolgende Nachrichten derselben Rolle werden zusammengefügt.
+  - Modelle mit adaptivem Denken (Opus/Sonnet ab 4.6, Fable) bekommen `thinking: {type: "adaptive", display: "summarized"}`, damit der zusammengefasste Denkprozess sichtbar ist. Haiku und ältere Modelle bekommen kein `thinking`.
+  - `temperature` wird nicht gesendet, weil aktuelle Claude-Modelle es ablehnen. `max_tokens` richtet sich nach dem Modell (`claude_max_tokens`).
+  - Bei Claude Opus 5.5, Opus 5, Sonnet 5.5 und Fable 5.1 auf `api.anthropic.com` setzt Sunak `fallbacks: "default"` (Beta-Header `server-side-fallback-2026-07-01`). Lehnt ein Sicherheitsfilter eine Anfrage ab, beantwortet die API sie dann mit einem Ersatzmodell. Eine endgültige Ablehnung (`stop_reason: "refusal"`) erscheint als Fehlermeldung.
+  - Der Key geht als `x-api-key` mit `anthropic-version: 2023-06-01` an die API.
 - **`openai`** nutzt `/models` und `/chat/completions` mit Server-Sent Events. Denkprozesse kommen aus `reasoning_content` bzw. `reasoning`. Das funktioniert mit OpenAI, OpenRouter, Groq, LM Studio, llama.cpp und vLLM.
 
 Lokale Adressen (localhost, private IPs, `*.local`, `host.docker.internal`) werden immer direkt angesprochen, also nie über einen System-Proxy.
 
-Modell-IDs haben die Form `provider::modell`, zum Beispiel `ollama::qwen3:4b`.
+Modell-IDs haben die Form `provider::modell`, zum Beispiel `ollama::qwen3:4b` oder `claude::claude-opus-5-5`.
+
+**API-Keys** liegen nur in der lokalen Datenbank. `GET /api/settings` liefert statt des Keys nur `has_key`. Schickt der Browser beim Speichern ein leeres Key-Feld, bleibt der gespeicherte Key erhalten. Keys tauchen weder in Fehlermeldungen noch in Logs auf. Ist `ANTHROPIC_API_KEY` gesetzt, wird Claude beim ersten Start automatisch als Anbieter eingetragen.
 
 ## Native Ollama-Integration
 
@@ -123,7 +131,7 @@ Umgebungsvariablen: `SUNAK_HOST`, `SUNAK_PORT`, `SUNAK_DATA`, `SUNAK_PASSWORD`, 
 python3 -m unittest discover tests -v
 ```
 
-Die Tests starten Sunak und einen simulierten Server, der die Ollama- und OpenAI-API nachbildet. Abgedeckt sind Chat, Neu generieren, Denkprozess, Gedächtnis, Compare, Research (mit gestubbter Suche), Dokumente, Modell-Download mit Fortschritt, Ollama-Status und Katalog, Login, CSRF-Schutz und Pfad-Traversal. GitHub Actions führt sie auf Linux, macOS und Windows aus (`.github/workflows/test.yml`).
+Die Tests starten Sunak und einen simulierten Server, der die Ollama-, Anthropic- und OpenAI-API nachbildet. Abgedeckt sind Chat, Neu generieren, Denkprozess, Gedächtnis, Compare, Research (mit gestubbter Suche), Dokumente, Modell-Download mit Fortschritt, Ollama-Status und Katalog, Claude (Streaming, Header, Denkprozess, Ablehnung, falscher Key, Key-Maskierung), Login, CSRF-Schutz und Pfad-Traversal. GitHub Actions führt sie auf Linux, macOS und Windows aus (`.github/workflows/test.yml`).
 
 ## Erweitern
 

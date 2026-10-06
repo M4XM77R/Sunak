@@ -148,12 +148,13 @@
     <section class="view" id="view-settings">
       <div class="pad narrow settings">
         <h2>Providers</h2>
-        <p class="muted small">Ollama runs models on your computer. Add any OpenAI-compatible API (OpenAI, OpenRouter, Groq, LM Studio, llama.cpp, vLLM) to use other models.</p>
+        <p class="muted small">Ollama runs models on your computer. Add Claude with an Anthropic API key, or any OpenAI-compatible API (OpenAI, OpenRouter, Groq, LM Studio, llama.cpp, vLLM). Keys are stored only on this computer and never sent back to the browser.</p>
         <div id="providerList"></div>
         <div class="row">
           <button class="btn" id="addProvider">＋ Add provider</button>
           <select id="providerPreset" aria-label="Preset">
             <option value="">Preset…</option>
+            <option value="anthropic|Claude|https://api.anthropic.com">Claude (Anthropic)</option>
             <option value="openai|OpenAI|https://api.openai.com/v1">OpenAI</option>
             <option value="openai|OpenRouter|https://openrouter.ai/api/v1">OpenRouter</option>
             <option value="openai|Groq|https://api.groq.com/openai/v1">Groq</option>
