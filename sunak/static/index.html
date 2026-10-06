@@ -279,8 +279,18 @@
           <a class="small" href="https://ollama.com/library" target="_blank" rel="noopener">Browse all models on ollama.com ↗</a>
         </form>
         <div id="downloads" class="downloads"></div>
-        <div class="row" id="catFilters"></div>
+        <form class="row model-search" id="modelSearchForm" role="search">
+          <input id="modelSearch" type="search" placeholder="Search models, e.g. qwen, llama, sdxl" aria-label="Search models" autocomplete="off" spellcheck="false">
+          <button class="btn" type="submit" title="Also search the Ollama library (ollama.com) and Hugging Face">🌐 Search online</button>
+        </form>
+        <div class="row cat-filters" id="catFilters"></div>
+        <div id="onlineResults"></div>
         <div id="catalog" class="catalog"></div>
+        <div id="imageModels">
+          <h2 class="section">Image models</h2>
+          <div id="imageEngine"></div>
+          <div id="imageCatalog" class="catalog"></div>
+        </div>
       </div>
     </section>
 
@@ -378,22 +388,27 @@
 
         <div class="admin-only">
         <h2>Image generation</h2>
-        <p class="muted small">Make pictures with 🎨 next to the message box. Sunak uses a Stable Diffusion program running on this computer or in your network: <b>Automatic1111</b> (also Forge or SD.Next, started with <code>--api</code>) or <b>ComfyUI</b>. Install one of them and a model first; Sunak only sends the description and keeps the picture in the chat.</p>
+        <p class="muted small">Make pictures with 🎨 next to the message box. Easiest: Sunak’s own image program (stable-diffusion.cpp), which you set up with a click on the Models page. Or connect a Stable Diffusion program running on this computer or in your network: <b>Automatic1111</b> (also Forge or SD.Next, started with <code>--api</code>) or <b>ComfyUI</b>.</p>
         <div class="row">
           <label>Program<select id="imageGen">
             <option value="off">Off</option>
+            <option value="local">Sunak’s own (stable-diffusion.cpp)</option>
             <option value="automatic1111">Automatic1111 / Forge / SD.Next</option>
             <option value="comfyui">ComfyUI</option>
           </select></label>
-          <label>Address<input id="imageGenUrl" spellcheck="false" autocomplete="off"></label>
+          <label class="remote-gen">Address<input id="imageGenUrl" spellcheck="false" autocomplete="off"></label>
         </div>
-        <div class="row">
-          <label>Model<input id="imageGenModel" list="imageGenModels" spellcheck="false" autocomplete="off" placeholder="empty = the program’s current model"></label>
-          <datalist id="imageGenModels"></datalist>
+        <div class="row local-gen">
+          <label>Image model<select id="imageGenLocal"></select></label>
+          <button class="btn" id="imageGenModels" type="button">🧩 Download image models</button>
+        </div>
+        <div class="row remote-gen">
+          <label>Model<input id="imageGenModel" list="imageGenModelList" spellcheck="false" autocomplete="off" placeholder="empty = the program’s current model"></label>
+          <datalist id="imageGenModelList"></datalist>
           <button class="btn" id="imageGenTest" type="button">Test</button>
         </div>
-        <p class="muted small" id="imageGenResult"></p>
-        <div class="row">
+        <p class="muted small remote-gen" id="imageGenResult"></p>
+        <div class="row remote-gen">
           <label>Picture size<select id="imageGenSize">
             <option value="512">512 px (Stable Diffusion 1.5, fast)</option>
             <option value="768">768 px</option>

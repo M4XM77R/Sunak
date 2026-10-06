@@ -16,6 +16,7 @@ import secrets
 import shutil
 import socket
 import socketserver
+import random
 import sqlite3
 import subprocess
 import threading
@@ -26,7 +27,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlparse
 
-from . import __version__, agent, cal, extract, gpu, imagegen, images, knowledge, mail, mcp, ollama, providers, qr, research, speech, updates
+from . import (__version__, agent, cal, extract, gpu, imagegen, images, knowledge, mail, mcp, modelsearch, ollama,
+               providers, qr, research, sdcpp, speech, updates)
 from .db import DB, new_id
 
 STATIC = Path(__file__).parent / "static"
@@ -48,7 +50,7 @@ DEFAULT_SETTINGS = {
     "speech_input": "local", # 🎤: "local" (Whisper server or the browser's on-device recognition), "browser", "off"
     "whisper_url": "",       # local Whisper server for speech input, see speech.py
     "whisper_model": "",     # model name for OpenAI-compatible Whisper servers ("" = whisper-1)
-    "image_gen": "off",      # 🎨 image generation: "off", "automatic1111" or "comfyui" (see imagegen.py)
+    "image_gen": "off",      # 🎨 image generation: "off", "local" (sdcpp.py), "automatic1111" or "comfyui" (imagegen.py)
     "image_gen_url": "",     # address of that program ("" = its usual local address)
     "image_gen_model": "",   # checkpoint ("" = the program's current one / ComfyUI's first)
     "image_gen_size": 512,   # side of a square picture: 512 (SD 1.5), 768, 1024 (SDXL, Flux)
@@ -163,8 +165,8 @@ def _check_pref(key, value, default):
         value = value.strip()
     if key == "whisper_url" and value:
         speech.endpoint(value)
-    if key == "image_gen" and value not in ("off", *imagegen.BACKENDS):
-        raise ValueError("image_gen must be one of: off, " + ", ".join(imagegen.BACKENDS))
+    if key == "image_gen" and value not in ("off", "local", *imagegen.BACKENDS):
+        raise ValueError("image_gen must be one of: off, local, " + ", ".join(imagegen.BACKENDS))
     if key in ("image_gen_url", "image_gen_model"):
         value = value.strip()[:300]
     if key == "image_gen_url" and value and not re.match(r"https?://[^\s/]+", value):
@@ -1686,12 +1688,133 @@ class Handler(BaseHTTPRequestHandler):
     def imagegen_test(self):
         """POST /api/imagegen/test {type, url, model} (the settings form, not saved yet): the backend's models."""
         cfg = imagegen.config(self.app.settings(), self.body())
-        if cfg["type"] == "off":
+        if cfg["type"] not in imagegen.BACKENDS:
             raise ValueError("Choose Automatic1111 or ComfyUI first")
         try:
             self.send_json({"models": imagegen.models(cfg)})
         except imagegen.ImageGenError as e:
             raise ValueError(str(e)) from None
+
+    def local_images(self):
+        """GET /api/imagegen/local: Sunak's own image program (installed?) and the image models."""
+        eng = {k: v for k, v in sdcpp.engine_info(self.app.data_dir).items() if k != "path"}
+        self.send_json({"engine": eng, "models": sdcpp.listing(self.app.data_dir, self.app.ram, self.app.gpu)})
+
+    def engine_options(self):
+        """GET /api/imagegen/engine: the stable-diffusion.cpp release files that fit this computer, best first."""
+        try:
+            rel = sdcpp.latest_release()
+        except sdcpp.SdError as e:
+            raise ValueError(str(e)) from None
+        opts = sdcpp.rank_assets(rel["assets"], gpu_info=self.app.gpu)
+        if not opts:
+            raise ValueError("stable-diffusion.cpp has no ready-made program for this computer. Use ComfyUI or Automatic1111 instead.")
+        self.send_json({"tag": rel["tag"], "options": [{k: o[k] for k in ("name", "size", "kind")} for o in opts]})
+
+    def stream_download(self, work):
+        """Run a download with NDJSON progress events (done, total in bytes). Closing the connection stops it;
+        the next try continues where it stopped."""
+        self.start_stream()
+
+        def progress(done, total, *_):
+            self.emit({"type": "progress", "completed": done, "total": total})
+        try:
+            result = work(progress)
+        except sdcpp.SdError as e:
+            return self.emit({"type": "error", "error": str(e)})
+        except OSError:  # the browser went away (Cancel)
+            return None
+        self.emit({"type": "done", **(result or {})})
+
+    def engine_install(self):
+        """POST /api/imagegen/engine/install {name}: download and unpack one of the listed release files.
+        Only names from the GitHub release are accepted, never an address from the browser."""
+        name = self.text(self.body(), "name")
+        try:
+            rel = sdcpp.latest_release()
+        except sdcpp.SdError as e:
+            raise ValueError(str(e)) from None
+        asset = next((o for o in sdcpp.rank_assets(rel["assets"], gpu_info=self.app.gpu) if o["name"] == name), None)
+        if not asset:
+            raise ValueError("Pick one of the listed program files")
+
+        def work(progress):
+            info = sdcpp.install_engine(self.app.data_dir, asset, rel["tag"], progress)
+            return {"engine": {k: v for k, v in info.items() if k != "path"}}
+        self.stream_download(work)
+
+    def engine_remove(self):
+        """POST /api/imagegen/engine/remove: delete the image program (the models stay)."""
+        sdcpp.remove_engine(self.app.data_dir)
+        self.send_json({"ok": True})
+
+    def image_model_pull(self):
+        """POST /api/imagegen/models/pull {id} (catalog) or {repo, path} (a file from the search): download it."""
+        d = self.body()
+        if d.get("repo"):
+            try:
+                info = modelsearch.hf_files(self.text(d, "repo"), "image")
+            except modelsearch.SearchError as e:
+                raise ValueError(f"Hugging Face is not reachable ({e})") from None
+            f = next((f for f in info["files"] if f["path"] == self.text(d, "path")), None)
+            if not f:
+                raise ValueError("That file is not in the repository")
+            try:
+                m = sdcpp.custom_entry(info["repo"], f["path"], f["size"], info["license"], info["gated"])
+            except sdcpp.SdError as e:
+                raise ValueError(str(e)) from None
+        else:
+            m = next((m for m in sdcpp.CATALOG if m["id"] == self.text(d, "id")), None)
+            if not m:
+                raise ValueError("Unknown image model")
+        self.stream_download(lambda progress: (sdcpp.pull(self.app.data_dir, m, progress), {"id": m["id"]})[1])
+
+    def image_model_delete(self):
+        """POST /api/imagegen/models/delete {id}: delete a downloaded image model."""
+        try:
+            sdcpp.delete_model(self.app.data_dir, self.text(self.body(), "id"))
+        except sdcpp.SdError as e:
+            raise ValueError(str(e)) from None
+        self.send_json({"ok": True})
+
+    def model_search(self):
+        """GET /api/models/search?q=&kind=chat|image: the Ollama library and Hugging Face. A site that cannot be
+        reached is left out (listed in `unreachable`), so the page simply shows fewer results."""
+        qs = parse_qs(urlparse(self.path).query)
+        q = (qs.get("q", [""])[0]).strip()[:100]
+        kind = qs.get("kind", ["chat"])[0]
+        if not q:
+            raise ValueError("Type what to search for")
+        out = {"ollama": [], "huggingface": [], "unreachable": []}
+        jobs = {"huggingface": lambda: modelsearch.hf_search(q, "image" if kind == "image" else "chat")}
+        if kind != "image":
+            jobs["ollama"] = lambda: modelsearch.ollama_search(q)
+        results = {}
+
+        def run(key, fn):
+            try:
+                results[key] = fn()
+            except modelsearch.SearchError:
+                pass
+        threads = [threading.Thread(target=run, args=item, daemon=True) for item in jobs.items()]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(15)
+        for key in jobs:
+            if key in results:
+                out[key] = results[key]
+            else:
+                out["unreachable"].append(key)
+        self.send_json(out)
+
+    def model_files(self):
+        """GET /api/models/files?repo=&kind=chat|image: files of a Hugging Face repository with size and license."""
+        qs = parse_qs(urlparse(self.path).query)
+        try:
+            self.send_json(modelsearch.hf_files(qs.get("repo", [""])[0], qs.get("kind", ["chat"])[0]))
+        except modelsearch.SearchError as e:
+            raise ValueError(f"Hugging Face is not reachable ({e})") from None
 
     def imagine(self):
         """POST /api/imagine {session_id, prompt, negative, aspect, seed}: make a picture with the local image
@@ -1718,6 +1841,8 @@ class Handler(BaseHTTPRequestHandler):
         seed = d.get("seed")
         if seed is not None and (isinstance(seed, bool) or not isinstance(seed, int) or not 0 <= seed < 2 ** 32):
             raise ValueError("seed must be a whole number from 0 to 4294967295")
+        if seed is None:
+            seed = random.randrange(2 ** 32)
         width, height = imagegen.dimensions(aspect, s["image_gen_size"])
         sid = session["id"]
         db.add_message(sid, "user", prompt, meta={"imagine": {"aspect": aspect, **({"negative": negative} if negative else {})}})
@@ -1738,17 +1863,22 @@ class Handler(BaseHTTPRequestHandler):
                 gone.set()
 
         try:
-            data, info = imagegen.generate(cfg, prompt, negative, width, height, s["image_gen_steps"], seed,
-                                           progress=progress, cancelled=gone.is_set)
+            if cfg["type"] == "local":
+                data, info = sdcpp.generate(self.app.data_dir, cfg["model"], prompt, negative,
+                                            lambda size: imagegen.dimensions(aspect, size), seed,
+                                            progress=progress, cancelled=gone.is_set)
+            else:
+                data, info = imagegen.generate(cfg, prompt, negative, width, height, s["image_gen_steps"], seed,
+                                               progress=progress, cancelled=gone.is_set)
             name = images.store(self.app.user_dir, data)
-        except (imagegen.ImageGenError, ValueError) as e:
+        except (imagegen.ImageGenError, sdcpp.SdError, ValueError) as e:
             if gone.is_set():
                 return
             return self.emit({"type": "error", "error": str(e)})
         info["prompt"] = prompt
         if negative:
             info["negative"] = negative
-        text = f"[Picture made with {imagegen.BACKENDS[cfg['type']]}{' (' + info['model'] + ')' if info['model'] else ''}: {prompt}]"
+        text = f"[Picture made with {imagegen.BACKENDS.get(cfg['type'], 'stable-diffusion.cpp')}{' (' + info['model'] + ')' if info['model'] else ''}: {prompt}]"
         try:
             db.add_message(sid, "assistant", text, "", {"images": [name], "imagegen": info})
         except sqlite3.IntegrityError:  # the chat was deleted meanwhile
@@ -2181,6 +2311,14 @@ ROUTES = [
     (r"/api/transcribe", "POST", Handler.transcribe),
     (r"/api/imagine", "POST", Handler.imagine),
     (r"/api/imagegen/test", "POST", Handler.imagegen_test),
+    (r"/api/imagegen/local", "GET", Handler.local_images),
+    (r"/api/imagegen/engine", "GET", Handler.engine_options),
+    (r"/api/imagegen/engine/install", "POST", Handler.engine_install),
+    (r"/api/imagegen/engine/remove", "POST", Handler.engine_remove),
+    (r"/api/imagegen/models/pull", "POST", Handler.image_model_pull),
+    (r"/api/imagegen/models/delete", "POST", Handler.image_model_delete),
+    (r"/api/models/search", "GET", Handler.model_search),
+    (r"/api/models/files", "GET", Handler.model_files),
     (r"/api/calendar", "GET", Handler.calendar_info),
     (r"/api/calendar/sources", "POST", Handler.calendar_save_source),
     (r"/api/calendar/sources/([a-f0-9]{12})", "DELETE", Handler.calendar_delete_source),
@@ -2212,7 +2350,9 @@ ADMIN_ONLY = {(m, p) for p, m, _ in ROUTES if (m, p) in {
     ("POST", r"/api/profiles"), ("DELETE", r"/api/profiles/([a-z0-9]{1,16})"), ("POST", r"/api/update"),
     ("POST", r"/api/models/pull"), ("POST", r"/api/models/delete"), ("POST", r"/api/ollama/start"),
     ("POST", r"/api/ollama/install"), ("POST", r"/api/lan"), ("POST", r"/api/agent"), ("POST", r"/api/agent/confirm"),
-    ("POST", r"/api/mcp/test"), ("POST", r"/api/imagegen/test")}}
+    ("POST", r"/api/mcp/test"), ("POST", r"/api/imagegen/test"), ("GET", r"/api/imagegen/engine"),
+    ("POST", r"/api/imagegen/engine/install"), ("POST", r"/api/imagegen/engine/remove"),
+    ("POST", r"/api/imagegen/models/pull"), ("POST", r"/api/imagegen/models/delete")}}
 
 
 def make_server(host, port, data_dir):

@@ -77,8 +77,10 @@ def config(settings, override=None):
     (the settings form, not saved yet) wins."""
     o = override or {}
     kind = o.get("type", settings.get("image_gen", "off"))
-    if kind not in ("off", *BACKENDS):
+    if kind not in ("off", "local", *BACKENDS):
         raise ValueError("Unknown image generator")
+    if kind == "local":  # Sunak's own (sdcpp.py)
+        return {"type": "local", "url": "", "model": str(o.get("model", settings.get("image_gen_model", "")) or "").strip()}
     url = str(o.get("url", settings.get("image_gen_url", "")) or "").strip() or DEFAULT_URLS.get(kind, "")
     if kind != "off" and not url.startswith(("http://", "https://")):
         raise ValueError("The image generator address must start with http:// or https://")

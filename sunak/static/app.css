@@ -533,3 +533,18 @@ body.not-admin .admin-only { display: none !important; }
 .gen-figure figcaption { margin-top: 6px; }
 .gen-wait { display: flex; align-items: center; gap: 10px; }
 .gen-wait progress { width: 200px; }
+
+/* model search and image models */
+.model-search { margin-top: 18px; }
+.model-search input { flex: 1; min-width: 0; }
+.cat-filters { align-items: center; flex-wrap: wrap; gap: 8px; }
+.cat-filters select { width: auto; padding: 5px 10px; }
+.size-pulls { display: flex; flex-direction: column; gap: 6px; }
+.hf-files { display: flex; flex-direction: column; gap: 6px; }
+.hf-file { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.hf-file .pull-slot { flex: 1; display: flex; justify-content: flex-end; min-width: 140px; }
+.hf-file .pull { width: 100%; }
+#imageEngine .banner { flex-direction: column; align-items: flex-start; gap: 8px; }
+#imageEngine .banner p { margin: 0; }
+#imageEngine select { max-width: 100%; }
+.chip.on { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }

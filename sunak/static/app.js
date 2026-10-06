@@ -21,7 +21,7 @@ const store = {
 };
 
 const state = { settings: null, models: [], modelErrors: [], sessions: [], session: null, view: 'chat',
-  busy: null, attachments: [], doc: null, docUndo: null, status: null, ollama: null, pulls: {}, catFilter: 'fits',
+  busy: null, attachments: [], doc: null, docUndo: null, status: null, ollama: null, pulls: {}, catType: 'all', catFits: true, catMax: 0, local: null, imgPulls: {}, online: null,
   kb: { files: [], chars: 0 } };
 
 /* ---------------- API ---------------- */
@@ -267,7 +267,7 @@ function show(view) {
   if (view === 'calendar') loadCalendar();
   if (view === 'settings') renderSettings();
   if (view === 'compare') renderCompareModels();
-  if (view === 'models') { renderModelsView(); loadOllama(); }
+  if (view === 'models') { renderModelsView(); loadOllama(); loadLocalImages(); }
   if (view === 'chat') $('#prompt').focus();
 }
 $$('.nav button').forEach((b) => (b.onclick = () => show(b.dataset.view)));
@@ -1721,11 +1721,32 @@ function pullButton(name, label = 'Download') {
   return wrap;
 }
 function fillPullSlot(wrap) {
+  if (wrap.dataset.img) return fillImageSlot(wrap);
   const name = wrap.dataset.slot;
   wrap.innerHTML = '';
   if (state.pulls[name]) wrap.append(pullWidget(name));
   else if (isInstalled(name)) wrap.append(el('button', { class: 'btn', onclick: () => useModel(name) }, 'Chat with it →'));
   else wrap.append(el('button', { class: 'btn primary', onclick: () => startPull(name) }, wrap.dataset.label));
+}
+function fillImageSlot(wrap) {
+  const key = wrap.dataset.img, p = state.imgPulls[key];
+  wrap.innerHTML = '';
+  if (p) {
+    wrap.append(el('div', { class: 'pull' }, el('div', { class: 'progress' }, el('div', { style: `width:${p.pct}%` })),
+      el('div', { class: 'pull-row' }, el('span', { class: 'muted small' }, p.label),
+        el('button', { class: 'btn small-btn', type: 'button', onclick: () => p.ctrl.abort() }, 'Cancel'))));
+    return;
+  }
+  wrap.append(el('button', { class: 'btn primary', type: 'button', onclick: () => {
+    if (key === 'engine') {
+      imgDownload('engine', '/api/imagegen/engine/install', { name: wrap._sel.value }, () => toast('Image program installed ✓'));
+    } else {
+      imgDownload(key, '/api/imagegen/models/pull', wrap._body, (r) => {
+        toast('Image model ready ✓');
+        if (state.settings?.image_gen !== 'local' || !state.settings?.image_gen_model) useImageModel(r.id);
+      });
+    }
+  } }, wrap.dataset.label));
 }
 function updatePullWidgets() {
   $$('.pull-slot').forEach(fillPullSlot);
@@ -1798,27 +1819,215 @@ function renderModelsView() {
         catch (e) { toast(e.message); }
       } }, '🗑')));
   }
-  const filters = { fits: 'Fits my computer', all: 'All', chat: 'Chat', reasoning: 'Reasoning', coding: 'Coding' };
-  const fbox = $('#catFilters');
-  fbox.innerHTML = '';
-  for (const [k, label] of Object.entries(filters)) {
-    fbox.append(el('button', { class: `chip-btn${state.catFilter === k ? ' on' : ''}`, onclick: () => { state.catFilter = k; renderModelsView(); } }, label));
-  }
+  renderCatFilters();
   const cat = $('#catalog');
   cat.innerHTML = '';
-  const f = state.catFilter;
-  const items = (o?.catalog || []).filter((m) => f === 'all' || (f === 'fits' ? m.fits : m.tags.includes(f)));
-  if (!items.length) cat.append(el('p', { class: 'muted' }, o ? 'Nothing in this category fits your computer. Try “All”.' : ''));
+  const t = state.catType;
+  const items = t === 'image' ? [] : (o?.catalog || []).filter((m) => (t === 'all' || m.tags.includes(t)) && catMatch(m));
+  if (t !== 'image' && !items.length) cat.append(el('p', { class: 'muted' }, o ? 'No model in the list matches. Try other filters or “Search online”.' : ''));
   for (const m of items) {
     cat.append(el('div', { class: 'model-card' },
-      el('div', { class: 'mc-head' }, el('b', {}, m.title), el('span', { class: `badge ${m.gpu ? 'gpu' : m.fits ? 'fit' : 'nofit'}`, title: m.gpu ? 'Runs fully on your GPU' : m.fits ? 'Runs, on the CPU or partly on the GPU' : '' },
-        m.gpu ? '⚡ fits GPU' : m.fits ? '✓ fits' : 'needs more RAM')),
+      el('div', { class: 'mc-head' }, el('b', {}, m.title), fitBadge(m)),
       el('code', { class: 'small' }, m.name),
       el('p', { class: 'muted small' }, m.description),
-      el('div', { class: 'mc-foot' }, el('span', { class: 'small' }, `≈ ${m.size_gb} GB`), ...m.tags.map((t) => el('span', { class: 'chip' }, t))),
+      el('div', { class: 'mc-foot' }, el('span', { class: 'small' }, `≈ ${m.size_gb} GB`), ...m.tags.map((x) => el('span', { class: 'chip' }, x))),
       o?.running ? pullButton(m.name) : null));
   }
+  renderImageModels();
   updatePullWidgets();
+}
+const fitBadge = (m) => el('span', { class: `badge ${m.gpu ? 'gpu' : m.fits ? 'fit' : 'nofit'}`, title: m.gpu ? 'Runs fully on your GPU' : m.fits ? 'Runs, on the CPU or partly on the GPU' : '' },
+  m.gpu ? '⚡ fits GPU' : m.fits ? '✓ fits' : 'needs more RAM');
+
+/* Search and filters: the lists on this page are filtered right away; “Search online” also asks
+   ollama.com and Hugging Face (see sunak/modelsearch.py) and quietly shows nothing when they cannot be reached. */
+const catQuery = () => $('#modelSearch').value.trim().toLowerCase();
+function catMatch(m) {
+  if (state.catFits && !m.fits) return false;
+  if (state.catMax && m.size_gb > state.catMax) return false;
+  const q = catQuery();
+  return !q || q.split(/\s+/).every((w) => [m.name || m.id, m.title, m.description, ...(m.tags || [])].join(' ').toLowerCase().includes(w));
+}
+function renderCatFilters() {
+  const types = { all: 'All', chat: 'Chat', vision: 'Vision', coding: 'Coding', reasoning: 'Reasoning', image: 'Image' };
+  const box = $('#catFilters');
+  box.replaceChildren(...Object.entries(types).map(([k, label]) => el('button', { class: `chip-btn${state.catType === k ? ' on' : ''}`, type: 'button',
+    onclick: () => { state.catType = k; renderModelsView(); } }, label)),
+  el('select', { 'aria-label': 'Size', onchange: (e) => { state.catMax = Number(e.target.value); renderModelsView(); } },
+    ...[[0, 'Any size'], [2, 'Up to 2 GB'], [5, 'Up to 5 GB'], [10, 'Up to 10 GB']].map(([v, label]) => el('option', { value: v, selected: state.catMax === v }, label))),
+  el('label', { class: 'check' }, el('input', { type: 'checkbox', checked: state.catFits, onchange: (e) => { state.catFits = e.target.checked; renderModelsView(); } }), 'Fits my computer'));
+}
+$('#modelSearch').addEventListener('input', () => { state.online = null; renderModelsView(); renderOnline(); });
+$('#modelSearchForm').onsubmit = async (e) => {
+  e.preventDefault();
+  const q = $('#modelSearch').value.trim();
+  if (!q) return toast('Type what to search for');
+  const kind = state.catType === 'image' ? 'image' : 'chat';
+  state.online = { q, kind, loading: true };
+  renderOnline();
+  try { state.online = { q, kind, ...(await api(`/api/models/search?q=${encodeURIComponent(q)}&kind=${kind}`)) }; }
+  catch (err) { state.online = { q, kind, ollama: [], huggingface: [], unreachable: ['ollama', 'huggingface'] }; }
+  if (state.online.q === $('#modelSearch').value.trim()) renderOnline();
+};
+function renderOnline() {
+  const box = $('#onlineResults');
+  const r = state.online;
+  box.innerHTML = '';
+  if (!r) return;
+  if (r.loading) { box.append(el('p', { class: 'muted small' }, tr('Searching ollama.com and Hugging Face for “{q}” …', { q: r.q }))); return; }
+  const cards = [];
+  for (const m of r.ollama || []) {
+    const sizes = m.sizes.length ? m.sizes : [''];
+    cards.push(el('div', { class: 'model-card' },
+      el('div', { class: 'mc-head' }, el('b', { 'data-no-i18n': '' }, m.name), el('span', { class: 'muted small' }, 'Ollama library')),
+      el('p', { class: 'muted small', 'data-no-i18n': '' }, m.description),
+      el('div', { class: 'mc-foot' }, ...m.capabilities.map((c) => el('span', { class: 'chip', 'data-no-i18n': '' }, c))),
+      o_running() ? el('div', { class: 'size-pulls' }, sizes.map((sz) => {
+        const name = sz ? `${m.name}:${sz}` : m.name;
+        const gbs = sz ? ollamaGb(sz) : null;
+        return pullButton(name, sz ? `⬇ ${sz}${gbs ? ` · ≈ ${gbs} GB` : ''}` : 'Download');
+      })) : el('p', { class: 'muted small' }, 'Start Ollama to download.')));
+  }
+  for (const h of r.huggingface || []) cards.push(hfCard(h, r.kind));
+  if (cards.length) box.append(el('h2', { class: 'section' }, tr('Online results for “{q}”', { q: r.q })), el('div', { class: 'catalog' }, cards));
+  else if (r.unreachable.length === (r.kind === 'image' ? 1 : 2)) box.append(el('p', { class: 'muted small' }, 'Online search is not reachable right now. The list below shows Sunak’s own catalog.'));
+  else box.append(el('p', { class: 'muted small' }, tr('Nothing found online for “{q}”.', { q: r.q })));
+  updatePullWidgets();
+}
+const o_running = () => !!state.ollama?.running;
+function ollamaGb(size) {
+  const m = /^(\d+(?:\.\d+)?)([bm])$/i.exec(size);
+  if (!m) return null;
+  const b = Number(m[1]) / (m[2].toLowerCase() === 'm' ? 1000 : 1);
+  return Math.round((b * 0.6 + 0.3) * 10) / 10;
+}
+function hfCard(h, kind) {
+  const files = el('div', { class: 'hf-files' });
+  const btn = el('button', { class: 'btn', type: 'button', onclick: async () => {
+    btn.disabled = true;
+    try {
+      const info = await api(`/api/models/files?repo=${encodeURIComponent(h.repo)}&kind=${kind}`);
+      btn.remove();
+      files.append(el('p', { class: 'muted small' }, `${tr('License')}: `, el('a', { href: info.url, target: '_blank', rel: 'noopener', 'data-no-i18n': '' }, info.license || tr('see the model page')),
+        info.gated ? ` · ${tr('needs a Hugging Face login, Sunak cannot download it')}` : ''));
+      if (!info.files.length) files.append(el('p', { class: 'muted small' }, kind === 'image' ? 'No single-file model (.safetensors, .ckpt, .gguf) in this repository.' : 'No GGUF files in this repository.'));
+      for (const f of info.files) {
+        const label = `${f.quant || f.path} · ${gb(f.size)}`;
+        files.append(el('div', { class: 'hf-file' }, el('span', { class: 'small', title: f.path, 'data-no-i18n': '' }, label),
+          kind === 'image' ? imagePullButton({ repo: h.repo, path: f.path }, `hf:${h.repo}/${f.path}`)
+            : o_running() ? pullButton(f.ollama, '⬇ Download') : null));
+      }
+      updatePullWidgets();
+    } catch (e) { toast(e.message); btn.disabled = false; }
+  } }, 'Show files');
+  return el('div', { class: 'model-card' },
+    el('div', { class: 'mc-head' }, el('b', { 'data-no-i18n': '', title: h.repo }, h.repo), el('span', { class: 'muted small' }, 'Hugging Face')),
+    el('p', { class: 'muted small' }, tr('{n} downloads', { n: h.downloads.toLocaleString() }), h.vision ? ' · 👁 vision' : ''),
+    kind === 'image' ? el('p', { class: 'muted small' }, 'Only single-file Stable Diffusion models (SD 1.x, 2.x, SDXL) work.') : null,
+    btn, files);
+}
+
+/* Image models for Sunak's own image program (sunak/sdcpp.py): the program and each model are downloaded
+   only after a click; downloads continue where they stopped. */
+async function loadLocalImages() {
+  try { state.local = await api('/api/imagegen/local'); } catch (e) { state.local = null; }
+  if (state.view === 'models') renderImageModels();
+  if (state.view === 'settings') renderLocalGenSelect();
+}
+function imgDownload(key, path, body, onDone) {
+  if (state.imgPulls[key]) return;
+  const ctrl = new AbortController();
+  state.imgPulls[key] = { pct: 0, label: 'Starting…', ctrl };
+  updatePullWidgets();
+  (async () => {
+    let failed = null, result = null;
+    try {
+      await stream(path, body, (ev) => {
+        const p = state.imgPulls[key];
+        if (ev.type === 'error') failed = ev.error;
+        if (ev.type === 'done') result = ev;
+        if (ev.type !== 'progress' || !p) return;
+        p.pct = ev.total ? Math.min(100, Math.round(ev.completed / ev.total * 100)) : 0;
+        p.label = ev.total ? `${p.pct}% · ${tr('{done} of {total}', { done: gb(ev.completed), total: gb(ev.total) })}` : gb(ev.completed);
+        updatePullWidgets();
+      }, ctrl.signal);
+    } catch (e) {
+      failed = e.name === 'AbortError' ? null : e.message;
+      if (e.name === 'AbortError') toast('Download paused. Click Download again to continue.');
+    }
+    delete state.imgPulls[key];
+    if (failed) toast(tr('Download failed: {error}', { error: failed }));
+    if (result) onDone(result);
+    await loadLocalImages();
+    updatePullWidgets();
+  })();
+}
+function imagePullButton(body, key, label = '⬇ Download') {
+  const wrap = el('div', { class: 'pull-slot', 'data-img': key, 'data-label': label });
+  wrap._body = body;
+  fillPullSlot(wrap);
+  return wrap;
+}
+function renderImageModels() {
+  const sec = $('#imageModels');
+  sec.classList.toggle('hidden', !['all', 'image'].includes(state.catType));
+  const box = $('#imageEngine'), cat = $('#imageCatalog');
+  box.innerHTML = ''; cat.innerHTML = '';
+  const L = state.local;
+  if (!L) { box.append(el('p', { class: 'muted small' }, '…')); return; }
+  const eng = L.engine;
+  if (eng.installed) {
+    box.append(el('div', { class: 'banner' }, el('div', {}, `🎨 ${tr('Image program installed')}: stable-diffusion.cpp ${eng.tag || ''}`,
+      el('span', { class: 'muted small', 'data-no-i18n': '' }, ` · ${eng.kind || ''}`)),
+      el('button', { class: 'btn small-btn', type: 'button', onclick: async () => {
+        if (!confirm('Remove the image program? Your image models stay.')) return;
+        await api('/api/imagegen/engine/remove', { method: 'POST' }).catch((e) => toast(e.message));
+        loadLocalImages();
+      } }, 'Remove')));
+  } else box.append(engineSetup());
+  const items = L.models.filter(catMatch);
+  if (!items.length) cat.append(el('p', { class: 'muted' }, 'No image model matches. Try other filters or “Search online” with the Image filter.'));
+  for (const m of items) {
+    const using = state.settings?.image_gen === 'local' && state.settings?.image_gen_model === m.id;
+    cat.append(el('div', { class: 'model-card' },
+      el('div', { class: 'mc-head' }, el('b', m.custom ? { 'data-no-i18n': '' } : {}, m.title), fitBadge(m)),
+      el('p', { class: 'muted small' }, m.description),
+      el('p', { class: 'small' }, '📄 ', el('a', { href: m.license_url, target: '_blank', rel: 'noopener', title: 'License' }, m.license)),
+      el('div', { class: 'mc-foot' }, el('span', { class: 'small' }, `≈ ${m.size_gb} GB`), ...(m.tags || []).map((x) => el('span', { class: 'chip' }, x))),
+      m.installed
+        ? el('div', { class: 'row' }, using ? el('span', { class: 'chip on' }, '✓ In use') : el('button', { class: 'btn primary', type: 'button', onclick: () => useImageModel(m.id) }, 'Use for 🎨'),
+          el('button', { class: 'btn danger', type: 'button', title: 'Delete from disk', onclick: async () => {
+            if (!confirm(tr('Delete {name} from disk?', { name: m.title }))) return;
+            try { await api('/api/imagegen/models/delete', { method: 'POST', body: { id: m.id } }); } catch (e) { toast(e.message); }
+            loadLocalImages();
+          } }, '🗑'))
+        : imagePullButton({ id: m.id }, m.id, m.partial ? '⬇ Continue download' : '⬇ Download')));
+  }
+  updatePullWidgets();
+}
+function engineSetup() {
+  const box = el('div', { class: 'banner' });
+  const intro = el('p', {}, 'Sunak can make pictures by itself with stable-diffusion.cpp, a free program without extra installs. Set it up once, then download an image model below.');
+  const go = el('button', { class: 'btn primary', type: 'button', onclick: async () => {
+    go.disabled = true;
+    let res;
+    try { res = await api('/api/imagegen/engine'); } catch (e) { toast(e.message); go.disabled = false; return; }
+    const kinds = { cuda: 'NVIDIA graphics card (CUDA)', vulkan: 'graphics card (Vulkan)', rocm: 'AMD graphics card (ROCm)', metal: 'Apple GPU (Metal)', cpu: 'processor only' };
+    const sel = el('select', { 'aria-label': 'Version' }, res.options.map((o, i) => el('option', { value: o.name },
+      `${i === 0 ? '★ ' : ''}${tr(kinds[o.kind] || o.kind)} · ${gb(o.size)} · ${o.name}`)));
+    go.replaceWith(el('div', { class: 'row' }, sel, imagePullButton(null, 'engine', '⬇ Install')));
+    $('[data-img="engine"]', box)._sel = sel;
+    updatePullWidgets();
+  } }, 'Set up the image program');
+  box.append(intro, state.imgPulls.engine ? imagePullButton(null, 'engine') : go, el('p', { class: 'muted small' }, 'Downloaded from github.com/leejet/stable-diffusion.cpp. With a graphics card a picture takes seconds, on the processor alone one to several minutes.'));
+  return box;
+}
+async function useImageModel(id) {
+  try { state.settings = await api('/api/settings', { method: 'PUT', body: { image_gen: 'local', image_gen_model: id } }); }
+  catch (e) { toast(e.message); return; }
+  renderAgentToggle();
+  toast('Ready: switch on 🎨 next to the message box');
+  renderImageModels();
 }
 $('#pullForm').onsubmit = (e) => {
   e.preventDefault();
@@ -2386,7 +2595,7 @@ function renderSettings() {
   $('#whisperModel').value = s.whisper_model;
   $('#imageGen').value = s.image_gen;
   $('#imageGenUrl').value = s.image_gen_url;
-  $('#imageGenModel').value = s.image_gen_model;
+  $('#imageGenModel').value = s.image_gen === 'local' ? '' : s.image_gen_model;
   $('#imageGenSize').value = String(s.image_gen_size);
   $('#imageGenSteps').value = s.image_gen_steps;
   $('#imageGenResult').textContent = '';
@@ -2540,7 +2749,8 @@ $('#saveSettings').onclick = async () => {
       agent_enabled: $('#agentEnabled').checked, agent_timeout: Number($('#agentTimeout').value),
       agent_max_steps: Number($('#agentSteps').value),
       speech_input: $('#speechInput').value, whisper_url: $('#whisperUrl').value, whisper_model: $('#whisperModel').value,
-      image_gen: $('#imageGen').value, image_gen_url: $('#imageGenUrl').value, image_gen_model: $('#imageGenModel').value,
+      image_gen: $('#imageGen').value, image_gen_url: $('#imageGenUrl').value,
+      image_gen_model: $('#imageGen').value === 'local' ? $('#imageGenLocal').value : $('#imageGenModel').value,
       image_gen_size: Number($('#imageGenSize').value), image_gen_steps: Number($('#imageGenSteps').value),
     };
     state.settings = await api('/api/settings', { method: 'PUT', body: { ...install,
@@ -2559,8 +2769,20 @@ $('#saveSettings').onclick = async () => {
   } catch (e) { toast(e.message); }
 };
 const IMAGE_GEN_URLS = { automatic1111: 'http://127.0.0.1:7860', comfyui: 'http://127.0.0.1:8188' };
+function renderLocalGenSelect() {
+  const sel = $('#imageGenLocal');
+  const ready = (state.local?.models || []).filter((m) => m.installed);
+  const want = sel.value || state.settings.image_gen_model;
+  sel.replaceChildren(...(ready.length ? ready.map((m) => el('option', { value: m.id, selected: m.id === want, 'data-no-i18n': '' }, m.title))
+    : [el('option', { value: '' }, 'No image model downloaded yet')]));
+  if (state.local && !state.local.engine.installed) sel.append(el('option', { value: '', disabled: true }, 'The image program is not set up yet'));
+}
+$('#imageGenModels').onclick = () => { state.catType = 'image'; show('models'); };
 function renderImageGenUrl() {
   const kind = $('#imageGen').value;
+  $$('.remote-gen').forEach((x) => x.classList.toggle('hidden', kind === 'local'));
+  $$('.local-gen').forEach((x) => x.classList.toggle('hidden', kind !== 'local'));
+  if (kind === 'local') { renderLocalGenSelect(); if (!state.local) loadLocalImages(); }
   $('#imageGenUrl').placeholder = IMAGE_GEN_URLS[kind] ? tr('empty = {url}', { url: IMAGE_GEN_URLS[kind] }) : '';
   $$('#imageGenUrl, #imageGenModel, #imageGenTest, #imageGenSize, #imageGenSteps').forEach((x) => (x.disabled = kind === 'off'));
 }
@@ -2571,7 +2793,7 @@ $('#imageGenTest').onclick = async () => {
   out.textContent = tr('Connecting…');
   try {
     const r = await api('/api/imagegen/test', { method: 'POST', body: { type: $('#imageGen').value, url: $('#imageGenUrl').value } });
-    $('#imageGenModels').replaceChildren(...r.models.map((m) => el('option', { value: m })));
+    $('#imageGenModelList').replaceChildren(...r.models.map((m) => el('option', { value: m })));
     out.textContent = r.models.length ? `✓ ${trn(r.models.length, '{n} model', '{n} models')}: ${r.models.join(', ')}` : tr('Connected, but the program has no model yet.');
   } catch (e) { out.textContent = `⚠️ ${e.message}`; }
   btn.disabled = false;
