@@ -39,7 +39,7 @@ Beim ersten Start erkennt Sunak deinen Arbeitsspeicher und schlägt ein passende
 
 > **Privates Repository?** Die Ein-Zeilen-Befehle funktionieren nur, solange das Repo öffentlich ist. Bei einem privaten Repo:
 > `git clone https://github.com/M4XM77R/sunak.git && cd sunak && ./install.sh` (Windows: `.\install.ps1`).
-> Der Installer merkt sich den Klon, `sunak update` holt Neuerungen dann per `git pull` mit deinen Git-Zugangsdaten.
+> Der Installer merkt sich den Klon, `sunak update` holt Neuerungen dann per `git pull` mit deinen Git-Zugangsdaten. Sunak prüft beim Start und danach höchstens alle 6 Stunden per `git fetch`, ob es Neuerungen gibt, und zeigt dann oben links „✨ Update available“. Installiert wird nur, wenn du auf **Update** klickst.
 
 ### Ohne Installation ausprobieren
 
@@ -99,7 +99,8 @@ docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d   # mit NVI
 | Läuft Sunak? | `sunak status` |
 | Automatisch beim Anmelden starten | `sunak autostart on` (aus: `sunak autostart off`) |
 | Desktop-Icon neu anlegen | `sunak shortcut` |
-| Aktualisieren | `sunak update` (holt die neueste Version und beendet ein laufendes Sunak, damit der nächste Start sie nutzt) |
+| Aktualisieren | Bei „✨ Update available“ oben links auf **Update** klicken: Sunak installiert die neue Version und startet neu. Oder im Terminal `sunak update` (holt die neueste Version und beendet ein laufendes Sunak, damit der nächste Start sie nutzt) |
+| Update-Hinweis abschalten | Settings → Updates → Haken bei „Check for updates“ entfernen → Save settings |
 | Version anzeigen | `sunak version` |
 | Deinstallieren | `sunak uninstall` (macOS/Linux, entfernt auch Icons und Autostart). Windows: `sunak autostart off`, dann den Ordner `%LOCALAPPDATA%\sunak` und die Sunak-Icons löschen |
 

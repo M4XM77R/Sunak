@@ -74,6 +74,7 @@ if [ -n "$SRC" ] && [ "$SRC" != "$APP_DIR" ]; then
   say "Installing from $SRC"
   rm -rf "$APP_DIR.new" && mkdir -p "$APP_DIR.new"
   (cd "$SRC" && tar cf - --exclude=.git --exclude=data --exclude='__pycache__' .) | (cd "$APP_DIR.new" && tar xf -)
+  git -C "$SRC" rev-parse HEAD > "$APP_DIR.new/.commit" 2>/dev/null || rm -f "$APP_DIR.new/.commit"  # for the update check
   rm -rf "$APP_DIR" && mv "$APP_DIR.new" "$APP_DIR"
   # remember the clone, so "sunak update" can pull it (also works for private repositories)
   if [ -d "$SRC/.git" ]; then echo "$SRC" > "$HOME_DIR/source"; else rm -f "$HOME_DIR/source"; fi

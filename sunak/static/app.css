@@ -31,6 +31,10 @@ a { color: var(--accent); }
   display: flex; flex-direction: column; padding: 14px; gap: 10px; }
 .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 19px; padding: 2px 4px 6px; }
 .brand span { background: linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--accent) 60%, #fff)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.update-note { display: flex; align-items: center; gap: 8px; padding: 6px 6px 6px 10px; border-radius: 10px;
+  background: var(--accent-soft); color: var(--accent); font-size: 13px; font-weight: 600; }
+.update-note span { flex: 1; }
+.update-note .btn { padding: 4px 10px; font-size: 13px; }
 .nav { display: flex; flex-direction: column; gap: 2px; }
 .nav button { text-align: left; background: none; border: 0; padding: 8px 10px; border-radius: 9px; cursor: pointer; color: var(--muted); }
 .nav button:hover { background: var(--panel-2); color: var(--text); }

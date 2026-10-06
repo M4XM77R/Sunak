@@ -1019,6 +1019,7 @@ function renderSettings() {
   $('#temperature').value = s.temperature;
   $('#tempVal').textContent = s.temperature;
   $('#useMemory').checked = s.use_memory;
+  $('#checkUpdates').checked = s.check_updates;
   const sw = $('#swatches');
   sw.innerHTML = '';
   ACCENTS.forEach((c) => sw.append(el('button', { class: c === s.accent ? 'on' : '', style: `background:${c}`, title: c,
@@ -1094,12 +1095,14 @@ $('#saveSettings').onclick = async () => {
     state.settings = await api('/api/settings', { method: 'PUT', body: {
       providers: draftProviders.filter((p) => p.base_url.trim()), system_prompt: $('#sysPrompt').value,
       temperature: parseFloat($('#temperature').value), use_memory: $('#useMemory').checked,
+      check_updates: $('#checkUpdates').checked,
       accent: s.accent, default_model: $('#defaultModel').value, personas: draftPersonas,
     } });
     applyLook();
     renderPersonaSelect();
     await loadModels();
     renderSettings();
+    checkUpdate();
     $('#settingsMsg').textContent = 'Saved ✓';
     setTimeout(() => ($('#settingsMsg').textContent = ''), 2000);
   } catch (e) { toast(e.message); }
@@ -1118,6 +1121,38 @@ $('#stopBtn').onclick = async () => {
   if (!confirm('Stop Sunak? Open it again with the Sunak icon or the “sunak” command.')) return;
   await api('/api/shutdown', { method: 'POST' });
   document.body.innerHTML = '<div class="welcome"><h2>Sunak stopped 👋</h2><p class="muted">Start it again with the Sunak icon or the <code>sunak</code> command.</p></div>';
+};
+
+/* ---------------- Updates ---------------- */
+async function checkUpdate() {
+  let u;
+  try { u = await api('/api/update'); } catch (e) { return; } // no hint is better than an error here
+  if (u.result) toast(u.result.ok ? `Update installed ✓ (Sunak ${state.status?.version || ''})` : `Update failed: ${u.result.error}`);
+  if ($('#updateBtn').disabled) return; // an update is running
+  $('#updateNote').classList.toggle('hidden', !u.available);
+  $('#updateText').textContent = `✨ Update available${u.behind > 1 ? ` (${u.behind} changes)` : ''}`;
+  $('#updateBtn').classList.toggle('hidden', !u.can_update);
+  $('#updateNote').title = u.can_update ? '' : 'Run “git pull” and the installer in your Sunak folder to update.';
+}
+$('#updateBtn').onclick = async () => {
+  const btn = $('#updateBtn');
+  if (state.busy && !confirm('Sunak is still answering. Update and restart anyway?')) return;
+  btn.disabled = true;
+  btn.textContent = 'Updating…';
+  try { await api('/api/update', { method: 'POST' }); }
+  catch (e) { toast(e.message); btn.disabled = false; btn.textContent = 'Update'; return; }
+  $('#updateText').textContent = 'Installing, Sunak restarts…';
+  const old = state.status?.instance;
+  const started = Date.now();
+  while (Date.now() - started < 300000) {
+    await new Promise((r) => setTimeout(r, 1500));
+    try {
+      const s = await (await fetch('/api/status')).json();
+      if (s.instance && s.instance !== old) { location.reload(); return; }
+    } catch (e) { /* not back yet */ }
+  }
+  $('#updateText').textContent = 'Sunak did not come back. Start it with the Sunak icon or “sunak”.';
+  btn.classList.add('hidden');
 };
 $('#logoutBtn').onclick = async () => { await api('/api/logout', { method: 'POST' }); location.reload(); };
 
@@ -1144,4 +1179,8 @@ async function refreshAll(poll = false) {
   promptEl.focus();
   // pick up a newly started Ollama without reloading
   setInterval(() => { if (!state.models.length && !state.busy && !state.ollamaBusy) refreshAll(true); }, 8000);
+  // the update check runs in the background after the start: look again a little later, then hourly
+  checkUpdate();
+  setTimeout(checkUpdate, 20000);
+  setInterval(checkUpdate, 3600000);
 })();

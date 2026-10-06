@@ -16,6 +16,7 @@ Browser (sunak/static)  ──HTTP/JSON, NDJSON-Streams──▶  sunak/server.p
 | Datei | Aufgabe |
 |---|---|
 | `sunak/__main__.py` | Kommandozeile (`python -m sunak`): öffnet ein bereits laufendes Sunak im Browser, sonst sucht es einen freien Port, startet den Server und öffnet den Browser. Befehle `stop`, `status`, `autostart on\|off\|status`, `shortcut`, `version` |
+| `sunak/updates.py` | Update-Prüfung per git (neue Commits im Klon, aus dem installiert wurde) und Hilfsprozess für den Update-Knopf: wartet auf das Ende des Servers, installiert das Update, startet Sunak neu |
 | `sunak/desktop.py` | Desktop-Integration: laufendes Sunak erkennen (`/api/status` mit `Server: Sunak/…`) und beenden, Autostart-Datei und Desktop-Icon je Betriebssystem |
 | `start.py` | Start direkt aus dem Repository-Ordner ohne Installation (Windows: Doppelklick) |
 | `sunak/server.py` | `App` (Zustand, Einstellungen, Modellauswahl, Login, Prompt-Aufbau) und `Handler` (HTTP-Routing, alle API-Endpunkte) |
@@ -49,6 +50,8 @@ Alle Endpunkte liegen unter `/api/`. Schreibende Anfragen brauchen den Header `X
 | Methode und Pfad | Zweck | Antwort |
 |---|---|---|
 | `GET /api/status` | Version, Login-Status, RAM, empfohlenes Modell | JSON |
+| `GET /api/update` | Update verfügbar? (`available`, `behind`, `can_update`, einmalig `result` des letzten Updates); stößt die Prüfung im Hintergrund an | JSON |
+| `POST /api/update` | Update-Knopf: startet den Hilfsprozess und beendet den Server | JSON |
 | `POST /api/shutdown` | Server beenden (`sunak stop`, Knopf in Settings); von diesem Rechner ohne Login, von anderen Geräten nur angemeldet | JSON |
 | `POST /api/login`, `POST /api/logout` | Anmelden, Abmelden | JSON |
 | `GET`/`PUT /api/settings` | Einstellungen und Provider | JSON |
@@ -140,6 +143,14 @@ Hochgeladene Dateien gehen den Weg `extract.extract_text` → `knowledge.chunk` 
 - Alle Einträge rufen den aktuellen Python-Interpreter mit `-m sunak` und setzen `PYTHONPATH` auf den Installationsordner, daher funktionieren sie auch ohne `sunak`-Befehl im `PATH`.
 - `sunak update` holt den neuen Code: Wurde aus einem Git-Klon installiert, merkt sich der Installer dessen Pfad (`~/.sunak/source`, Windows `%LOCALAPPDATA%\sunak\source.txt`), und das Update macht dort `git pull` und installiert neu. Das klappt auch bei privaten Repositories. Sonst wird der aktuelle Installer heruntergeladen. Das Update zeigt alte und neue Version und beendet ein laufendes Sunak, damit der nächste Start die neue Version verwendet.
 
+
+## Update-Hinweis
+
+- **Prüfung** (`sunak/updates.py`, `App.check_updates`): beim Start und danach höchstens alle 6 Stunden (nach einem Fehlschlag erneut nach 30 Minuten) läuft im Hintergrund `git fetch` im Klon, aus dem Sunak stammt: der App-Ordner selbst, wenn er ein Git-Klon ist, sonst der vom Installer gemerkte Klon (`~/.sunak/source`, Windows `source.txt`). Gezählt werden die Commits zwischen der installierten Version und dem Upstream-Branch (`git rev-list --count <installiert>..@{u}`). Die installierte Version schreibt der Installer nach `.commit` im App-Ordner, daher fällt auch ein Klon auf, der schon gepullt, aber noch nicht neu installiert wurde.
+- **Still scheitern:** ohne git, ohne Netz, ohne Klon, ohne Upstream-Branch oder bei Passwortabfragen (`GIT_TERMINAL_PROMPT=0`, kein Terminal, unter Windows `GCM_INTERACTIVE=never`) gibt es einfach keinen Hinweis.
+- **Oberfläche:** `GET /api/update` beim Laden, nach 20 Sekunden und dann stündlich. Gibt es neue Commits, erscheint oben in der Seitenleiste „✨ Update available“ mit dem Knopf **Update**. Abschaltbar in Settings → Updates (`check_updates`).
+- **Update-Knopf:** `POST /api/update` startet `python -m sunak.updates` als eigenständigen Prozess und beendet den Server. Der Hilfsprozess wartet, bis der alte Server weg ist, führt `git pull --ff-only` (App-Ordner ist ein Klon) oder den installierten Befehl `sunak update` aus, schreibt das Ergebnis nach `update-result.json` im Datenordner, protokolliert nach `update.log` und startet Sunak mit gleichem Host, Port und Datenordner neu. Die Seite erkennt den Neustart an der geänderten `instance` in `/api/status`, lädt neu und zeigt das Ergebnis einmal an. Ohne Klick wird nie etwas installiert.
+
 ## Datenhaltung
 
 Alle Daten liegen in einer SQLite-Datei: `~/.sunak/sunak.db`, der Ordner lässt sich über `SUNAK_DATA` ändern.
@@ -177,7 +188,7 @@ Umgebungsvariablen: `SUNAK_HOST`, `SUNAK_PORT`, `SUNAK_DATA`, `SUNAK_PASSWORD`, 
 python3 -m unittest discover tests -v
 ```
 
-Die Tests starten Sunak und einen simulierten Server, der die Ollama-, Anthropic- und OpenAI-API nachbildet. Abgedeckt sind Chat, Personas, Kommandozeile (bereits laufend, `status`, `stop`) und Autostart-Dateien, Chat-Suche und Export, Wissensbasis (Hochladen, Suche, Auszüge im Prompt, Quellen), Textauslese aus PDF, Word, OpenDocument und PowerPoint, Datenbank-Migration, Neu generieren, Denkprozess, Gedächtnis, Compare, Research (mit gestubbter Suche), Dokumente, Modell-Download mit Fortschritt, Ollama-Status und Katalog, Claude (Streaming, Header, Denkprozess, Ablehnung, falscher Key, Key-Maskierung), Login, CSRF-Schutz und Pfad-Traversal. GitHub Actions führt sie auf Linux, macOS und Windows aus (`.github/workflows/test.yml`).
+Die Tests starten Sunak und einen simulierten Server, der die Ollama-, Anthropic- und OpenAI-API nachbildet. Abgedeckt sind Chat, Personas, Update-Prüfung (echte Git-Repositories mit lokalem Remote, installierte Kopie, Fehlerfälle, Update-Knopf), Kommandozeile (bereits laufend, `status`, `stop`) und Autostart-Dateien, Chat-Suche und Export, Wissensbasis (Hochladen, Suche, Auszüge im Prompt, Quellen), Textauslese aus PDF, Word, OpenDocument und PowerPoint, Datenbank-Migration, Neu generieren, Denkprozess, Gedächtnis, Compare, Research (mit gestubbter Suche), Dokumente, Modell-Download mit Fortschritt, Ollama-Status und Katalog, Claude (Streaming, Header, Denkprozess, Ablehnung, falscher Key, Key-Maskierung), Login, CSRF-Schutz und Pfad-Traversal. GitHub Actions führt sie auf Linux, macOS und Windows aus (`.github/workflows/test.yml`).
 
 ## Erweitern
 

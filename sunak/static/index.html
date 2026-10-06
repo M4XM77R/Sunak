@@ -16,6 +16,10 @@
       <img src="/icon.svg" alt="" width="28" height="28">
       <span>Sunak</span>
     </div>
+    <div class="update-note hidden" id="updateNote" role="status">
+      <span id="updateText">✨ Update available</span>
+      <button class="btn primary" id="updateBtn" title="Install the update and restart Sunak">Update</button>
+    </div>
     <button class="btn primary wide" id="newChat" title="New chat (Ctrl+K)">＋ New chat</button>
     <nav class="nav">
       <button data-view="chat" class="active">💬 Chat</button>
@@ -211,6 +215,9 @@
         <h2>Data</h2>
         <p class="muted small">All chats, documents, notes and your knowledge base in one JSON file. API keys and the password are not included.</p>
         <div class="row"><a class="btn" href="/api/export" download>⬇ Download backup</a></div>
+
+        <h2>Updates</h2>
+        <label class="check"><input type="checkbox" id="checkUpdates"> Check for updates and show a hint (never installs without your click)</label>
 
         <h2>Security</h2>
         <p class="muted small">Set a password if Sunak is reachable from other devices. Leave empty to disable.</p>

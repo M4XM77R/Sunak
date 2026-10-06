@@ -54,6 +54,8 @@ if ($local) {
   Copy-Item -Recurse -Path (Join-Path $local "*") -Destination $tmp -Exclude ".git", "data"
   # remember the clone, so "sunak update" can pull it (also works for private repositories)
   if (Test-Path (Join-Path $local ".git")) { Set-Content -Encoding UTF8 (Join-Path $HomeDir "source.txt") $local }
+  # installed commit, for the "Update available" check in the app
+  try { $c = git -C $local rev-parse HEAD 2>$null; if ($LASTEXITCODE -eq 0 -and $c) { Set-Content -Encoding ASCII (Join-Path $tmp ".commit") $c } } catch {}
 } else {
   Say "Downloading Sunak…"
   $zip = Join-Path $env:TEMP "sunak.zip"

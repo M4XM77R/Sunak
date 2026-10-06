@@ -22,7 +22,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlparse
 
-from . import __version__, extract, knowledge, ollama, providers, research
+from . import __version__, extract, knowledge, ollama, providers, research, updates
 from .db import DB
 
 STATIC = Path(__file__).parent / "static"
@@ -36,6 +36,7 @@ DEFAULT_SETTINGS = {
     "use_memory": True,
     "accent": "#ff4fa3",
     "theme": "dark",
+    "check_updates": True,
 }
 
 # Built-in personas; the user can edit, add and delete them in Settings → Personas.
@@ -144,6 +145,37 @@ class App:
         if env_pw:
             self.db.set_setting("password_hash", hash_password(env_pw))
         self.ram = total_ram_gb()
+        self.instance = secrets.token_hex(8)  # changes with every start, so the page sees a restart
+        self.update = {"behind": None, "checked": 0.0}
+        self._update_lock = threading.Lock()
+        self._checking = False
+
+    # updates ----------------------------------------------------------
+    def check_updates(self):
+        """Look for new commits in the background, at most every CHECK_EVERY seconds, when enabled."""
+        if not self.settings()["check_updates"]:
+            return
+        with self._update_lock:
+            if self._checking or time.time() - self.update["checked"] < updates.CHECK_EVERY:
+                return
+            self._checking = True
+
+        def run():
+            try:
+                behind = updates.check()
+                checked = time.time() if behind is not None else time.time() - updates.CHECK_EVERY + updates.RETRY_AFTER
+                self.update = {"behind": behind, "checked": checked}
+            finally:
+                self._checking = False
+        threading.Thread(target=run, daemon=True).start()
+
+    def update_info(self):
+        """State for the "Update available" hint, plus the outcome of the last update (shown once)."""
+        enabled = self.settings()["check_updates"]
+        self.check_updates()
+        behind = (self.update["behind"] or 0) if enabled else 0
+        return {"enabled": enabled, "available": behind > 0, "behind": behind,
+                "can_update": updates.update_command() is not None, "result": updates.pop_result(self.data_dir)}
 
     # settings ---------------------------------------------------------
     def settings(self):
@@ -516,6 +548,19 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json({"ok": True})
         threading.Thread(target=self.server.shutdown, daemon=True).start()
 
+    def update_get(self):
+        """GET /api/update: is a newer version available? (checked with git in the background)"""
+        self.send_json(self.app.update_info())
+
+    def update_apply(self):
+        """POST /api/update: stop this server; a helper process installs the update and starts Sunak again."""
+        if updates.update_command() is None:
+            raise ValueError("Sunak cannot update itself here. Run git pull and the installer in your Sunak folder.")
+        host, port = self.server.server_address[:2]
+        updates.spawn_helper(port, host, self.app.data_dir)
+        self.send_json({"ok": True})
+        threading.Thread(target=self.server.shutdown, daemon=True).start()
+
     def static(self, path):
         """Serve a file from the static folder (login page instead of the app when not logged in)."""
         if path in ("/", "/index.html"):
@@ -543,6 +588,7 @@ class Handler(BaseHTTPRequestHandler):
             "authed": self.authed(),
             "ram_gb": self.app.ram,
             "recommended": recommend(self.app.ram),
+            "instance": self.app.instance,
         })
 
     def login(self):
@@ -1026,6 +1072,8 @@ ROUTES = [
     (r"/api/logout", "POST", Handler.logout),
     (r"/api/settings", "GET", Handler.get_settings),
     (r"/api/settings", "PUT", Handler.put_settings),
+    (r"/api/update", "GET", Handler.update_get),
+    (r"/api/update", "POST", Handler.update_apply),
     (r"/api/models", "GET", Handler.get_models),
     (r"/api/models/pull", "POST", Handler.pull),
     (r"/api/models/delete", "POST", Handler.delete_model),
