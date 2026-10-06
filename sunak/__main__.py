@@ -49,6 +49,18 @@ COMMANDS = {
                           "Part of the installed sunak command. Without installing: run git pull in the Sunak folder."},
     "version": {"group": "Manage", "args": "", "summary": "Print the installed version", "example": "sunak version"},
     "gpu": {"group": "Manage", "args": "", "summary": "Which graphics card Ollama can use", "example": "sunak gpu"},
+    "mail-selftest": {"group": "Manage", "args": "[--account EMAIL] [--new] [--data-dir PATH] [--keep] [--yes]",
+                      "summary": "Test a real mail account end to end", "example": "sunak mail-selftest --account me@gmail.com",
+                      "details": "Logs in over IMAP and SMTP, reads the Inbox, checks the new-mail notice, sends a mail to\n"
+                                 "the account itself with an attachment, receives it, forwards the attachment as a draft,\n"
+                                 "moves and deletes. Only its own test messages are touched and deleted at the end.\n"
+                                 "  --account EMAIL  which linked account (needed when several are linked)\n"
+                                 "  --new            type in an address and an app password instead (not saved)\n"
+                                 "  --data-dir PATH  Sunak's data folder (default ~/.sunak)\n"
+                                 "  --keep           keep the test messages\n"
+                                 "  --yes            do not ask before starting\n"
+                                 "Gmail: turn on 2-Step Verification and create an app password at\n"
+                                 "https://myaccount.google.com/apppasswords"},
     "autostart": {"group": "Desktop", "args": "on|off|status", "summary": "Start Sunak when you log in (on|off|status)",
                   "example": "sunak autostart on",
                   "details": "  on      start Sunak in the background when you log in\n  off     do not start it any more\n"
@@ -210,6 +222,9 @@ def main(argv=None):
         return 0
     if argv and argv[0] == "update":
         sys.exit("'update' is part of the installed sunak command. Without installing: git pull in this folder.")
+    if argv and argv[0] == "mail-selftest":
+        from . import mailtest
+        return mailtest.main(argv[1:])
     if argv and argv[0] == "uninstall":
         from . import uninstall
         return uninstall.main(argv[1:])

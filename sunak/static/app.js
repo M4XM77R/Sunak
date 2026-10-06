@@ -1346,11 +1346,41 @@ function renderReader(m) {
       el('button', { class: 'btn', type: 'button', title: 'Attach this e-mail to a new chat and ask anything about it', onclick: () => askInChat(m) }, '💬 Ask in chat'),
       el('button', { class: 'btn', type: 'button', title: 'The model reads the date out of this e-mail, you check it and save',
         onclick: () => { show('calendar'); calQuickAdd(`${tr('Sent: {date}', { date: m.date })}\n${mailAsText(m)}`.slice(0, 20000)); } }, '📅 Add to calendar')),
+    mailActions(m),
     aiBox,
     att.length ? el('div', { class: 'sources' }, att) : null,
     el('div', { class: 'mail-body' }, m.text || tr('(no text)')),
     m.truncated ? el('p', { class: 'muted small' }, 'This e-mail is very long; only the beginning is shown.') : null].filter(Boolean));
   r.scrollTop = 0;
+}
+function mailActions(m) {
+  const others = state.mail.folders.filter((f) => f.id !== m.folder);
+  const sel = el('select', { 'aria-label': 'Move to folder', onchange: () => { const t = sel.value; sel.value = ''; if (t) moveMail(m, t); } },
+    el('option', { value: '' }, 'Move to…'), ...others.map((f) => el('option', { value: f.id }, f.name)));
+  return el('div', { class: 'row mail-actions' }, sel,
+    el('button', { class: 'btn', type: 'button', onclick: () => deleteMail(m) }, '🗑 Delete'));
+}
+function mailGone(m, msg) {
+  state.mail.items = state.mail.items.filter((x) => x.uid !== m.uid);
+  if (state.mail.open?.uid === m.uid) { state.mail.open = null; showMailPane('empty'); }
+  renderMailList();
+  toast(msg);
+}
+async function moveMail(m, target) {
+  try {
+    const r = await api(`/api/mail/${m.account}/move`, { method: 'POST', body: { folder: m.folder, uids: [m.uid], target } });
+    mailGone(m, tr('Moved to {folder} ✓', { folder: r.folder }));
+  } catch (e) { toast(e.message); }
+}
+async function deleteMail(m) {
+  const trash = state.mail.folders.find((f) => f.role === 'trash');
+  const forever = !trash || trash.id === m.folder;
+  if (!confirm(forever ? tr('Delete “{subject}” for good? This cannot be undone.', { subject: m.subject })
+    : tr('Move “{subject}” to the Trash?', { subject: m.subject }))) return;
+  try {
+    const r = await api(`/api/mail/${m.account}/delete`, { method: 'POST', body: { folder: m.folder, uids: [m.uid], permanent: forever } });
+    mailGone(m, r.permanent ? tr('Deleted for good ✓') : tr('Moved to {folder} ✓', { folder: r.folder }));
+  } catch (e) { toast(e.message); }
 }
 async function mailAi(task, text, box, instruction = '', onText) {
   if (!currentModel()) { toast('Install or connect a model first'); return; }
@@ -1408,7 +1438,8 @@ $('#mailOverview').onclick = () => {
 /* compose: new mail, reply, forward */
 function confirmDiscard() {
   const c = state.mail.compose;
-  const dirty = c && ($('#mailBody').value.trim() !== (c.start || '').trim() || $('#mailTo').value.trim() !== (c.to || ''));
+  const dirty = c && ($('#mailBody').value.trim() !== (c.start || '').trim() || $('#mailTo').value.trim() !== (c.to || '')
+    || c.files.length > (c.savedFiles || 0));
   if (dirty && !confirm('Discard this e-mail?')) return false;
   state.mail.compose = null;
   return true;
@@ -1416,7 +1447,9 @@ function confirmDiscard() {
 function openCompose(c) {
   if (!mailAcc()) { toast('Add a mail account first'); show('settings'); return; }
   if (state.mail.compose && !confirmDiscard()) return;
+  c.files = c.files || [];
   state.mail.compose = c;
+  renderComposeFiles();
   const acc = mailAcc();
   $('#mailFrom').textContent = tr('From: {from}', { from: acc.name ? `${acc.name} <${acc.email}>` : acc.email });
   $('#mailTo').value = c.to || '';
@@ -1441,15 +1474,40 @@ function replyTo(m, all) {
 }
 function forward(m) {
   const head = `\n\n---------- ${tr('Forwarded message')} ----------\n${mailAsText(m)}`;
-  openCompose({ subject: prefixed('Fwd:', m.subject), start: head });
-  if (m.attachments.length) toast('Attachments are not forwarded yet');
+  // the original's attachments go along (fetched by the server when sending); each can be removed
+  openCompose({ subject: prefixed('Fwd:', m.subject), start: head,
+    fwd: { folder: m.folder, uid: m.uid, list: m.attachments, keep: m.attachments.map((a, i) => i) } });
 }
+const MAIL_MAX_ATTACH = 17 * 1024 * 1024;
+function composeSize(c) {
+  return c.files.reduce((n, f) => n + f.size, 0) + (c.fwd ? c.fwd.keep.reduce((n, i) => n + c.fwd.list[i].size, 0) : 0);
+}
+function renderComposeFiles() {
+  const c = state.mail.compose, box = $('#mailAttach');
+  box.innerHTML = '';
+  const chip = (name, size, drop) => el('span', { class: 'chip', title: `${Math.ceil(size / 1024)} KB` },
+    el('span', { 'data-no-i18n': '' }, `📎 ${name}`),
+    el('button', { type: 'button', title: tr('Remove {name}', { name }), onclick: () => { drop(); renderComposeFiles(); } }, '✕'));
+  if (c.fwd) c.fwd.keep.forEach((i) => box.append(chip(c.fwd.list[i].name, c.fwd.list[i].size, () => { c.fwd.keep = c.fwd.keep.filter((k) => k !== i); })));
+  c.files.forEach((f) => box.append(chip(f.name, f.size, () => { c.files = c.files.filter((x) => x !== f); })));
+}
+$('#mailFiles').onchange = async (e) => {
+  const c = state.mail.compose, input = e.target;
+  for (const f of [...input.files]) {
+    if (composeSize(c) + f.size > MAIL_MAX_ATTACH) { toast(tr('{name} is too large: at most 17 MB together', { name: f.name })); break; }
+    try { c.files.push({ name: f.name, size: f.size, data: await fileData(f) }); } catch (err) { toast(err.message); }
+  }
+  input.value = '';
+  renderComposeFiles();
+};
 $('#mailNew').onclick = () => openCompose({});
 $('#mailClose').onclick = () => { if (confirmDiscard()) showMailPane(state.mail.open ? 'reader' : 'empty'); };
 function composeData() {
   const c = state.mail.compose;
   return { to: $('#mailTo').value, cc: $('#mailCc').value, bcc: $('#mailBcc').value, subject: $('#mailSubject').value,
-    body: $('#mailBody').value, in_reply_to: c.in_reply_to || '', references: c.references || '' };
+    body: $('#mailBody').value, in_reply_to: c.in_reply_to || '', references: c.references || '',
+    attachments: c.files.map((f) => ({ name: f.name, data: f.data })),
+    forward: c.fwd?.keep.length ? { folder: c.fwd.folder, uid: c.fwd.uid, attachments: c.fwd.keep } : null };
 }
 $('#mailAiBtn').onclick = async () => {
   const c = state.mail.compose;
@@ -1489,8 +1547,77 @@ $('#mailDraft').onclick = async () => {
     const r = await api(`/api/mail/${$('#mailAccount').value}/draft`, { method: 'POST', body: composeData() });
     toast(tr('Saved in {folder} ✓', { folder: r.folder }));
     state.mail.compose.start = $('#mailBody').value; // nothing unsaved any more
+    state.mail.compose.savedFiles = state.mail.compose.files.length;
     state.mail.compose.to = $('#mailTo').value.trim();
   } catch (err) { toast(err.message); }
+};
+
+/* new mail: every 2 minutes the server looks into each Inbox (read-only); new unread mail gets a notice,
+   the Mail button shows how many are unread. The browser remembers the newest UID it announced. */
+const MAIL_POLL = 120000;
+let mailPolling = false;
+async function checkNewMail() {
+  if (mailPolling) return;
+  if (!state.settings?.mail_notify) { $('#mailBadge').classList.add('hidden'); return; }
+  mailPolling = true;
+  let r;
+  try { r = await api('/api/mail/new'); } catch (e) { mailPolling = false; return; }
+  mailPolling = false;
+  let seen = {};
+  try { seen = JSON.parse(store.get('sunak-mail-seen', '{}')) || {}; } catch (e) { /* start over */ }
+  const fresh = [];
+  let unread = 0;
+  for (const a of r.accounts) {
+    if (a.error) continue;
+    unread += a.unseen;
+    const prev = seen[a.id]?.v === a.uidvalidity ? seen[a.id].uid : null;
+    const top = Math.max(0, ...a.latest.map((m) => m.uid));
+    if (prev !== null) fresh.push(...a.latest.filter((m) => m.uid > prev).map((m) => ({ ...m, account: a.id })));
+    seen[a.id] = { v: a.uidvalidity, uid: Math.max(top, prev || 0) }; // the first look only sets the baseline
+  }
+  store.set('sunak-mail-seen', JSON.stringify(seen));
+  const badge = $('#mailBadge');
+  badge.textContent = unread > 99 ? '99+' : String(unread);
+  badge.classList.toggle('hidden', !unread);
+  if (!fresh.length) return;
+  const first = fresh[0];
+  const msg = fresh.length === 1 ? tr('New e-mail from {who}: {subject}', { who: who(first), subject: first.subject })
+    : tr('{n} new e-mails', { n: fresh.length });
+  const open = () => openNewMail(first.account);
+  toast(msg, { label: tr('Open'), fn: open });
+  if (window.Notification?.permission === 'granted' && document.hidden) {
+    try {
+      const n = new Notification('Sunak', { body: msg, icon: '/icon.svg', tag: 'sunak-mail' });
+      n.onclick = () => { window.focus(); open(); n.close(); };
+    } catch (e) { /* not allowed here */ }
+  }
+  if (state.view === 'mail' && mailFolder() === 'INBOX' && fresh.some((m) => m.account === $('#mailAccount').value)
+      && !state.mail.compose) loadMailList();
+}
+async function openNewMail(aid) {
+  show('mail');
+  if ($('#mailAccount').value !== aid && state.mail.accounts.some((a) => a.id === aid)) {
+    $('#mailAccount').value = aid;
+    $('#mailAccount').onchange();
+  } else if (mailFolder() !== 'INBOX' && $('#mailFolder').querySelector('option[value="INBOX"]')) {
+    $('#mailFolder').value = 'INBOX';
+    $('#mailFolder').onchange();
+  }
+}
+function renderMailDesktop() {
+  const btn = $('#mailDesktop'), info = $('#mailDesktopState');
+  if (!window.Notification || !window.isSecureContext) {
+    btn.disabled = true;
+    info.textContent = tr('This browser cannot show notifications here (only on localhost or https).');
+    return;
+  }
+  btn.disabled = Notification.permission !== 'default';
+  info.textContent = Notification.permission === 'granted' ? tr('On ✓')
+    : Notification.permission === 'denied' ? tr('Blocked in the browser settings') : '';
+}
+$('#mailDesktop').onclick = async () => {
+  try { await Notification.requestPermission(); } catch (e) { /* old browsers */ }
+  renderMailDesktop();
 };
 
 /* settings: link, test and remove accounts */
@@ -2586,6 +2713,8 @@ function renderSettings() {
   $('#temperature').value = s.temperature;
   $('#tempVal').textContent = s.temperature;
   $('#useMemory').checked = s.use_memory;
+  $('#mailNotify').checked = s.mail_notify;
+  renderMailDesktop();
   $('#checkUpdates').checked = s.check_updates;
   $('#agentEnabled').checked = s.agent_enabled;
   $('#agentTimeout').value = s.agent_timeout;
@@ -2755,7 +2884,7 @@ $('#saveSettings').onclick = async () => {
     };
     state.settings = await api('/api/settings', { method: 'PUT', body: { ...install,
       system_prompt: $('#sysPrompt').value, temperature: parseFloat($('#temperature').value), use_memory: $('#useMemory').checked,
-      accent: s.accent, theme: s.theme, default_model: $('#defaultModel').value, personas: draftPersonas,
+      mail_notify: $('#mailNotify').checked, accent: s.accent, theme: s.theme, default_model: $('#defaultModel').value, personas: draftPersonas,
     } });
     applyLook();
     renderPersonaSelect();
@@ -3030,4 +3159,6 @@ async function refreshAll(poll = false) {
   checkUpdate();
   setTimeout(checkUpdate, 20000);
   setInterval(checkUpdate, 3600000);
+  setTimeout(checkNewMail, 5000);
+  setInterval(checkNewMail, MAIL_POLL);
 })();

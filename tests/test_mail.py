@@ -49,9 +49,11 @@ INBOX = [
 
 
 class FakeIMAP(socketserver.StreamRequestHandler):
-    """Just enough IMAP4rev1 for imaplib: LOGIN, AUTHENTICATE PLAIN, LIST, SELECT/EXAMINE, UID SEARCH/FETCH, APPEND."""
+    """Just enough IMAP4rev1 for imaplib: LOGIN, AUTHENTICATE PLAIN, LIST, SELECT/EXAMINE, UID SEARCH/FETCH/COPY/
+    MOVE/STORE/EXPUNGE, EXPUNGE, APPEND. `caps` decides whether MOVE and UIDPLUS are offered."""
     boxes = {}
     log = []
+    caps = "MOVE UIDPLUS"
 
     def send(self, line):
         self.wfile.write(line if isinstance(line, bytes) else line.encode())
@@ -84,7 +86,7 @@ class FakeIMAP(socketserver.StreamRequestHandler):
 
     def handle(self):
         self.send("* OK fake IMAP ready\r\n")
-        user, box = None, None
+        user, box, writable = None, None, False
         while True:
             tok = self.read_command()
             if not tok:
@@ -93,7 +95,7 @@ class FakeIMAP(socketserver.StreamRequestHandler):
             type(self).log.append(" ".join(a.decode("utf-8", "replace") for a in tok[1:2] + args[:1]))
             ok = f"{tag} OK done\r\n"
             if cmd == "CAPABILITY":
-                self.send("* CAPABILITY IMAP4rev1 AUTH=PLAIN\r\n" + ok)
+                self.send(f"* CAPABILITY IMAP4rev1 AUTH=PLAIN {self.caps if user else ''}\r\n" + ok)
             elif cmd == "LOGIN":
                 u, p = args[0].decode(), args[1].decode()
                 if USERS.get(u) == p:
@@ -119,14 +121,17 @@ class FakeIMAP(socketserver.StreamRequestHandler):
                           '* LIST (\\Noselect \\HasChildren) "/" "[Gmail]"\r\n'
                           '* LIST (\\HasNoChildren \\Sent) "/" "[Gmail]/Sent Mail"\r\n'
                           '* LIST (\\HasNoChildren) "/" "Entw&APw-rfe"\r\n'
-                          '* LIST (\\HasNoChildren) "/" Archiv\r\n' + ok)
+                          '* LIST (\\HasNoChildren) "/" Archiv\r\n'
+                          '* LIST (\\HasNoChildren \\Trash) "/" "[Gmail]/Trash"\r\n' + ok)
             elif cmd in ("SELECT", "EXAMINE"):
                 name = args[0].decode()
                 if name not in self.boxes:
                     self.send(f"{tag} NO no such mailbox\r\n")
                     continue
                 box = name
-                self.send(f"* {len(self.boxes[box])} EXISTS\r\n{tag} OK [READ-{'ONLY' if cmd == 'EXAMINE' else 'WRITE'}] done\r\n")
+                self.send(f"* {len(self.boxes[box])} EXISTS\r\n* OK [UIDVALIDITY {abs(hash(box)) % 10 ** 6 + 1}] ok\r\n"
+                          f"{tag} OK [READ-{'ONLY' if cmd == 'EXAMINE' else 'WRITE'}] done\r\n")
+                writable = cmd == "SELECT"
             elif cmd == "UID" and args[0].upper() == b"SEARCH":
                 crit, uids = args[1:], []
                 if crit[:1] == [b"CHARSET"]:
@@ -144,6 +149,9 @@ class FakeIMAP(socketserver.StreamRequestHandler):
                         elif c == b"TEXT":
                             i += 1
                             good &= crit[i].decode().lower() in hay
+                        elif c == b"SUBJECT":
+                            i += 1
+                            good &= crit[i].decode().lower() in str(text["Subject"]).lower()
                         i += 1
                     if good:
                         uids.append(str(uid))
@@ -165,8 +173,33 @@ class FakeIMAP(socketserver.StreamRequestHandler):
                         self.send(f"* {n} FETCH (UID {uid} BODY[]<0> {{{len(raw)}}}\r\n".encode() + raw +
                                   f" FLAGS ({fl}))\r\n".encode())
                 self.send(ok)
+            elif cmd == "UID" and args[0].upper() in (b"COPY", b"MOVE", b"STORE", b"EXPUNGE"):
+                sub, uids = args[0].upper().decode(), {int(x) for x in args[1].decode().split(",")}
+                if not writable or {"MOVE": "MOVE", "EXPUNGE": "UIDPLUS"}.get(sub, "IMAP") not in self.caps + " IMAP":
+                    self.send(f"{tag} NO not allowed\r\n")
+                    continue
+                hit = [m for m in self.boxes[box] if m[0] in uids]
+                if sub in ("COPY", "MOVE"):
+                    target = args[2].decode()
+                    if target not in self.boxes:
+                        self.send(f"{tag} NO [TRYCREATE] no such mailbox\r\n")
+                        continue
+                    for _, flags, raw in hit:
+                        uid = max([u for u, _, _ in self.boxes[target]] or [0]) + 1
+                        self.boxes[target].append((uid, set(flags) - {"\\Deleted"}, raw))
+                if sub == "STORE":
+                    for _, flags, _ in hit:
+                        flags.update(args[3].decode().strip("()").split())
+                if sub in ("MOVE", "EXPUNGE"):
+                    self.boxes[box][:] = [m for m in self.boxes[box] if m not in hit or
+                                       (sub == "EXPUNGE" and "\\Deleted" not in m[1])]
+                self.send(ok)
+            elif cmd == "EXPUNGE":
+                self.boxes[box][:] = [m for m in self.boxes[box] if "\\Deleted" not in m[1]]
+                self.send(ok)
             elif cmd == "APPEND":
-                name, flags, msg = args[0].decode(), args[1].decode().strip("()").split(), args[-1]
+                name, msg = args[0].decode(), args[-1]
+                flags = args[1].decode().strip("()").split() if args[1].startswith(b"(") else []
                 if name not in self.boxes:
                     self.send(f"{tag} NO [TRYCREATE] no such mailbox\r\n")
                     continue
@@ -178,8 +211,9 @@ class FakeIMAP(socketserver.StreamRequestHandler):
 
 
 class FakeSMTP(socketserver.StreamRequestHandler):
-    """SMTP with AUTH PLAIN; keeps every delivered message in `sent`."""
+    """SMTP with AUTH PLAIN; keeps every delivered message in `sent` and hands it to `deliver` if set."""
     sent = []
+    deliver = None
 
     def handle(self):
         w = lambda s: self.wfile.write(s.encode())  # noqa: E731
@@ -211,6 +245,8 @@ class FakeSMTP(socketserver.StreamRequestHandler):
                 while not data.endswith(b"\r\n.\r\n"):
                     data += self.rfile.readline()
                 type(self).sent.append({"from": sender, "rcpt": rcpt, "data": data[:-5]})
+                if type(self).deliver:
+                    type(self).deliver(rcpt, data[:-5].replace(b"\r\n..", b"\r\n."))
                 w("250 queued\r\n")
             elif cmd == "QUIT":
                 w("221 bye\r\n")
@@ -280,7 +316,7 @@ class MailApiTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         FakeIMAP.boxes = {"INBOX": [(u, set(f), r) for u, f, r in INBOX], "[Gmail]/Sent Mail": [], "Entw&APw-rfe": [],
-                          "Archiv": []}
+                          "Archiv": [], "[Gmail]/Trash": []}
         cls.imap = tcp(FakeIMAP)
         cls.smtp = tcp(FakeSMTP)
         cls.backend = test_server.serve(ThreadingHTTPServer(("127.0.0.1", 0), test_server.FakeBackend))
@@ -360,10 +396,12 @@ class MailApiTest(unittest.TestCase):
     def test_folders(self):
         folders = self.call("GET", f"/api/mail/{self.acc['id']}/folders")
         self.assertEqual([(f["name"], f["role"]) for f in folders],
-                         [("Inbox", "inbox"), ("Entwürfe", "drafts"), ("[Gmail]/Sent Mail", "sent"), ("Archiv", "archive")])
+                         [("Inbox", "inbox"), ("Entwürfe", "drafts"), ("[Gmail]/Sent Mail", "sent"), ("Archiv", "archive"),
+                          ("[Gmail]/Trash", "trash")])
         self.assertEqual(folders[1]["id"], "Entw&APw-rfe")
 
     def test_list_search_and_read_without_marking_as_read(self):
+        FakeIMAP.log.clear()
         r = self.call("GET", self.url("messages", folder="INBOX"))
         self.assertEqual([m["uid"] for m in r["messages"]], [9, 7, 3])
         self.assertEqual(r["messages"][0]["subject"], "Rechnung März")
@@ -390,6 +428,7 @@ class MailApiTest(unittest.TestCase):
 
     def test_send_and_draft(self):
         FakeSMTP.sent.clear()
+        copies = len(FakeIMAP.boxes["[Gmail]/Sent Mail"])
         r = self.call("POST", f"/api/mail/{self.acc['id']}/send", {
             "to": "Anna Müller <anna@example.com>", "cc": "b@example.com", "bcc": "secret@example.com",
             "subject": "Re: Meeting tomorrow", "body": "Yes, 10 is fine.\nMax", "in_reply_to": "<m1@example.com>"})
@@ -402,7 +441,7 @@ class MailApiTest(unittest.TestCase):
         self.assertEqual((msg["In-Reply-To"], msg["References"]), ("<m1@example.com>", "<m1@example.com>"))
         self.assertEqual(str(msg["From"]), "Max Muster <max@example.com>")
         self.assertIn("10 is fine", msg.get_content())
-        self.assertEqual(len(FakeIMAP.boxes["[Gmail]/Sent Mail"]), 1)
+        self.assertEqual(len(FakeIMAP.boxes["[Gmail]/Sent Mail"]), copies + 1)
         # drafts land in the folder marked as Drafts, flagged \Draft; nothing is sent
         r = self.call("POST", f"/api/mail/{self.acc['id']}/draft", {"to": "", "subject": "Later", "body": "half"})
         self.assertEqual(r, {"ok": True, "folder": "Entwürfe"})
@@ -412,6 +451,100 @@ class MailApiTest(unittest.TestCase):
         self.assertEqual(len(FakeSMTP.sent), 1)
         code, err = self.error("POST", f"/api/mail/{self.acc['id']}/send", {"to": "nobody", "body": "x"})
         self.assertIn("not a valid", err)
+
+    def test_attachments_and_forward(self):
+        FakeSMTP.sent.clear()
+        upload = {"name": "../notiz.txt", "data": base64.b64encode("Grüße".encode()).decode()}
+        r = self.call("POST", f"/api/mail/{self.acc['id']}/send", {
+            "to": "anna@example.com", "subject": "Fwd: Newsletter", "body": "See below", "attachments": [upload],
+            "forward": {"folder": "INBOX", "uid": 7, "attachments": [0]}})
+        self.assertTrue(r["ok"])
+        msg = message_from_bytes(FakeSMTP.sent[-1]["data"], policy=default_policy)
+        files = [(p.get_filename(), p.get_content_type(), p.get_payload(decode=True)) for p in msg.iter_attachments()]
+        self.assertEqual(files, [("_notiz.txt", "text/plain", "Grüße".encode()),
+                                 ("flyer.pdf", "application/pdf", b"%PDF-1.4 fake")])
+        self.assertIn("See below", msg.get_body(("plain",)).get_content())
+        # a draft keeps its attachments too
+        self.call("POST", f"/api/mail/{self.acc['id']}/draft", {"subject": "With file", "attachments": [upload]})
+        draft = message_from_bytes(FakeIMAP.boxes["Entw&APw-rfe"][-1][2], policy=default_policy)
+        self.assertEqual([p.get_filename() for p in draft.iter_attachments()], ["_notiz.txt"])
+        sent = len(FakeSMTP.sent)
+        for bad, why in (({"attachments": [{"name": "a", "data": "not base64!"}]}, "damaged"),
+                         ({"attachments": "x"}, "list"),
+                         ({"forward": {"folder": "INBOX", "uid": 7, "attachments": [5]}}, "not found"),
+                         ({"attachments": [{"name": "big", "data": base64.b64encode(b"x" * (mail.MAX_ATTACH + 1)).decode()}]},
+                          "too large")):
+            code, err = self.error("POST", f"/api/mail/{self.acc['id']}/send", dict(to="a@example.com", **bad))
+            self.assertEqual(code, 400)
+            self.assertIn(why, err)
+        self.assertEqual(len(FakeSMTP.sent), sent)  # nothing went out
+
+    def test_new_mail(self):
+        r = self.call("GET", "/api/mail/new")["accounts"]
+        self.assertEqual(len(r), 1)
+        self.assertEqual((r[0]["id"], r[0]["error"], r[0]["unseen"]), (self.acc["id"], "", 2))
+        self.assertEqual([m["uid"] for m in r[0]["latest"]], [9, 7])
+        self.assertGreater(r[0]["uidvalidity"], 0)
+        self.assertNotIn("password", json.dumps(r))
+        # reading the Inbox for the notice changes nothing
+        self.assertNotIn("\\Seen", next(f for u, f, _ in FakeIMAP.boxes["INBOX"] if u == 9))
+
+    def test_zx_selftest(self):
+        from sunak import mailtest
+        saved = mailtest.saved_accounts(self.tmp.name)
+        self.assertEqual([(p, a["email"]) for p, a in saved], [("", "max@example.com")])
+        inbox = FakeIMAP.boxes["INBOX"]
+        before = [(u, set(f), r) for u, f, r in inbox]
+        FakeSMTP.deliver = lambda rcpt, data: inbox.append((max(u for u, _, _ in inbox) + 1, set(), data))
+        lines = []
+        try:
+            code = mailtest.run(saved[0][1], out=lines.append, wait=2, poll=0.05)
+        finally:
+            FakeSMTP.deliver = None
+        text = "\n".join(lines)
+        self.assertEqual(code, 0, text)
+        for step in ("IMAP login and folders", "Read the Inbox", "SMTP login", "New-mail notice",
+                     "Delete into the Trash and move back", "Received in the Inbox", "Attachment received unchanged",
+                     "Forward with the original attachment", "Deleted the test messages for good"):
+            self.assertIn(f"✓ {step}", text)
+        self.assertNotIn(USERS["max@example.com"], text)
+        # only the test's own messages were touched, and they are all gone
+        self.assertEqual([(u, f) for u, f, _ in inbox], [(u, f) for u, f, _ in before])
+        for name, box in FakeIMAP.boxes.items():
+            self.assertFalse([1 for _, _, raw in box if b"sunak-selftest-" in raw], name)
+        FakeIMAP.boxes["[Gmail]/Trash"].clear()
+
+    def test_zy_move_and_delete(self):
+        archive, trash = FakeIMAP.boxes["Archiv"], FakeIMAP.boxes["[Gmail]/Trash"]
+        archive[:] = [(1, set(), INBOX[0][2]), (2, set(), INBOX[2][2]), (3, set(), INBOX[2][2])]
+        trash.clear()
+        aid = self.acc["id"]
+        r = self.call("POST", f"/api/mail/{aid}/move", {"folder": "Archiv", "uids": [1], "target": "Entw&APw-rfe"})
+        self.assertEqual(r, {"ok": True, "folder": "Entwürfe"})
+        self.assertEqual([u for u, _, _ in archive], [2, 3])
+        # delete goes to the Trash first; for good only from there and only when asked
+        code, err = self.error("POST", f"/api/mail/{aid}/delete", {"folder": "Archiv", "uids": [2], "permanent": True})
+        self.assertIn("Trash first", err)
+        r = self.call("POST", f"/api/mail/{aid}/delete", {"folder": "Archiv", "uids": [2]})
+        self.assertEqual(r, {"ok": True, "permanent": False, "folder": "[Gmail]/Trash"})
+        self.assertEqual(([u for u, _, _ in archive], len(trash)), ([3], 1))
+        code, err = self.error("POST", f"/api/mail/{aid}/delete", {"folder": "[Gmail]/Trash", "uids": [1]})
+        self.assertIn("for good", err)
+        self.assertEqual(len(trash), 1)
+        r = self.call("POST", f"/api/mail/{aid}/delete", {"folder": "[Gmail]/Trash", "uids": [1], "permanent": True})
+        self.assertEqual(r, {"ok": True, "permanent": True, "folder": ""})
+        self.assertEqual(trash, [])
+        # servers without MOVE and UIDPLUS: COPY, mark as deleted, EXPUNGE
+        FakeIMAP.caps, FakeIMAP.log[:] = "", []
+        try:
+            self.call("POST", f"/api/mail/{aid}/delete", {"folder": "Archiv", "uids": [3]})
+        finally:
+            FakeIMAP.caps = "MOVE UIDPLUS"
+        self.assertEqual((archive, len(trash)), ([], 1))
+        self.assertTrue({"UID COPY", "UID STORE", "EXPUNGE"} <= set(FakeIMAP.log))
+        for bad in ({"folder": "Nope", "uids": [1], "target": "INBOX"}, {"folder": "Archiv", "uids": [], "target": "INBOX"},
+                    {"folder": "Archiv", "uids": ["x"], "target": "INBOX"}, {"folder": "Archiv", "uids": [1], "target": "Archiv"}):
+            self.assertEqual(self.error("POST", f"/api/mail/{aid}/move", bad)[0], 400)
 
     def test_ai_on_a_mail(self):
         m = self.call("GET", self.url("message", folder="INBOX", uid=3))

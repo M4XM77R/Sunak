@@ -34,7 +34,7 @@
       <button data-view="research">🔎 Research</button>
       <button data-view="documents">📝 Documents</button>
       <button data-view="knowledge">📚 Knowledge</button>
-      <button data-view="mail">✉️ Mail</button>
+      <button data-view="mail">✉️ Mail<span id="mailBadge" class="nav-badge hidden" data-no-i18n></span></button>
       <button data-view="calendar">📅 Calendar</button>
       <button data-view="notes">🧠 Notes &amp; Memory</button>
       <button data-view="models" class="admin-only">🧩 Models</button>
@@ -208,6 +208,10 @@
             <input id="mailBcc" placeholder="Bcc" aria-label="Bcc">
             <input id="mailSubject" placeholder="Subject" aria-label="Subject">
             <textarea id="mailBody" rows="12" aria-label="Message"></textarea>
+            <div class="row mail-files">
+              <label class="btn" title="At most 17 MB together">📎 Attach files<input type="file" id="mailFiles" multiple hidden></label>
+              <div id="mailAttach" class="sources"></div>
+            </div>
             <div class="inline-form" id="mailAiRow">
               <input id="mailAiHint" placeholder="✨ Optional: what should the reply say? e.g. “yes, but next week”">
               <button class="btn" type="button" id="mailAiBtn">✨ Draft reply</button>
@@ -353,6 +357,11 @@
         <div id="mailAccountList"></div>
         <div id="mailAccountForm"></div>
         <button class="btn" id="addMailAccount" type="button">＋ Add mail account</button>
+        <label class="check"><input type="checkbox" id="mailNotify"> Tell me about new mail (Sunak looks every 2 minutes while it is open)</label>
+        <div class="row">
+          <button class="btn" id="mailDesktop" type="button">🔔 Also as desktop notification</button>
+          <span class="muted small" id="mailDesktopState"></span>
+        </div>
 
         <h2>Calendars</h2>
         <p class="muted small">Sunak has its own calendar. Add your calendars from iCloud, GMX, WEB.DE, Nextcloud, mailbox.org and others (CalDAV), often with the login of a linked mail account, or subscribe to any calendar address (ICS, read-only), e.g. from Google or Outlook. Passwords stay on this computer.</p>

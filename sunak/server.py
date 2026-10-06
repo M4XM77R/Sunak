@@ -55,6 +55,7 @@ DEFAULT_SETTINGS = {
     "image_gen_model": "",   # checkpoint ("" = the program's current one / ComfyUI's first)
     "image_gen_size": 512,   # side of a square picture: 512 (SD 1.5), 768, 1024 (SDXL, Flux)
     "image_gen_steps": 25,
+    "mail_notify": True,     # 📬 look for new mail every few minutes while Sunak is open, and say so
 }
 INT_PREFS = {"agent_timeout": (5, 3600), "agent_max_steps": (1, 200), "image_gen_size": (512, 1024),
              "image_gen_steps": (1, imagegen.MAX_STEPS)}  # allowed ranges
@@ -2162,12 +2163,40 @@ class Handler(BaseHTTPRequestHandler):
         self.send_download(data, name, "application/octet-stream")  # never shown inline in the browser
 
     def mail_send(self, aid):
-        """POST /api/mail/<id>/send {to, cc, bcc, subject, body, in_reply_to, references}: only on the Send click."""
+        """POST /api/mail/<id>/send {to, cc, bcc, subject, body, in_reply_to, references, attachments: [{name, data
+        (base64)}], forward: {folder, uid, attachments: [index]}}: only on the Send click."""
         self.send_json(mail.send(self.app.mail_account(aid), self.body()))
 
     def mail_draft(self, aid):
         """POST /api/mail/<id>/draft {…same as send}: save in the Drafts folder."""
         self.send_json({"ok": True, "folder": mail.save_draft(self.app.mail_account(aid), self.body())})
+
+    def mail_move(self, aid):
+        """POST /api/mail/<id>/move {folder, uids, target}: move messages to another folder."""
+        d = self.body()
+        uids = d.get("uids") if isinstance(d.get("uids"), list) else []
+        self.send_json({"ok": True, "folder": mail.move(self.app.mail_account(aid), self.text(d, "folder"), uids,
+                                                        self.text(d, "target"))})
+
+    def mail_delete(self, aid):
+        """POST /api/mail/<id>/delete {folder, uids, permanent}: into the Trash; for good only from the Trash
+        (or without one) and with permanent: true, which the page asks for first."""
+        d = self.body()
+        uids = d.get("uids") if isinstance(d.get("uids"), list) else []
+        self.send_json(dict(mail.delete(self.app.mail_account(aid), self.text(d, "folder"), uids,
+                                        d.get("permanent") is True), ok=True))
+
+    def mail_new(self):
+        """GET /api/mail/new: unread mail in the Inbox of every account (for the new-mail notice), read-only.
+        An account that cannot be reached gets an error instead."""
+        def one(acc):
+            try:
+                return dict(mail.check_new(acc), id=acc["id"], email=acc["email"], error="")
+            except mail.MailError as e:
+                return {"id": acc["id"], "email": acc["email"], "error": str(e)}
+        accounts = self.app.mail_accounts()
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            self.send_json({"accounts": list(pool.map(one, accounts))})
 
     def mail_ai(self):
         """POST /api/mail/ai {task: summarize|reply|overview, text, instruction, account, model}: stream the result.
@@ -2338,6 +2367,9 @@ ROUTES = [
     (rf"/api/mail/{ID}/attachment", "GET", Handler.mail_attachment),
     (rf"/api/mail/{ID}/send", "POST", Handler.mail_send),
     (rf"/api/mail/{ID}/draft", "POST", Handler.mail_draft),
+    (rf"/api/mail/{ID}/move", "POST", Handler.mail_move),
+    (rf"/api/mail/{ID}/delete", "POST", Handler.mail_delete),
+    (r"/api/mail/new", "GET", Handler.mail_new),
     (r"/api/notes", "GET", Handler.list_notes),
     (r"/api/notes", "POST", Handler.create_note),
     (rf"/api/notes/{ID}", "PATCH", Handler.patch_note),

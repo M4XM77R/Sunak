@@ -1,18 +1,21 @@
 """E-mail accounts: read over IMAP, send over SMTP. Python standard library only.
 
-Sunak only reads mail (folders are opened read-only and messages fetched with BODY.PEEK, so nothing
-is marked as read). It writes only when the user clicks: Send (SMTP, plus a copy in the Sent folder
-when the provider does not keep one itself) and Save draft (IMAP APPEND to the Drafts folder).
+Reading never changes anything (folders are opened read-only and messages fetched with BODY.PEEK, so
+nothing is marked as read). Sunak writes only when the user clicks: Send (SMTP, plus a copy in the Sent
+folder when the provider does not keep one itself), Save draft (IMAP APPEND to the Drafts folder), Move
+and Delete (into the Trash folder; deleting for good only from the Trash, after asking).
 Passwords stay on the server: they are never logged, never put into error messages and never sent
 back to the browser."""
 
 import base64
+import binascii
 import contextlib
 import email
 import email.policy
 import email.utils
 import imaplib
 import ipaddress
+import mimetypes
 import re
 import smtplib
 import ssl
@@ -23,7 +26,10 @@ from email.message import EmailMessage
 from . import research
 
 TIMEOUT = 20
-MAX_FETCH = 10 * 1024 * 1024    # read at most this much of one message
+MAX_FETCH = 10 * 1024 * 1024    # read at most this much of one message for showing it
+MAX_FULL = 48 * 1024 * 1024     # whole message, for downloading or forwarding its attachments
+MAX_ATTACH = 17 * 1024 * 1024   # all attachments of one new mail (Gmail allows 25 MB including encoding)
+MAX_UIDS = 500                  # messages moved or deleted in one go
 MAX_TEXT = 200_000              # characters of a message body sent to the browser
 SECURITY = ("ssl", "starttls", "none")
 # Name for SMTP EHLO. Without it smtplib calls socket.getfqdn(), which can hang for half a minute
@@ -369,23 +375,45 @@ def list_messages(acc, folder="INBOX", query="", unread=False, before=None, limi
         if before:
             uids = [u for u in uids if u < before]
         page = uids[-limit:]
-        out = []
-        if page:
-            typ, data = conn.uid("FETCH", ",".join(map(str, page)),
-                                 "(UID FLAGS RFC822.SIZE BODY.PEEK[HEADER.FIELDS (FROM TO SUBJECT DATE)])")
-            _check(typ, data, "Could not read the messages")
-            for meta, hdr in _fetch_parts(data):
-                m = re.search(rb"UID (\d+)", meta)
-                if m:
-                    out.append(_summary(int(m.group(1)), meta, hdr))
-        out.sort(key=lambda x: x["uid"], reverse=True)
-        return {"messages": out, "total": len(uids), "more": len(uids) > len(page)}
+        return {"messages": _summaries(conn, page), "total": len(uids), "more": len(uids) > len(page)}
 
 
-def _fetch_raw(conn, folder, uid):
+def _summaries(conn, uids):
+    """Header summaries of messages in the selected folder, newest (highest UID) first."""
+    out = []
+    if uids:
+        typ, data = conn.uid("FETCH", ",".join(map(str, uids)),
+                             "(UID FLAGS RFC822.SIZE BODY.PEEK[HEADER.FIELDS (FROM TO SUBJECT DATE)])")
+        _check(typ, data, "Could not read the messages")
+        for meta, hdr in _fetch_parts(data):
+            m = re.search(rb"UID (\d+)", meta)
+            if m:
+                out.append(_summary(int(m.group(1)), meta, hdr))
+    out.sort(key=lambda x: x["uid"], reverse=True)
+    return out
+
+
+def _uidvalidity(conn):
+    typ, data = conn.response("UIDVALIDITY")
+    value = data[0] if data else None
+    return int(value) if isinstance(value, bytes) and value.isdigit() else 0
+
+
+def check_new(acc, limit=5):
+    """Unread mail in the Inbox, read-only: {unseen (count), uidvalidity, latest: [up to `limit` newest unread
+    summaries]}. The browser compares the UIDs with the ones it already announced."""
+    with imap(acc) as conn:
+        typ, data = conn.select("INBOX", readonly=True)
+        _check(typ, data, "Cannot open the Inbox")
+        validity = _uidvalidity(conn)
+        uids = _search(conn, "", True)
+        return {"unseen": len(uids), "uidvalidity": validity, "latest": _summaries(conn, uids[-limit:])}
+
+
+def _fetch_raw(conn, folder, uid, limit=MAX_FETCH):
     typ, data = conn.select(_quote(folder), readonly=True)
     _check(typ, data, f"Cannot open the folder {utf7_decode(folder)}")
-    typ, data = conn.uid("FETCH", str(int(uid)), f"(UID FLAGS BODY.PEEK[]<0.{MAX_FETCH}>)")
+    typ, data = conn.uid("FETCH", str(int(uid)), f"(UID FLAGS BODY.PEEK[]<0.{limit}>)")
     _check(typ, data, "Could not read the message")
     parts = _fetch_parts(data)
     if not parts:
@@ -436,13 +464,117 @@ def get_message(acc, folder, uid):
 
 def get_attachment(acc, folder, uid, index):
     """(file name, bytes) of the attachment number `index` of a message."""
+    name, _, data = _original_attachments(acc, folder, uid, [index])[0]
+    return name, data
+
+
+def _original_attachments(acc, folder, uid, indexes):
+    """[(file name, MIME type, bytes)] of some attachments of a stored message (whole message fetched)."""
     with imap(acc) as conn:
-        _, raw = _fetch_raw(conn, folder, uid)
-    msg = email.message_from_bytes(raw, policy=email.policy.default)
-    parts = list(msg.iter_attachments())
-    if not 0 <= index < len(parts):
-        raise MailError("Attachment not found")
-    return parts[index].get_filename() or "attachment", parts[index].get_payload(decode=True) or b""
+        _, raw = _fetch_raw(conn, folder, uid, MAX_FULL)
+    if len(raw) >= MAX_FULL:
+        raise MailError("The message is too large")
+    parts = list(email.message_from_bytes(raw, policy=email.policy.default).iter_attachments())
+    out = []
+    for i in indexes:
+        if not isinstance(i, int) or isinstance(i, bool) or not 0 <= i < len(parts):
+            raise MailError("Attachment not found")
+        out.append((parts[i].get_filename() or "attachment", parts[i].get_content_type(),
+                    parts[i].get_payload(decode=True) or b""))
+    return out
+
+
+# moving and deleting ------------------------------------------------------
+def _uid_set(uids):
+    try:
+        out = sorted({int(u) for u in uids})
+    except (TypeError, ValueError):
+        raise MailError("Invalid message number") from None
+    if not out or out[0] < 1 or len(out) > MAX_UIDS:
+        raise MailError(f"Choose between 1 and {MAX_UIDS} messages")
+    return ",".join(map(str, out))
+
+
+def _capabilities(conn):
+    typ, data = conn.capability()
+    return set((data[0] or b"").decode("ascii", "replace").upper().split()) if typ == "OK" and data else set()
+
+
+def _select_rw(conn, folder):
+    typ, data = conn.select(_quote(folder))
+    _check(typ, data, f"Cannot open the folder {utf7_decode(folder)}")
+
+
+def _expunge(conn, uids, caps):
+    """Remove the messages marked \\Deleted: only `uids` with UIDPLUS; plain EXPUNGE (all marked messages of
+    the folder, like every mail program does) on servers without it."""
+    typ, data = conn.uid("EXPUNGE", uids) if "UIDPLUS" in caps else conn.expunge()
+    _check(typ, data, "Could not remove the messages")
+
+
+def _move(conn, folder, uids, target):
+    """Move messages (UID set) of `folder` into `target`; MOVE when the server has it, else COPY + delete."""
+    caps = _capabilities(conn)
+    _select_rw(conn, folder)
+    if "MOVE" in caps:
+        typ, data = conn.uid("MOVE", uids, _quote(target))
+        _check(typ, data, f"Could not move to {utf7_decode(target)}")
+        return
+    typ, data = conn.uid("COPY", uids, _quote(target))
+    _check(typ, data, f"Could not copy to {utf7_decode(target)}")
+    typ, data = conn.uid("STORE", uids, "+FLAGS.SILENT", "(\\Deleted)")
+    _check(typ, data, "Could not remove the messages from the old folder")
+    _expunge(conn, uids, caps)
+
+
+def move(acc, folder, uids, target):
+    """Move messages to another folder. With Gmail a folder is a label: the messages lose the old label and
+    get the new one. Returns the target's readable name."""
+    uids = _uid_set(uids)
+    with imap(acc) as conn:
+        ids = {f["id"] for f in _folders(conn)}
+        if target not in ids or folder not in ids:
+            raise MailError("Unknown folder")
+        if target == folder:
+            raise MailError("The messages are already in this folder")
+        _move(conn, folder, uids, target)
+    return utf7_decode(target)
+
+
+def delete(acc, folder, uids, permanent=False):
+    """Delete messages: into the Trash folder, or for good (`permanent`) when they are already in the Trash
+    or the account has none. Returns {permanent, folder (the Trash's name)}."""
+    uids = _uid_set(uids)
+    with imap(acc) as conn:
+        folders = _folders(conn)
+        if folder not in {f["id"] for f in folders}:
+            raise MailError("Unknown folder")
+        trash = next((f["id"] for f in folders if f["role"] == "trash"), None)
+        if trash and folder != trash:
+            if permanent:
+                raise MailError("Move the messages to the Trash first; only there can they be deleted for good")
+            _move(conn, folder, uids, trash)
+            return {"permanent": False, "folder": utf7_decode(trash)}
+        if not permanent:
+            raise MailError("This folder has no Trash: confirm to delete the messages for good")
+        caps = _capabilities(conn)
+        _select_rw(conn, folder)
+        typ, data = conn.uid("STORE", uids, "+FLAGS.SILENT", "(\\Deleted)")
+        _check(typ, data, "Could not delete the messages")
+        _expunge(conn, uids, caps)
+        return {"permanent": True, "folder": ""}
+
+
+def find(conn, folder, subject):
+    """UIDs of the messages in `folder` whose subject contains exactly `subject` (ASCII), or [] when the folder
+    is missing. The server's search can be fuzzy (Gmail matches words), so every hit's subject is checked."""
+    typ, data = conn.select(_quote(folder), readonly=True)
+    if typ != "OK":
+        return []
+    typ, data = conn.uid("SEARCH", "SUBJECT", _quote(subject))
+    _check(typ, data, "Search failed")
+    uids = sorted({int(x) for x in (data[0] or b"").split() if x.isdigit()})[-MAX_UIDS:]
+    return sorted(m["uid"] for m in _summaries(conn, uids) if subject in m["subject"])
 
 
 # composing and sending ----------------------------------------------------
@@ -468,8 +600,45 @@ def show_address(name, addr):
     return f"{name} <{addr}>" if name else addr
 
 
-def build_message(acc, d):
-    """An EmailMessage from the compose form {to, cc, bcc, subject, body, in_reply_to, references}."""
+def _filename(name):
+    name = re.sub(r'[\x00-\x1f\x7f\\/"]', "_", str(name or "")).strip(" .")
+    return name[-150:] or "attachment"
+
+
+def attachments(acc, d):
+    """The files for a new mail: uploads {attachments: [{name, data (base64)}]} and attachments of the
+    forwarded original {forward: {folder, uid, attachments: [index]}}, fetched here on the server.
+    Returns [(file name, MIME type, bytes)]."""
+    out = []
+    items = d.get("attachments") or []
+    if not isinstance(items, list):
+        raise MailError("Attachments must be a list")
+    for a in items:
+        if not isinstance(a, dict) or not isinstance(a.get("data"), str):
+            raise MailError("Invalid attachment")
+        try:
+            data = base64.b64decode(a["data"].split(",", 1)[-1], validate=True)
+        except (binascii.Error, ValueError):
+            raise MailError(f"The attachment {_filename(a.get('name'))} is damaged") from None
+        name = _filename(a.get("name"))
+        out.append((name, mimetypes.guess_type(name)[0] or "application/octet-stream", data))
+        if sum(len(x[2]) for x in out) > MAX_ATTACH:
+            break
+    fwd = d.get("forward")
+    if isinstance(fwd, dict) and fwd.get("attachments"):
+        idx = fwd["attachments"]
+        if not isinstance(idx, list) or not str(fwd.get("uid", "")).isdigit():
+            raise MailError("Invalid forward")
+        out += [(_filename(n), t, b) for n, t, b in
+                _original_attachments(acc, str(fwd.get("folder") or "INBOX"), int(fwd["uid"]), idx)]
+    if sum(len(x[2]) for x in out) > MAX_ATTACH:
+        raise MailError(f"The attachments are too large: at most {MAX_ATTACH // (1024 * 1024)} MB together")
+    return out
+
+
+def build_message(acc, d, files=()):
+    """An EmailMessage from the compose form {to, cc, bcc, subject, body, in_reply_to, references}, with
+    `files` [(name, MIME type, bytes)] attached."""
     msg = EmailMessage()
     try:
         msg["From"] = Address(display_name=acc.get("name") or "", addr_spec=acc["email"])
@@ -488,6 +657,11 @@ def build_message(acc, d):
         refs = re.sub(r"[\r\n]+", " ", str(d.get("references") or "")).strip()
         msg["References"] = f"{refs} {reply_to}".strip() if reply_to not in refs else refs
     msg.set_content(str(d.get("body") or ""))
+    for name, ctype, data in files:
+        main, _, sub = ctype.partition("/")
+        if not (main and sub) or main in ("multipart", "message"):
+            main, sub = "application", "octet-stream"
+        msg.add_attachment(data, maintype=main, subtype=sub, filename=name)
     return msg
 
 
@@ -499,7 +673,7 @@ def _append(conn, folder, flags, msg):
 
 def save_draft(acc, d):
     """Store the compose form in the Drafts folder. Returns the folder's readable name."""
-    msg = build_message(acc, dict(d, draft=True))
+    msg = build_message(acc, dict(d, draft=True), attachments(acc, d))
     with imap(acc) as conn:
         folder = _folder_with_role(conn, "drafts", "Drafts")
         _append(conn, folder, "(\\Draft \\Seen)", msg)
@@ -542,7 +716,7 @@ def smtp_login(acc):
 def send(acc, d):
     """Send the compose form. A copy goes to the Sent folder when `save_sent` is on (providers like Gmail
     keep one themselves). Returns {ok, saved_to, warning}."""
-    msg = build_message(acc, d)
+    msg = build_message(acc, d, attachments(acc, d))
     conn = smtp_login(acc)
     try:
         conn.send_message(msg)  # delivers to To, Cc and Bcc; recipients never see the Bcc header
