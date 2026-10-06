@@ -102,6 +102,7 @@ Sunak rechnet nicht selbst, die Modelle laufen in Ollama. Ollama nutzt eine pass
 | 🛠 **Agent** | Agentisches Coding: Das Modell arbeitet in einem Projektordner, den du auswählst. Es liest, sucht und listet Dateien selbst, legt Dateien an, bearbeitet sie (als Diff sichtbar) und führt Befehle aus, etwa die Tests. Jeder Schritt erscheint live im Chat, Schreiben und Befehle nur nach deinem Klick („Apply“, „Allow … in this chat“ oder „Deny“), Stop jederzeit. Kein Zugriff außerhalb des Ordners. Funktioniert mit Claude, Ollama-Modellen mit Tool-Support (z. B. Qwen 3, Llama 3.1+) und OpenAI-kompatiblen APIs; Modelle ohne Tool-Support nutzen ein einfaches Textprotokoll. Standardmäßig aus |
 | 🎭 **Personas** | Eigene Systemprompts als Personas, oben im Chat umschaltbar. Mitgeliefert: Assistant, Coder, Writer, Translator, Teacher; alle änderbar, eigene hinzufügbar (Settings → Personas) |
 | ⚖️ **Compare** | Ein Prompt an 2 bis 4 Modelle gleichzeitig, Antworten und Geschwindigkeit nebeneinander |
+| 🌐 **Web-Suche im Chat** | 🌐 neben dem Eingabefeld: Sunak sucht zur Frage im Web (DuckDuckGo ohne Konto oder eigenes SearXNG), liest die besten Seiten und das Modell antwortet mit Quellenangaben [1], [2]. Bei Folgefragen formuliert das Modell die Suchanfrage selbst. Gilt pro Chat, standardmäßig aus |
 | 🔎 **Research** | Sucht im Web, liest die besten Seiten und schreibt einen Bericht mit Quellenangaben; als Dokument speicherbar |
 | 📝 **Documents** | Markdown-Editor mit Autosave, Vorschau, Export und KI-Bearbeitung („kürzer“, „Grammatik korrigieren“), auch nur für markierten Text, mit Rückgängig |
 | 🧠 **Notes & Memory** | Notizen; als „memory“ markierte Notizen kennt die KI in jedem Chat |
@@ -124,6 +125,7 @@ Sunak rechnet nicht selbst, die Modelle laufen in Ollama. Ollama nutzt eine pass
 | Alte Chats finden | Suchfeld über der Chatliste: durchsucht Titel und alle Nachrichten, ein Klick springt zur Stelle |
 | Chat exportieren | ⬇ oben rechts → Markdown, JSON oder Drucken/PDF |
 | Alles sichern | Settings → Data → Download backup (ohne API-Keys und Passwort) |
+| Aktuelles fragen (Web-Suche) | 🌐 neben dem Eingabefeld einschalten, dann normal fragen. Die Quellen erscheinen über der Antwort und lassen sich anklicken. Dabei geht die Suchanfrage an DuckDuckGo (bzw. an `SEARXNG_URL`); für einen gründlichen Bericht gibt es 🔎 Research |
 | Fragen zu einem Bild | Bild per 📎 anhängen, ins Chatfenster ziehen oder einen Screenshot mit `Strg+V` einfügen, Frage dazuschreiben, senden. Nötig ist ein Modell mit Bildverständnis (z. B. `qwen2.5vl:7b` oder `gemma3:4b` unter 🧩 Models, oder Claude); andere Modelle melden das sofort, die Nachricht bleibt dann im Eingabefeld |
 | Fragen zu eigenen Dateien | 📚 Knowledge → Dateien hineinziehen → im Chat 📚 neben dem Eingabefeld einschalten. Für eine einzelne Datei reicht auch 📎 |
 | E-Mail-Konto verknüpfen | Settings → Mail accounts → ＋ Add mail account → Adresse und App-Passwort eintragen (die Server werden für bekannte Anbieter automatisch ausgefüllt) → Test connection → Save account. Weitere Konten genauso |

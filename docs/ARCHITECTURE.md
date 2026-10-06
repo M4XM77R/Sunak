@@ -69,7 +69,7 @@ Alle Endpunkte liegen unter `/api/`. Schreibende Anfragen brauchen den Header `X
 | `POST /api/ollama/install` | Ollama per winget bzw. Homebrew installieren | NDJSON `status` |
 | `POST /api/models/pull` | Ollama-Modell herunterladen; Fortschritt aller Layer summiert | NDJSON `progress` (`completed`, `total` in Bytes) |
 | `POST /api/models/delete` | Ollama-Modell löschen | JSON |
-| `GET`/`POST /api/sessions`, `GET`/`PATCH`/`DELETE /api/sessions/<id>` | Chats | JSON |
+| `GET`/`POST /api/sessions`, `GET`/`PATCH`/`DELETE /api/sessions/<id>` | Chats (`use_kb`, `use_web`, `persona`, Titel, Modell, Systemprompt) | JSON |
 | `GET /api/search?q=` | Chats, deren Titel oder Nachrichten alle Wörter enthalten (ohne Denkprozess), mit Textausschnitt und `message_id` | JSON |
 | `GET /api/sessions/<id>/export?format=md\|json` | Chat als Download; Markdown ohne Denkprozess | Datei |
 | `GET /api/export` | Backup aller Chats, Dokumente, Notizen, Wissensbasis und Einstellungen, ohne API-Keys und Passwort | Datei (JSON) |
@@ -77,7 +77,7 @@ Alle Endpunkte liegen unter `/api/`. Schreibende Anfragen brauchen den Header `X
 | `POST /api/agent/confirm` | Antwort auf `confirm`: `{run, id, decision}` mit `allow`, `always` (für diesen Chat) oder `deny` | JSON |
 | `POST /api/agent/cancel` | `{run}` stoppt den Agenten, ein laufender Befehl wird beendet | JSON |
 | `POST /api/agent/revoke` | `{session_id}` vergisst „für diesen Chat erlauben“ | JSON |
-| `POST /api/chat` | Antwort erzeugen; `use_kb` schaltet die Wissensbasis für den Chat ein oder aus, `persona` wählt eine Persona, `images` und `image_refs` hängen Bilder an | NDJSON `start`, `sources` (nur mit Wissensbasis), `think`, `text`, `done`/`error` |
+| `POST /api/chat` | Antwort erzeugen; `use_kb` bzw. `use_web` schalten Wissensbasis bzw. Web-Suche für den Chat ein oder aus, `persona` wählt eine Persona, `images` und `image_refs` hängen Bilder an | NDJSON `start`, `sources` (nur mit Wissensbasis), `status` und `web` (nur mit Web-Suche), `think`, `text`, `done`/`error` |
 | `POST /api/compare` | Ein Prompt an 2 bis 4 Modelle | NDJSON mit Modellindex `i` |
 | `POST /api/research` | Web-Recherche mit Bericht | NDJSON `status`, `sources`, `text`, `done`/`error` |
 | `GET`/`POST /api/documents`, `GET`/`PUT`/`DELETE /api/documents/<id>` | Dokumente | JSON |
@@ -158,6 +158,17 @@ Agentisches Coding: Das Modell arbeitet in einer Schleife mit Werkzeugen in eine
 - **Zugriff:** Alle Agent-Endpunkte verlangen `agent_enabled`. Kommt die Anfrage nicht direkt von diesem Rechner (oder über einen Reverse-Proxy), ist außerdem ein Passwort nötig.
 - **Oberfläche:** 🛠 neben dem Eingabefeld (nur sichtbar, wenn eingeschaltet) und die Ordnerzeile darüber; Ordner und Schalter merkt sich der Browser (`localStorage`). `runAgent` in `app.js` zeigt Text und Schritte live, Freigaben als Karte mit Diff bzw. Befehl. Stop schickt `/api/agent/cancel` und bricht den Stream ab.
 
+## Web-Suche im Chat
+
+Schalter pro Chat wie die Wissensbasis (`sessions.use_web`, im Request `use_web`). Ist er an, ruft `Handler.chat` nach dem `start`-Ereignis `web_search` auf:
+
+1. Suchanfrage: bei der ersten Frage der Text selbst (ohne angehängte Dateien), bei Folgefragen formuliert das Modell aus den letzten fünf Nachrichten eine kurze Suchanfrage (`temperature` 0), damit „und in Hamburg?“ funktioniert.
+2. `research.gather` sucht (DuckDuckGo bzw. `SEARXNG_URL`) und liest die Treffer parallel; übrig bleiben bis zu vier Seiten mit mehr als 200 Zeichen, gekürzt auf je 3000 Zeichen.
+3. `research.web_context` setzt sie nummeriert mit Datum in den Systemprompt, mit dem Hinweis, Quellen als `[1]` zu zitieren und Text darin als Daten Dritter, nicht als Anweisung zu behandeln.
+4. Der Browser bekommt `status`-Ereignisse („Searching the web: …“) und `web` mit Anfrage und Quellen; gespeichert wird beides in `messages.meta.web`.
+
+Schlägt die Suche fehl oder findet sie nichts Lesbares, antwortet das Modell ohne Web und der Browser sieht den Grund als Status.
+
 ## Deep Research
 
 1. Das Modell schlägt bis zu drei Suchanfragen vor.
@@ -219,7 +230,7 @@ Alle Daten liegen in einer SQLite-Datei: `~/.sunak/sunak.db`, der Ordner lässt 
 
 | Tabelle | Inhalt |
 |---|---|
-| `sessions` | Chats: Titel, Modell, eigener Systemprompt, `use_kb` (Wissensbasis an/aus), `persona` (Id) |
+| `sessions` | Chats: Titel, Modell, eigener Systemprompt, `use_kb` (Wissensbasis an/aus), `use_web` (Web-Suche an/aus), `persona` (Id) |
 | `messages` | Nachrichten der Chats (werden mit dem Chat gelöscht); `meta` (JSON) enthält z. B. die Quellen oder die Namen angehängter Bilder (Dateien in `images/` neben der Datenbank) |
 | `kb_files`, `kb_chunks`, `kb_fts` | Wissensbasis: Dateien, ihre Textabschnitte und der Volltextindex |
 | `documents` | Markdown-Dokumente |
@@ -254,7 +265,7 @@ Umgebungsvariablen: `SUNAK_HOST`, `SUNAK_PORT`, `SUNAK_DATA`, `SUNAK_PASSWORD`, 
 python3 -m unittest discover tests -v
 ```
 
-Die Tests starten Sunak und einen simulierten Server, der die Ollama-, Anthropic- und OpenAI-API nachbildet. Abgedeckt sind Chat, Bilder (Format je Backend, Dateisignatur, Größen- und Anzahlgrenze, Modell ohne Bildverständnis wird vor dem Speichern abgelehnt, nur die letzten drei Bildnachrichten, Bearbeiten behält Bilder, Aufräumen, Agent-Modus lehnt ab), Personas, Robustheit (feindliche PDFs mit überlappenden Objekt-Offsets oder ohne `endstream`, falsche Datentypen in Anfragen, Login bleibt nach Neustart mit `SUNAK_PASSWORD` gültig, API-Keys werden bei Weiterleitung auf einen anderen Host nicht mitgeschickt, Beenden über einen Reverse-Proxy nur angemeldet), Installer (`install.ps1` nur ASCII, damit Windows PowerShell 5.1 es lesen kann; `sunak update` bleibt im gewählten `SUNAK_HOME`), Deinstallation (Programm weg, Daten bleiben ohne `--purge`, Fragen stehen auf „behalten“, zweiter Lauf harmlos, fremde Dateien gleichen Namens bleiben, nie der Home-Ordner, Docker-Container einzeln nach Ja, Ollama nur nach Ja oder `--with-ollama` mit den Befehlen je Installationsweg, Modelle nur nach Ja oder `--with-models`, Windows-PATH per simulierter Registry), Themes (gleiche Namen in CSS, JavaScript und Server, Kontrast aller Farben, Prüfung der Einstellungen), GPU-Erkennung (simulierte `nvidia-smi`-Ausgabe, sysfs-Bäume, Windows-Registry, Apple Silicon, `/api/ps`, Warnung, Katalog und Empfehlung), Update-Prüfung (echte Git-Repositories mit lokalem Remote, installierte Kopie, Fehlerfälle, Update-Knopf), Kommandozeile (bereits laufend, `status`, `stop`) und Autostart-Dateien, E-Mail (simulierter IMAP- und SMTP-Server: Konto anlegen ohne Passwort-Rückgabe, Verbindungstest, Nicht-ASCII-Passwort, Ordner mit UTF-7-Namen, Liste, Suche mit Umlauten, nur lesender Zugriff, HTML-Mail, Anhang, Senden mit Bcc und Kopie in Gesendet, Entwurf, KI-Antwort), Chat-Suche und Export, Wissensbasis (Hochladen, Suche, Auszüge im Prompt, Quellen), Textauslese aus PDF, Word, OpenDocument und PowerPoint, Datenbank-Migration, Neu generieren, Denkprozess, Gedächtnis, Compare, Research (mit gestubbter Suche), Dokumente, Modell-Download mit Fortschritt, Ollama-Status und Katalog, Claude (Streaming, Header, Denkprozess, Ablehnung, falscher Key, Key-Maskierung), Agent-Modus (Ordnergrenze mit `..`, absoluten Pfaden und Symlinks, verbotene Ordner, Lesen, Suchen, Bearbeiten mit Diff und Windows-Zeilenenden, Befehle mit Zeitlimit, Ausgabelimit und Abbruch, Tool-Calling mit Claude, Ollama und OpenAI-kompatibel, Textprotokoll, Freigeben, Ablehnen, „für diesen Chat“, Stop, Zugriff von anderen Geräten), Login, CSRF-Schutz und Pfad-Traversal. GitHub Actions führt sie auf Linux, macOS und Windows aus (`.github/workflows/test.yml`).
+Die Tests starten Sunak und einen simulierten Server, der die Ollama-, Anthropic- und OpenAI-API nachbildet. Abgedeckt sind Chat, Web-Suche im Chat (Schalter pro Chat, Quellen im Prompt und in der Antwort, umformulierte Folgefrage, Suche offline oder ohne lesbare Seiten), Bilder (Format je Backend, Dateisignatur, Größen- und Anzahlgrenze, Modell ohne Bildverständnis wird vor dem Speichern abgelehnt, nur die letzten drei Bildnachrichten, Bearbeiten behält Bilder, Aufräumen, Agent-Modus lehnt ab), Personas, Robustheit (feindliche PDFs mit überlappenden Objekt-Offsets oder ohne `endstream`, falsche Datentypen in Anfragen, Login bleibt nach Neustart mit `SUNAK_PASSWORD` gültig, API-Keys werden bei Weiterleitung auf einen anderen Host nicht mitgeschickt, Beenden über einen Reverse-Proxy nur angemeldet), Installer (`install.ps1` nur ASCII, damit Windows PowerShell 5.1 es lesen kann; `sunak update` bleibt im gewählten `SUNAK_HOME`), Deinstallation (Programm weg, Daten bleiben ohne `--purge`, Fragen stehen auf „behalten“, zweiter Lauf harmlos, fremde Dateien gleichen Namens bleiben, nie der Home-Ordner, Docker-Container einzeln nach Ja, Ollama nur nach Ja oder `--with-ollama` mit den Befehlen je Installationsweg, Modelle nur nach Ja oder `--with-models`, Windows-PATH per simulierter Registry), Themes (gleiche Namen in CSS, JavaScript und Server, Kontrast aller Farben, Prüfung der Einstellungen), GPU-Erkennung (simulierte `nvidia-smi`-Ausgabe, sysfs-Bäume, Windows-Registry, Apple Silicon, `/api/ps`, Warnung, Katalog und Empfehlung), Update-Prüfung (echte Git-Repositories mit lokalem Remote, installierte Kopie, Fehlerfälle, Update-Knopf), Kommandozeile (bereits laufend, `status`, `stop`) und Autostart-Dateien, E-Mail (simulierter IMAP- und SMTP-Server: Konto anlegen ohne Passwort-Rückgabe, Verbindungstest, Nicht-ASCII-Passwort, Ordner mit UTF-7-Namen, Liste, Suche mit Umlauten, nur lesender Zugriff, HTML-Mail, Anhang, Senden mit Bcc und Kopie in Gesendet, Entwurf, KI-Antwort), Chat-Suche und Export, Wissensbasis (Hochladen, Suche, Auszüge im Prompt, Quellen), Textauslese aus PDF, Word, OpenDocument und PowerPoint, Datenbank-Migration, Neu generieren, Denkprozess, Gedächtnis, Compare, Research (mit gestubbter Suche), Dokumente, Modell-Download mit Fortschritt, Ollama-Status und Katalog, Claude (Streaming, Header, Denkprozess, Ablehnung, falscher Key, Key-Maskierung), Agent-Modus (Ordnergrenze mit `..`, absoluten Pfaden und Symlinks, verbotene Ordner, Lesen, Suchen, Bearbeiten mit Diff und Windows-Zeilenenden, Befehle mit Zeitlimit, Ausgabelimit und Abbruch, Tool-Calling mit Claude, Ollama und OpenAI-kompatibel, Textprotokoll, Freigeben, Ablehnen, „für diesen Chat“, Stop, Zugriff von anderen Geräten), Login, CSRF-Schutz und Pfad-Traversal. GitHub Actions führt sie auf Linux, macOS und Windows aus (`.github/workflows/test.yml`).
 
 ## Erweitern
 

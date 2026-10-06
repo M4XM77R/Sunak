@@ -737,7 +737,8 @@ class Handler(BaseHTTPRequestHandler):
         """POST /api/sessions"""
         d = self.body()
         self.send_json(self.app.db.create_session(model=self.text(d, "model"), system=self.text(d, "system"),
-                                                  use_kb=self.flag(d, "use_kb"), persona=self.text(d, "persona")))
+                                                  use_kb=self.flag(d, "use_kb"), persona=self.text(d, "persona"),
+                                                  use_web=self.flag(d, "use_web")))
 
     def get_session(self, sid):
         """GET /api/sessions/<id>: session with all messages."""
@@ -745,7 +746,7 @@ class Handler(BaseHTTPRequestHandler):
         return self.send_json(s) if s else self.error("Not found", 404)
 
     def patch_session(self, sid):
-        """PATCH /api/sessions/<id>: change title, model, system prompt, persona or use_kb."""
+        """PATCH /api/sessions/<id>: change title, model, system prompt, persona, use_kb or use_web."""
         d = self.body()
         fields = {}
         for k in ("title", "model", "system", "persona"):
@@ -755,8 +756,9 @@ class Handler(BaseHTTPRequestHandler):
                 fields[k] = d[k].strip() if k == "title" else d[k]
         if fields.get("title") == "":
             raise ValueError("Title must not be empty")
-        if "use_kb" in d:
-            fields["use_kb"] = self.flag(d, "use_kb")
+        for k in ("use_kb", "use_web"):
+            if k in d:
+                fields[k] = self.flag(d, k)
         self.app.db.update_session(sid, **fields)
         self.get_session(sid)
 
@@ -851,8 +853,9 @@ class Handler(BaseHTTPRequestHandler):
             self.error("Nothing to answer")
             return None
         updates = {"model": model_id}
-        if "use_kb" in d:
-            updates["use_kb"] = session["use_kb"] = self.flag(d, "use_kb")
+        for k in ("use_kb", "use_web"):
+            if k in d:
+                updates[k] = session[k] = self.flag(d, k)
         if "persona" in d:
             updates["persona"] = session["persona"] = str(d["persona"] or "")
         if session["title"] == "New chat":
@@ -879,22 +882,28 @@ class Handler(BaseHTTPRequestHandler):
         session, prov, model, model_id, title = prepared
         sid = session["id"]
 
-        extra, meta = "", None
+        extras, meta = [], {}
         if session["use_kb"]:
             # search with the last two questions so follow-ups ("and in 2023?") keep their topic
             asked = [m["content"] for m in session["messages"] if m["role"] == "user"][-2:]
             found = knowledge.retrieve(db, "\n".join(reversed(asked)))
             if found:
-                extra = knowledge.context(found)
-            meta = {"sources": knowledge.sources(found)}
+                extras.append(knowledge.context(found))
+            meta["sources"] = knowledge.sources(found)
         vision = True
         if any(m["meta"].get("images") for m in session["messages"] if m["role"] == "user"):
             vision = self.app.vision(prov, model) is not False
-        messages = self.app.build_messages(session, session["messages"], extra, with_images=True, vision=vision)
         self.start_stream()
         self.emit({"type": "start", "title": title, "model": model_id})
-        if meta is not None:
+        if "sources" in meta:
             self.emit({"type": "sources", "sources": meta["sources"]})
+        if session["use_web"]:
+            web = self.web_search(prov, model, session["messages"])
+            if web:
+                extras.append(web[0])
+                meta["web"] = web[1]
+        messages = self.app.build_messages(session, session["messages"], "\n\n".join(extras), with_images=True, vision=vision)
+        meta = meta or None
         chunks = []
 
         def save():
@@ -922,6 +931,41 @@ class Handler(BaseHTTPRequestHandler):
             return self.emit({"type": "error", "error": str(e) + hint})
         save()
         self.emit({"type": "done"})
+
+    def web_search(self, prov, model, history):
+        """Search the web for the latest question (emits status and `web` events).
+        Returns (context for the system prompt, [{title, url}]) or None."""
+        last = ATTACHED_RE.sub("", history[-1]["content"]).strip()
+        if not last:
+            self.emit({"type": "status", "t": "Nothing to search for: the message has no text."})
+            return None
+        query = " ".join(last.split())[:300]
+        if len(history) > 1:  # follow-ups ("and in Berlin?") need the conversation to make sense
+            convo = "\n\n".join(f"{m['role']}: {providers.strip_think(ATTACHED_RE.sub('', m['content']))[:600]}"
+                                 for m in history[-5:])
+            self.emit({"type": "status", "t": "Thinking of a search query…"})
+            try:
+                q = providers.chat_once(prov, model, [
+                    {"role": "system", "content": "Write ONE short web search query (at most 10 words) that finds "
+                     "current information for the user's latest message. Use the earlier messages only to "
+                     "resolve references like 'it' or 'there'. Reply with the query only, no quotes."},
+                    {"role": "user", "content": convo}], {"temperature": 0})
+                q = (q.strip().splitlines() or [""])[0].strip(" \"'`*")
+                query = q[:300] or query
+            except providers.ProviderError:
+                pass
+        self.emit({"type": "status", "t": f"Searching the web: {query}"})
+        try:
+            pages = research.gather(query)
+        except Exception as e:  # noqa: BLE001 - offline, blocked, …: answer without the web
+            self.emit({"type": "status", "t": f"Web search failed ({type(e).__name__}), answering without it."})
+            return None
+        if not pages:
+            self.emit({"type": "status", "t": "The web search found nothing readable, answering without it."})
+            return None
+        sources = [{"title": p["title"], "url": p["url"]} for p in pages]
+        self.emit({"type": "web", "query": query, "sources": sources})
+        return research.web_context(query, pages, time.strftime("%Y-%m-%d")), {"query": query, "sources": sources}
 
     # agent mode -------------------------------------------------------
     def agent_allowed(self):

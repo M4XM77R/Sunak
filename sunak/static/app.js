@@ -352,7 +352,7 @@ async function openSession(id, messageId) {
   if (seq !== openSeq) return; // another chat was clicked meanwhile
   state.session = session;
   syncModelSelect();
-  renderKbToggle();
+  renderKbToggle(); renderWebToggle();
   renderPersonaSelect();
   renderMessages();
   renderSessions();
@@ -368,7 +368,7 @@ function newChat() {
   state.session = null;
   state.attachments = [];
   renderAttachments();
-  renderKbToggle();
+  renderKbToggle(); renderWebToggle();
   renderPersonaSelect();
   renderMessages();
   renderSessions();
@@ -410,6 +410,7 @@ function messageEl(m, i, msgs) {
   if (isUser) body.append(userBubble(m.content, m.localImages || (m.meta?.images || []).map((n) => `/api/images/${n}`)));
   else {
     if (m.meta?.sources) body.append(sourcesEl(m.meta.sources));
+    if (m.meta?.web) body.append(webSourcesEl(m.meta.web));
     if (m.meta?.agent) body.append(agentEl(m.meta.agent));
     else body.append(el('div', { class: 'md', html: md(m.content) }));
   }
@@ -494,7 +495,7 @@ async function sendNow() {
   }
   if (!state.session) {
     try {
-      state.session = await api('/api/sessions', { method: 'POST', body: { model: currentModel(), use_kb: kbOn(), persona: currentPersona() } });
+      state.session = await api('/api/sessions', { method: 'POST', body: { model: currentModel(), use_kb: kbOn(), use_web: webOn(), persona: currentPersona() } });
     } catch (e) { toast(e.message); return; } // keep the typed text and the files
     state.session.messages = [];
   }
@@ -525,11 +526,14 @@ async function runChat(payload, localUserMsg) {
   const box = $('#messages');
   const target = box.lastElementChild.querySelector('.md');
   target.classList.add('typing');
+  const status = el('div', { class: 'muted small web-status', role: 'status' });
+  target.before(status);
   let raw = '', thinking = false, pending = false, error = null, stopped = false, thinkOpen = null, refused = false;
   // the user may fold the thinking block while it streams: keep their choice across repaints
   target.addEventListener('click', (e) => { const d = e.target.closest('summary') && e.target.closest('details.think'); if (d) thinkOpen = !d.open; });
   const paint = () => {
     pending = false;
+    if (raw) status.textContent = '';
     const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 120;
     target.innerHTML = md(raw);
     const d = target.querySelector('details.think');
@@ -537,9 +541,11 @@ async function runChat(payload, localUserMsg) {
     if (nearBottom) box.scrollTop = box.scrollHeight;
   };
   try {
-    await stream('/api/chat', { session_id: s.id, model: currentModel(), use_kb: kbOn(), persona: currentPersona(), ...payload }, (ev) => {
+    await stream('/api/chat', { session_id: s.id, model: currentModel(), use_kb: kbOn(), use_web: webOn(), persona: currentPersona(), ...payload }, (ev) => {
       if (ev.type === 'start') { s.title = ev.title; $('#viewTitle').textContent = ev.title; }
       else if (ev.type === 'sources') target.before(sourcesEl(ev.sources));
+      else if (ev.type === 'status') { status.textContent = ev.t; return; }
+      else if (ev.type === 'web') { status.textContent = ''; target.before(webSourcesEl(ev)); return; }
       else if (ev.type === 'think') { if (!thinking) { raw += '<think>'; thinking = true; } raw += ev.t; }
       else if (ev.type === 'text') { if (thinking) { raw += '</think>\n\n'; thinking = false; } raw += ev.t; }
       else if (ev.type === 'error') error = ev.error;
@@ -818,7 +824,7 @@ async function setKb(on) {
     state.session.use_kb = on;
     if (state.session.id) await api(`/api/sessions/${state.session.id}`, { method: 'PATCH', body: { use_kb: on } });
   }
-  renderKbToggle();
+  renderKbToggle(); renderWebToggle();
 }
 $('#kbToggle').onclick = async () => {
   const on = !kbOn();
@@ -836,6 +842,35 @@ function sourcesEl(sources) {
     onclick: () => { show('knowledge'); previewKb(src.id); } }, `📚 ${src.name}`)));
   return box;
 }
+/* ---------------- Web search in the chat ----------------
+   Per chat like the knowledge base: the server searches (DuckDuckGo or SEARXNG_URL), reads the top
+   pages and gives them to the model as numbered sources. */
+const webOn = () => (state.session ? !!state.session.use_web : store.get('sunak-web') === '1');
+function renderWebToggle() {
+  const b = $('#webToggle');
+  b.setAttribute('aria-pressed', String(webOn()));
+  b.title = webOn() ? 'Web search on: answers use current web pages' : 'Search the web for answers';
+}
+async function setWeb(on) {
+  store.set('sunak-web', on ? '1' : '0');
+  if (state.session) {
+    state.session.use_web = on;
+    if (state.session.id) await api(`/api/sessions/${state.session.id}`, { method: 'PATCH', body: { use_web: on } });
+  }
+  renderWebToggle();
+}
+$('#webToggle').onclick = async () => {
+  const on = !webOn();
+  await setWeb(on);
+  toast(on ? 'Web search on: your question goes to the search engine' : 'Web search off');
+};
+function webSourcesEl(web) {
+  return el('div', { class: 'sources kb-sources' },
+    el('span', { class: 'muted small', title: `Searched for: ${web.query}` }, '🌐'),
+    web.sources.map((src, i) => el('a', { class: 'chip', href: src.url, target: '_blank', rel: 'noopener noreferrer', title: src.url },
+      `[${i + 1}] ${src.title || new URL(src.url).hostname}`)));
+}
+
 async function loadKbData() {
   state.kb = await api('/api/knowledge');
 }
@@ -1876,7 +1911,7 @@ async function refreshAll(poll = false) {
   [state.status, state.settings] = await Promise.all([api('/api/status'), api('/api/settings')]);
   applyLook();
   renderLook();
-  renderKbToggle();
+  renderKbToggle(); renderWebToggle();
   renderAgentToggle();
   renderPersonaSelect();
   await Promise.all([refreshAll(), loadSessions()]);

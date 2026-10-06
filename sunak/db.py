@@ -62,6 +62,7 @@ MIGRATIONS = [
     ("sessions", "use_kb", "INTEGER NOT NULL DEFAULT 0"),
     ("messages", "meta", "TEXT NOT NULL DEFAULT ''"),
     ("sessions", "persona", "TEXT NOT NULL DEFAULT ''"),
+    ("sessions", "use_web", "INTEGER NOT NULL DEFAULT 0"),
 ]
 
 
@@ -139,22 +140,26 @@ class DB:
             for m in s["messages"]:
                 m["meta"] = json.loads(m["meta"]) if m["meta"] else {}
             s["use_kb"] = bool(s["use_kb"])
+            s["use_web"] = bool(s["use_web"])
         return s
 
-    def create_session(self, title="New chat", model="", system="", use_kb=False, persona=""):
+    def create_session(self, title="New chat", model="", system="", use_kb=False, persona="", use_web=False):
         """Create an empty chat and return it."""
         sid, now = new_id(), time.time()
         self._q(
-            "INSERT INTO sessions(id, title, model, system, use_kb, persona, created, updated) VALUES(?,?,?,?,?,?,?,?)",
-            (sid, title, model, system, int(bool(use_kb)), persona or "", now, now),
+            "INSERT INTO sessions(id, title, model, system, use_kb, persona, use_web, created, updated) "
+            "VALUES(?,?,?,?,?,?,?,?,?)",
+            (sid, title, model, system, int(bool(use_kb)), persona or "", int(bool(use_web)), now, now),
         )
         return self.get_session(sid)
 
     def update_session(self, sid, **fields):
-        """Update title, model, system prompt, knowledge-base switch (use_kb) and/or persona of a chat."""
-        allowed = {k: v for k, v in fields.items() if k in ("title", "model", "system", "use_kb", "persona")}
-        if "use_kb" in allowed:
-            allowed["use_kb"] = int(bool(allowed["use_kb"]))
+        """Update title, model, system prompt, knowledge-base switch (use_kb), web search switch (use_web)
+        and/or persona of a chat."""
+        allowed = {k: v for k, v in fields.items() if k in ("title", "model", "system", "use_kb", "persona", "use_web")}
+        for k in ("use_kb", "use_web"):
+            if k in allowed:
+                allowed[k] = int(bool(allowed[k]))
         if not allowed:
             return
         sets = ", ".join(f"{k} = ?" for k in allowed)
