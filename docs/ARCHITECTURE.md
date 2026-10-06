@@ -138,7 +138,7 @@ Hochgeladene Dateien gehen den Weg `extract.extract_text` → `knowledge.chunk` 
 
 - **Desktop-Icon** (`sunak shortcut`): Linux legt `sunak.desktop` ins App-Menü und auf den Desktop (bei GNOME als vertrauenswürdig markiert), macOS ein kleines `Sunak.app` in `~/Applications` mit Verknüpfung auf dem Desktop, Windows `Sunak.lnk` auf Desktop und im Startmenü, das ein verstecktes `Sunak.vbs` startet.
 - Alle Einträge rufen den aktuellen Python-Interpreter mit `-m sunak` und setzen `PYTHONPATH` auf den Installationsordner, daher funktionieren sie auch ohne `sunak`-Befehl im `PATH`.
-- `sunak update` holt den neuen Code (`git pull` oder erneuter Installer-Download), zeigt alte und neue Version und beendet ein laufendes Sunak, damit der nächste Start die neue Version verwendet.
+- `sunak update` holt den neuen Code: Wurde aus einem Git-Klon installiert, merkt sich der Installer dessen Pfad (`~/.sunak/source`, Windows `%LOCALAPPDATA%\sunak\source.txt`), und das Update macht dort `git pull` und installiert neu. Das klappt auch bei privaten Repositories. Sonst wird der aktuelle Installer heruntergeladen. Das Update zeigt alte und neue Version und beendet ein laufendes Sunak, damit der nächste Start die neue Version verwendet.
 
 ## Datenhaltung
 

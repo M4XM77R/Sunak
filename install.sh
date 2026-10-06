@@ -74,6 +74,8 @@ if [ -n "$SRC" ] && [ "$SRC" != "$APP_DIR" ]; then
   rm -rf "$APP_DIR.new" && mkdir -p "$APP_DIR.new"
   (cd "$SRC" && tar cf - --exclude=.git --exclude=data --exclude='__pycache__' .) | (cd "$APP_DIR.new" && tar xf -)
   rm -rf "$APP_DIR" && mv "$APP_DIR.new" "$APP_DIR"
+  # remember the clone, so "sunak update" can pull it (also works for private repositories)
+  if [ -d "$SRC/.git" ]; then echo "$SRC" > "$HOME_DIR/source"; else rm -f "$HOME_DIR/source"; fi
 elif [ -d "$APP_DIR/.git" ]; then
   say "Updating existing install…"
   git -C "$APP_DIR" pull --ff-only -q
@@ -101,8 +103,16 @@ export PYTHONPATH="\$APP_DIR\${PYTHONPATH:+:\$PYTHONPATH}"
 case "\${1:-}" in
   update)
     old=\$(python3 -m sunak version)
+    src=\$(cat "$HOME_DIR/source" 2>/dev/null)
     if [ -d "\$APP_DIR/.git" ]; then git -C "\$APP_DIR" pull --ff-only -q || exit 1
-    else curl -fsSL https://raw.githubusercontent.com/$REPO/$BRANCH/install.sh | bash -s -- --yes --no-ollama --no-start --no-shortcut || exit 1; fi
+    elif [ -n "\$src" ] && [ -d "\$src/.git" ]; then
+      echo "Updating from \$src"
+      git -C "\$src" pull --ff-only -q && bash "\$src/install.sh" --yes --no-ollama --no-start --no-shortcut >/dev/null || exit 1
+    else
+      script=\$(curl -fsSL https://raw.githubusercontent.com/$REPO/$BRANCH/install.sh) || {
+        echo "Download failed. For a private repository: git pull in your clone, then run ./install.sh there."; exit 1; }
+      bash -c "\$script" -s --yes --no-ollama --no-start --no-shortcut || exit 1
+    fi
     new=\$(python3 -m sunak version)
     if [ "\$old" = "\$new" ]; then echo "Sunak \$new: latest code installed ✓"; else echo "Updated Sunak \$old → \$new ✓"; fi
     if python3 -m sunak status | grep -q "is running"; then

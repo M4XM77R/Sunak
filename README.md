@@ -36,6 +36,7 @@ Beim ersten Start erkennt Sunak deinen Arbeitsspeicher und schlägt ein passende
 
 > **Privates Repository?** Die Ein-Zeilen-Befehle funktionieren nur, solange das Repo öffentlich ist. Bei einem privaten Repo:
 > `git clone https://github.com/M4XM77R/sunak.git && cd sunak && ./install.sh` (Windows: `.\install.ps1`).
+> Der Installer merkt sich den Klon, `sunak update` holt Neuerungen dann per `git pull` mit deinen Git-Zugangsdaten.
 
 ### Ohne Installation ausprobieren
 

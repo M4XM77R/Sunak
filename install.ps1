@@ -52,6 +52,8 @@ if ($local) {
   Say "Installing from $local"
   New-Item -ItemType Directory -Force -Path $tmp | Out-Null
   Copy-Item -Recurse -Path (Join-Path $local "*") -Destination $tmp -Exclude ".git", "data"
+  # remember the clone, so "sunak update" can pull it (also works for private repositories)
+  if (Test-Path (Join-Path $local ".git")) { Set-Content -Encoding UTF8 (Join-Path $HomeDir "source.txt") $local }
 } else {
   Say "Downloading Sunak…"
   $zip = Join-Path $env:TEMP "sunak.zip"
@@ -76,12 +78,29 @@ rem Sunak launcher: sunak, sunak stop, sunak status, sunak version, sunak shortc
 set "PYTHONPATH=$AppDir;%PYTHONPATH%"
 if /I "%~1"=="update" (
   $pyCmd -m sunak stop >nul 2>&1
-  powershell -NoProfile -ExecutionPolicy Bypass -Command "`$env:SUNAK_YES='1'; `$env:SUNAK_NO_START='1'; `$env:SUNAK_NO_SHORTCUT='1'; irm https://raw.githubusercontent.com/$Repo/$Branch/install.ps1 | iex"
+  powershell -NoProfile -ExecutionPolicy Bypass -File "$HomeDir\update.ps1"
   echo Updated. Start Sunak again with the desktop icon or: sunak
   exit /b
 )
 $pyCmd -m sunak %*
 "@ | Set-Content -Encoding ASCII $cmd
+
+# update.ps1: pull the remembered clone and reinstall from it, else download the latest installer
+@'
+$ErrorActionPreference = "Stop"
+$env:SUNAK_YES = "1"; $env:SUNAK_NO_START = "1"; $env:SUNAK_NO_SHORTCUT = "1"; $env:SUNAK_NO_OLLAMA = "1"
+$src = Get-Content (Join-Path $PSScriptRoot "source.txt") -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($src -and (Test-Path (Join-Path $src ".git"))) {
+  Write-Host "Updating from $src"
+  git -C $src pull --ff-only
+  if ($LASTEXITCODE -ne 0) { throw "git pull failed in $src" }
+  & (Join-Path $src "install.ps1")
+} else {
+  try { $script = Invoke-RestMethod "https://raw.githubusercontent.com/REPO/BRANCH/install.ps1" }
+  catch { throw "Download failed. For a private repository: git pull in your clone, then run .\install.ps1 there." }
+  Invoke-Expression $script
+}
+'@.Replace("REPO", $Repo).Replace("BRANCH", $Branch) | Set-Content -Encoding UTF8 (Join-Path $HomeDir "update.ps1")
 
 $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
 if (-not ($userPath -split ";" | Where-Object { $_ -eq $HomeDir })) {
