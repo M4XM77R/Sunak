@@ -24,7 +24,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlparse
 
-from . import __version__, agent, extract, gpu, images, knowledge, mail, ollama, providers, qr, research, updates
+from . import __version__, agent, extract, gpu, images, knowledge, mail, ollama, providers, qr, research, speech, updates
 from .db import DB, new_id
 
 STATIC = Path(__file__).parent / "static"
@@ -43,6 +43,9 @@ DEFAULT_SETTINGS = {
     "agent_enabled": False,  # agent mode (agentic coding): off until the user switches it on
     "agent_timeout": 120,    # seconds a command of the agent may run
     "agent_max_steps": 30,   # tool calls per answer
+    "speech_input": "local", # 🎤: "local" (Whisper server or the browser's on-device recognition), "browser", "off"
+    "whisper_url": "",       # local Whisper server for speech input, see speech.py
+    "whisper_model": "",     # model name for OpenAI-compatible Whisper servers ("" = whisper-1)
 }
 INT_PREFS = {"agent_timeout": (5, 3600), "agent_max_steps": (1, 200)}  # allowed ranges
 
@@ -139,6 +142,14 @@ def _check_pref(key, value, default):
         return float(value)
     if not isinstance(value, str):
         raise ValueError(f"{key} must be text")
+    if key == "speech_input" and value not in speech.MODES:
+        raise ValueError("speech_input must be one of: " + ", ".join(speech.MODES))
+    if key in ("whisper_url", "whisper_model"):
+        value = value.strip()
+    if key == "whisper_url" and value:
+        speech.endpoint(value)
+    if key == "whisper_model" and len(value) > 200:
+        raise ValueError("whisper_model is too long")
     if key == "language" and value and value not in LANGUAGES:
         raise ValueError("Unknown language. Choose one of: " + ", ".join(LANGUAGES))
     if key == "theme" and value not in THEMES:
@@ -1372,6 +1383,20 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json([{"file_id": h["file_id"], "name": h["name"], "idx": h["idx"],
                          "snippet": knowledge.snippet(h["text"], words)} for h in hits])
 
+    def transcribe(self):
+        """POST /api/transcribe {audio (base64 WAV)}: speech to text with the local Whisper server."""
+        url = self.app.settings()["whisper_url"]
+        if not url:
+            raise ValueError("No Whisper server set up. Add its address in Settings → Voice.")
+        d = self.body()
+        audio = self.text(d, "audio")
+        try:
+            wav = base64.b64decode(audio, validate=True)
+        except (binascii.Error, ValueError):
+            raise ValueError("Upload is damaged, please try again") from None
+        s = self.app.settings()
+        self.send_json({"text": speech.transcribe(url, wav, s["whisper_model"], self.text(d, "language"))})
+
     def extract_file(self):
         """POST /api/extract {name, data}: plain text of a file, for attaching it to a chat message."""
         name, _, text = self.file_upload()
@@ -1580,6 +1605,7 @@ ROUTES = [
     (rf"/api/knowledge/{ID}", "GET", Handler.kb_get),
     (rf"/api/knowledge/{ID}", "DELETE", Handler.kb_delete),
     (r"/api/extract", "POST", Handler.extract_file),
+    (r"/api/transcribe", "POST", Handler.transcribe),
     (r"/api/mail/accounts", "GET", Handler.mail_list_accounts),
     (r"/api/mail/accounts", "POST", Handler.mail_save_account),
     (rf"/api/mail/accounts/{ID}", "DELETE", Handler.mail_delete_account),

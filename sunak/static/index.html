@@ -82,6 +82,7 @@
           <button class="icon-btn kb-toggle" id="kbToggle" type="button" aria-pressed="false" title="Answer with my knowledge base">📚</button>
           <button class="icon-btn kb-toggle" id="webToggle" type="button" aria-pressed="false" title="Search the web for answers">🌐</button>
           <button class="icon-btn kb-toggle hidden" id="agentToggle" type="button" aria-pressed="false" title="Agent mode: let the model work in a project folder">🛠</button>
+          <button class="icon-btn mic-btn hidden" id="micBtn" type="button" aria-pressed="false" title="Speak instead of typing">🎤</button>
           <textarea id="prompt" rows="1" placeholder="Message Sunak…" title="Enter to send, Shift+Enter for a new line"></textarea>
           <button class="btn primary" id="sendBtn" type="submit">Send</button>
         </div>
@@ -265,6 +266,22 @@
         <label>System prompt<textarea id="sysPrompt" rows="3"></textarea></label>
         <label>Creativity (temperature): <b id="tempVal"></b><input type="range" id="temperature" min="0" max="1.5" step="0.1"></label>
         <label class="check"><input type="checkbox" id="useMemory"> Use memory notes in chats</label>
+
+        <h2>Voice</h2>
+        <p class="muted small">🎤 next to the message box turns speech into text, 🔊 under an answer reads it aloud.</p>
+        <label>Speech input<select id="speechInput">
+          <option value="local">Only on this computer: Whisper server, or the browser’s offline recognition</option>
+          <option value="browser">Browser recognition, may send the audio to the browser maker (Chrome: Google)</option>
+          <option value="off">Off</option>
+        </select></label>
+        <label>Whisper server (optional, runs on your computer)<input id="whisperUrl" spellcheck="false" autocomplete="off"
+          placeholder="e.g. http://localhost:8080/inference (whisper.cpp) or http://localhost:8000/v1"></label>
+        <label>Whisper model (only for OpenAI-compatible servers)<input id="whisperModel" spellcheck="false" autocomplete="off"
+          placeholder="e.g. Systran/faster-whisper-small · empty = whisper-1"></label>
+        <div class="row voice-row">
+          <label>Voice for reading aloud (this device)<select id="ttsVoice"></select></label>
+          <button class="btn" id="ttsTest" type="button">▶ Test</button>
+        </div>
 
         <h2>Personas</h2>
         <p class="muted small">Pick a persona above the chat to change how Sunak answers, e.g. as a coder or translator. Edit them or add your own.</p>

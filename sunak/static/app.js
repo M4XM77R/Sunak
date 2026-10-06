@@ -431,6 +431,7 @@ function messageEl(m, i, msgs) {
     if (isUser) meta.append(el('button', { onclick: () => editMessage(m) }, 'Edit'));
     if (!isUser && i === msgs.length - 1) meta.append(el('button', { onclick: () => regenerate(m) }, 'Regenerate'));
   }
+  if (!isUser && tts && m.content) meta.append(speakButton(m));
   if (!isUser && m.model) meta.append(el('span', {}, m.model.split('::')[1] || m.model));
   body.append(meta);
   return el('div', { class: `msg ${m.role}`, 'data-id': m.id }, el('div', { class: 'avatar' }, isUser ? '🙂' : '⛵'), body);
@@ -821,6 +822,168 @@ const chatView = $('#view-chat');
 chatView.addEventListener('dragover', (e) => { if ([...e.dataTransfer.types].includes('Files')) { e.preventDefault(); chatView.classList.add('drag'); } });
 chatView.addEventListener('dragleave', (e) => { if (!chatView.contains(e.relatedTarget)) chatView.classList.remove('drag'); });
 chatView.addEventListener('drop', (e) => { e.preventDefault(); chatView.classList.remove('drag'); attachFiles([...e.dataTransfer.files]); });
+
+/* ---------------- Voice ----------------
+   🎤 speech input: a local Whisper server (recorded here, sent as 16 kHz WAV, see sunak/speech.py) or the
+   browser's speech recognition, on this device only unless Settings → Voice allows more.
+   🔊 reading aloud: the browser's speech synthesis, preferably with a voice that runs on this device. */
+const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+const tts = window.speechSynthesis;
+const speechLang = () => ({ de: 'de-DE', en: 'en-US' })[sunakLang] || navigator.language || 'en-US';
+const voice = { rec: null, recorder: null, busy: false, speaking: null };
+const speechMode = () => state.settings?.speech_input || 'local';
+function renderMic() {
+  const b = $('#micBtn'), on = !!(voice.rec || voice.recorder);
+  b.classList.toggle('hidden', speechMode() === 'off');
+  b.classList.toggle('recording', on);
+  b.setAttribute('aria-pressed', String(on));
+  b.disabled = voice.busy;
+  b.title = voice.busy ? tr('Turning speech into text…') : on ? tr('Stop recording') : tr('Speak instead of typing');
+}
+function addSpoken(text) {
+  const before = promptEl.value.trim() ? `${promptEl.value.trimEnd()} ` : '';
+  promptEl.value = before + text;
+  autosize();
+}
+$('#micBtn').onclick = async () => {
+  if (voice.rec) { voice.rec.stop(); return; }
+  if (voice.recorder) { voice.recorder.stop(); return; }
+  if (voice.busy) return;
+  if (!window.isSecureContext) { toast(tr('The microphone only works on this computer (or over https). On a phone, use the dictation of its keyboard.')); return; }
+  try {
+    if (state.settings.whisper_url) await recordWhisper();
+    else if (SpeechRec && (speechMode() === 'browser' || await onDeviceReady())) startRecognition(speechMode() !== 'browser');
+    else toast(tr('Set up speech input in Settings → Voice: a local Whisper server, or allow the browser’s recognition.'),
+      { label: tr('Open'), fn: () => show('settings') });
+  } catch (e) {
+    toast(e.name === 'NotAllowedError' ? tr('Sunak may not use the microphone. Allow it in the browser’s site settings.') : e.message);
+  }
+  renderMic();
+};
+// the browser's recognition on this device (Google Chrome 139+ can download a speech model for it; plain
+// Chromium has the same functions without the speech service, and asking there crashed the tab in tests)
+async function onDeviceReady() {
+  const chrome = (navigator.userAgentData?.brands || []).some((b) => b.brand === 'Google Chrome');
+  if (!chrome || typeof SpeechRec.available !== 'function') return false;
+  const opts = { langs: [speechLang()], processLocally: true };
+  const st = await SpeechRec.available(opts).catch(() => 'unavailable');
+  if (st === 'available') return true;
+  if (st !== 'downloadable' && st !== 'downloading') return false;
+  toast(tr('Downloading the speech model of your browser…'));
+  return !!(await SpeechRec.install(opts).catch(() => false));
+}
+function startRecognition(local) {
+  const rec = new SpeechRec();
+  rec.lang = speechLang();
+  rec.interimResults = true;
+  rec.continuous = true;
+  if (local) rec.processLocally = true;
+  const before = promptEl.value;
+  rec.onresult = (e) => {
+    promptEl.value = before;
+    addSpoken([...e.results].map((r) => r[0].transcript).join('').trim());
+  };
+  rec.onerror = (e) => { if (e.error !== 'aborted' && e.error !== 'no-speech') toast(tr('Speech recognition failed: {error}', { error: e.error })); };
+  rec.onend = () => { voice.rec = null; renderMic(); promptEl.focus(); };
+  voice.rec = rec;
+  rec.start();
+}
+async function recordWhisper() {
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  const rec = new MediaRecorder(stream), chunks = [];
+  rec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+  rec.onstop = async () => {
+    stream.getTracks().forEach((t) => t.stop());
+    voice.recorder = null; voice.busy = true; renderMic();
+    try {
+      const r = await api('/api/transcribe', { method: 'POST', body: { audio: await toWav(new Blob(chunks, { type: rec.mimeType })) } });
+      if (r.text) addSpoken(r.text); else toast(tr('Nothing was understood'));
+    } catch (e) { toast(e.message); }
+    voice.busy = false; renderMic(); promptEl.focus();
+  };
+  voice.recorder = rec;
+  rec.start();
+}
+// any recording (webm, ogg, mp4) → 16 kHz mono 16-bit WAV as base64, which every Whisper server reads
+async function toWav(blob) {
+  const ctx = new AudioContext();
+  let audio;
+  try { audio = await ctx.decodeAudioData(await blob.arrayBuffer()); } finally { ctx.close(); }
+  const rate = 16000;
+  const off = new OfflineAudioContext(1, Math.max(1, Math.ceil(audio.duration * rate)), rate);
+  const src = off.createBufferSource();
+  src.buffer = audio; src.connect(off.destination); src.start();
+  const pcm = (await off.startRendering()).getChannelData(0);
+  const view = new DataView(new ArrayBuffer(44 + pcm.length * 2));
+  const str = (at, s) => [...s].forEach((c, i) => view.setUint8(at + i, c.charCodeAt(0)));
+  str(0, 'RIFF'); view.setUint32(4, 36 + pcm.length * 2, true); str(8, 'WAVE'); str(12, 'fmt ');
+  view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true); view.setUint32(24, rate, true);
+  view.setUint32(28, rate * 2, true); view.setUint16(32, 2, true); view.setUint16(34, 16, true);
+  str(36, 'data'); view.setUint32(40, pcm.length * 2, true);
+  pcm.forEach((v, i) => view.setInt16(44 + i * 2, Math.max(-1, Math.min(1, v)) * 0x7fff, true));
+  const bytes = new Uint8Array(view.buffer);
+  let bin = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
+
+function pickVoice() {
+  const all = tts.getVoices(), chosen = all.find((v) => v.voiceURI === store.get('sunak-voice', ''));
+  if (chosen) return chosen;
+  const lang = speechLang().slice(0, 2);
+  return all.find((v) => v.localService && v.lang.toLowerCase().startsWith(lang)) || all.find((v) => v.localService) || null;
+}
+// what an answer sounds like without Markdown, code, links and [1] citations, in pieces the browser reads reliably
+function speakable(text) {
+  const plain = text.replace(/<think>[\s\S]*?(<\/think>|$)/g, '')
+    .replace(/```[\s\S]*?(```|$)/g, ` ${tr('(code)')} `)
+    .replace(/`([^`]*)`/g, '$1').replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/\s*\[\d+\]/g, '')
+    .replace(/https?:\/\/\S+/g, '').replace(/^\s{0,3}(#{1,6}|[-*+]|\d+[.)]|>)\s+/gm, '').replace(/[*_~|#]+/g, '');
+  const pieces = [];
+  for (const s of plain.match(/[^.!?;:\n]+[.!?;:]*/g) || []) {
+    const t = s.trim();
+    if (!t) continue;
+    if (pieces.length && pieces.at(-1).length + t.length < 200) pieces[pieces.length - 1] += ` ${t}`; else pieces.push(t);
+  }
+  return pieces;
+}
+function speak(text, onEnd) {
+  tts.cancel();
+  const v = pickVoice(), pieces = speakable(text);
+  pieces.forEach((p, i) => {
+    const u = new SpeechSynthesisUtterance(p);
+    if (v) { u.voice = v; u.lang = v.lang; } else u.lang = speechLang();
+    if (i === pieces.length - 1) { u.onend = onEnd; u.onerror = onEnd; }
+    tts.speak(u);
+  });
+  return pieces.length > 0;
+}
+function speakButton(m) {
+  const key = m.id || m;
+  const b = el('button', { class: `speak-btn${voice.speaking === key ? ' on' : ''}`, title: tr('Read aloud'), 'aria-label': tr('Read aloud'),
+    onclick: () => {
+      const again = voice.speaking === key;
+      tts.cancel(); voice.speaking = null;
+      $$('.speak-btn.on').forEach((x) => x.classList.remove('on'));
+      if (again) return;
+      if (speak(m.content, () => { if (voice.speaking === key) { voice.speaking = null; $$('.speak-btn.on').forEach((x) => x.classList.remove('on')); } })) {
+        voice.speaking = key;
+        b.classList.add('on');
+      }
+    } }, '🔊');
+  return b;
+}
+function renderVoices() {
+  const sel = $('#ttsVoice');
+  sel.replaceChildren(el('option', { value: '' }, tr('Automatic (a voice on this device in the language of the interface)')),
+    ...(tts ? tts.getVoices() : []).map((v) => el('option', { value: v.voiceURI, 'data-no-i18n': '' },
+      `${v.name} (${v.lang})${v.localService ? '' : ` · ${tr('online')}`}`)));
+  sel.value = store.get('sunak-voice', '');
+  sel.disabled = $('#ttsTest').disabled = !tts;
+}
+if (tts) tts.onvoiceschanged = renderVoices;
+$('#ttsVoice').onchange = (e) => store.set('sunak-voice', e.target.value);
+$('#ttsTest').onclick = () => speak(tr('Hi, I am Sunak. This is how I sound.'));
 
 /* ---------------- Knowledge base ---------------- */
 const kbOn = () => (state.session ? !!state.session.use_kb : store.get('sunak-kb') === '1');
@@ -1764,6 +1927,10 @@ function renderSettings() {
   $('#agentEnabled').checked = s.agent_enabled;
   $('#agentTimeout').value = s.agent_timeout;
   $('#agentSteps').value = s.agent_max_steps;
+  $('#speechInput').value = s.speech_input;
+  $('#whisperUrl').value = s.whisper_url;
+  $('#whisperModel').value = s.whisper_model;
+  renderVoices();
   renderLook();
   renderMailAccounts();
   $('#logoutBtn').classList.toggle('hidden', !s.password_set);
@@ -1841,11 +2008,13 @@ $('#saveSettings').onclick = async () => {
       check_updates: $('#checkUpdates').checked,
       agent_enabled: $('#agentEnabled').checked, agent_timeout: Number($('#agentTimeout').value),
       agent_max_steps: Number($('#agentSteps').value),
+      speech_input: $('#speechInput').value, whisper_url: $('#whisperUrl').value, whisper_model: $('#whisperModel').value,
       accent: s.accent, theme: s.theme, default_model: $('#defaultModel').value, personas: draftPersonas,
     } });
     applyLook();
     renderPersonaSelect();
     renderAgentToggle();
+    renderMic();
     await loadModels();
     renderSettings();
     checkUpdate();
@@ -1960,6 +2129,7 @@ async function refreshAll(poll = false) {
   renderLook();
   renderKbToggle(); renderWebToggle();
   renderAgentToggle();
+  renderMic();
   renderPersonaSelect();
   await Promise.all([refreshAll(), loadSessions()]);
   renderMessages();

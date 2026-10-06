@@ -447,3 +447,11 @@ a.btn { text-decoration: none; color: inherit; display: inline-block; }
 .lan-card .qr svg { display: block; width: 180px; height: 180px; border-radius: 6px; }
 .lan-card > div:last-child { flex: 1; min-width: 200px; }
 .lan-url { font-size: 15px; user-select: all; }
+
+/* voice: 🎤 while recording, 🔊 while reading aloud */
+.mic-btn.recording { color: var(--danger); box-shadow: inset 0 0 0 1px var(--danger); animation: recording 1.4s ease-in-out infinite; }
+@keyframes recording { 50% { opacity: .45; } }
+.mic-btn:disabled { opacity: .5; cursor: progress; }
+.speak-btn.on { color: var(--accent); }
+.voice-row { align-items: flex-end; }
+.voice-row label { flex: 1; }
