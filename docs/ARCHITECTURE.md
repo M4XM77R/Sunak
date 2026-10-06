@@ -21,8 +21,11 @@ Browser (sunak/static)  ──HTTP/JSON, NDJSON-Streams──▶  sunak/server.p
 | `sunak/providers.py` | Backends: Ollama, Claude (Anthropic Messages API) und OpenAI-kompatible APIs, Streaming, Modell-Download |
 | `sunak/ollama.py` | Native Ollama-Integration: Modellkatalog, Status, lokales Ollama finden, starten und installieren |
 | `sunak/research.py` | Websuche, Seiten lesen, Prompt für den Recherchebericht |
+| `sunak/extract.py` | Text aus hochgeladenen Dateien: PDF (eigener Leser), .docx, .odt, .pptx, HTML, Text |
+| `sunak/knowledge.py` | Wissensbasis: Abschnitte bilden, suchen, passende Abschnitte für den Chat auswählen |
 | `sunak/static/` | Oberfläche: `index.html`, `app.js` (gesamte Logik), `app.css`, `login.html`, Icon, PWA-Manifest |
 | `tests/test_server.py` | End-to-End-Tests gegen simulierte Backends |
+| `tests/test_extract.py` | Tests für Textauslese und Wissensbasis (die Testdateien werden im Test erzeugt) |
 | `install.sh`, `install.ps1` | Installer für macOS/Linux und Windows |
 | `Dockerfile`, `docker-compose*.yml` | Container mit Ollama, optional mit NVIDIA-GPU |
 
@@ -30,7 +33,7 @@ Browser (sunak/static)  ──HTTP/JSON, NDJSON-Streams──▶  sunak/server.p
 
 1. `app.js` legt bei Bedarf einen Chat an (`POST /api/sessions`) und schickt die Nachricht an `POST /api/chat`.
 2. `Handler.chat` speichert die Nachricht und löst die Modell-ID `provider::modell` über `App.resolve` auf.
-3. `App.build_messages` setzt den Verlauf zusammen: Systemprompt aus den Einstellungen, Prompt des Chats, Notizen mit Markierung „memory“ und danach die bisherigen Nachrichten. Denkprozesse (`<think>…</think>`) werden dabei entfernt.
+3. `App.build_messages` setzt den Verlauf zusammen: Systemprompt aus den Einstellungen, Prompt des Chats, Notizen mit Markierung „memory“, bei eingeschalteter Wissensbasis die passenden Auszüge (siehe unten) und danach die bisherigen Nachrichten. Denkprozesse (`<think>…</think>`) werden dabei entfernt.
 4. `providers.chat_stream` streamt die Antwort als Paare `("think" | "text", stück)`.
 5. Der Server reicht jedes Stück sofort als NDJSON-Zeile an den Browser weiter, zum Beispiel `{"type": "text", "t": "Hallo"}`.
 6. Am Ende wird die Antwort gespeichert. Der Denkprozess bleibt dabei in `<think>`-Tags eingebettet. Bricht die Verbindung ab, bleibt die Teilantwort erhalten.
@@ -53,12 +56,17 @@ Alle Endpunkte liegen unter `/api/`. Schreibende Anfragen brauchen den Header `X
 | `POST /api/models/pull` | Ollama-Modell herunterladen; Fortschritt aller Layer summiert | NDJSON `progress` (`completed`, `total` in Bytes) |
 | `POST /api/models/delete` | Ollama-Modell löschen | JSON |
 | `GET`/`POST /api/sessions`, `GET`/`PATCH`/`DELETE /api/sessions/<id>` | Chats | JSON |
-| `POST /api/chat` | Antwort erzeugen | NDJSON `start`, `think`, `text`, `done`/`error` |
+| `POST /api/chat` | Antwort erzeugen; `use_kb` schaltet die Wissensbasis für den Chat ein oder aus | NDJSON `start`, `sources` (nur mit Wissensbasis), `think`, `text`, `done`/`error` |
 | `POST /api/compare` | Ein Prompt an 2 bis 4 Modelle | NDJSON mit Modellindex `i` |
 | `POST /api/research` | Web-Recherche mit Bericht | NDJSON `status`, `sources`, `text`, `done`/`error` |
 | `GET`/`POST /api/documents`, `GET`/`PUT`/`DELETE /api/documents/<id>` | Dokumente | JSON |
 | `POST /api/documents/ai` | KI-Bearbeitung eines Dokuments oder einer Markierung | NDJSON `text` |
 | `GET`/`POST /api/notes`, `PATCH`/`DELETE /api/notes/<id>` | Notizen und Gedächtnis | JSON |
+| `GET /api/knowledge` | Dateien der Wissensbasis, Gesamtgröße, ob FTS5 verfügbar ist | JSON |
+| `POST /api/knowledge` | Datei hinzufügen: `{name, data}` mit `data` als Base64; gleicher Name ersetzt die alte Datei | JSON |
+| `GET`/`DELETE /api/knowledge/<id>` | Datei mit ausgelesenem Text, Datei entfernen | JSON |
+| `GET /api/knowledge/search?q=` | Volltextsuche mit Textausschnitt | JSON |
+| `POST /api/extract` | Text einer Datei für einen Chat-Anhang (📎), gleiches Format wie oben | JSON |
 
 Fehler kommen immer als `{"error": "…"}` mit HTTP-Status 4xx. Fehler, die erst während eines Streams auftreten, kommen als Event `{"type": "error"}`.
 
@@ -99,17 +107,31 @@ Die Seite „Models“ und die Einrichtung beim ersten Start nutzen `sunak/ollam
 3. Bis zu fünf Seiten werden geladen und in Text umgewandelt, jeweils höchstens 6000 Zeichen.
 4. Das Modell schreibt einen Markdown-Bericht mit Quellenverweisen wie `[1]`.
 
+## Wissensbasis
+
+Hochgeladene Dateien gehen den Weg `extract.extract_text` → `knowledge.chunk` → `DB.kb_add`.
+
+- **Textauslese** nur mit der Standardbibliothek. Word, OpenDocument und PowerPoint sind ZIP-Archive mit XML und werden mit `zipfile` und `ElementTree` gelesen. Für PDF gibt es einen eigenen kleinen Leser: Er findet alle Objekte (auch in Objekt-Streams von PDF 1.5+), entpackt Flate-, ASCII85- und ASCIIHex-Streams, folgt dem Seitenbaum mit geerbten Ressourcen und übersetzt Zeichen über die `ToUnicode`-CMap des Fonts, sonst über WinAnsi bzw. MacRoman. Leerzeichen und Zeilenumbrüche ergeben sich aus den Textpositionen. Formular-XObjects werden mitgelesen.
+- **Grenzen:** Gescannte PDFs ohne Textebene (das bräuchte Texterkennung) und verschlüsselte PDFs liefern eine verständliche Fehlermeldung. Bei Fonts ohne `ToUnicode`, die nur Glyph-Nummern enthalten, bleibt der Text leer. Mehrspaltige Layouts werden in der Reihenfolge des Content-Streams gelesen.
+- **Abschnitte** von etwa 1000 Zeichen an Absatz-, Zeilen- oder Satzgrenzen.
+- **Suche:** SQLite-FTS5 (`kb_fts`, Rowid = `kb_chunks.id`, Umlaute und Akzente werden beim Vergleich ignoriert) mit bm25-Ranking. Die Suchwörter stammen aus den letzten beiden Fragen ohne Stoppwörter (deutsch und englisch), Wörter ab 4 Buchstaben auch als Präfix, damit „Handbuch“ auch „Handbuchs“ findet. Fehlt FTS5 im SQLite, rechnet `knowledge._scan` ein einfaches TF-IDF in Python.
+- **Prompt:** Ist die ganze Wissensbasis höchstens 8000 Zeichen groß, bekommt das Modell alles (dann klappen auch Fragen wie „fasse das zusammen“). Sonst bekommt es bis zu 6 passende Abschnitte mit höchstens 7000 Zeichen. Die Abschnitte stehen mit Dateinamen im Systemprompt, und das Modell soll die Datei in eckigen Klammern nennen.
+- **Quellen:** Die verwendeten Dateien werden als `sources`-Ereignis gesendet und in `messages.meta` gespeichert, damit sie auch später unter der Antwort stehen.
+
 ## Datenhaltung
 
 Alle Daten liegen in einer SQLite-Datei: `~/.sunak/sunak.db`, der Ordner lässt sich über `SUNAK_DATA` ändern.
 
 | Tabelle | Inhalt |
 |---|---|
-| `sessions` | Chats: Titel, Modell, eigener Systemprompt |
-| `messages` | Nachrichten der Chats (werden mit dem Chat gelöscht) |
+| `sessions` | Chats: Titel, Modell, eigener Systemprompt, `use_kb` (Wissensbasis an/aus) |
+| `messages` | Nachrichten der Chats (werden mit dem Chat gelöscht); `meta` (JSON) enthält z. B. die Quellen |
+| `kb_files`, `kb_chunks`, `kb_fts` | Wissensbasis: Dateien, ihre Textabschnitte und der Volltextindex |
 | `documents` | Markdown-Dokumente |
 | `notes` | Notizen; `is_memory = 1` bedeutet „im Gedächtnis“ |
 | `settings` | Schlüssel-Wert-Paare als JSON: `prefs`, `providers`, `password_hash`, `secret` |
+
+Spalten, die später dazukamen, legt `DB.__init__` beim Start an (`MIGRATIONS`), ältere Datenbanken funktionieren also weiter. Die hochgeladenen Originaldateien werden nicht aufbewahrt, nur ihr Text.
 
 Passwörter werden mit PBKDF2-SHA256 und Salt gespeichert. Das Login-Cookie ist ein HMAC aus dem Geheimnis der Installation und dem Passwort-Hash. Wird das Passwort geändert, sind daher alle Sitzungen abgemeldet.
 
@@ -131,7 +153,7 @@ Umgebungsvariablen: `SUNAK_HOST`, `SUNAK_PORT`, `SUNAK_DATA`, `SUNAK_PASSWORD`, 
 python3 -m unittest discover tests -v
 ```
 
-Die Tests starten Sunak und einen simulierten Server, der die Ollama-, Anthropic- und OpenAI-API nachbildet. Abgedeckt sind Chat, Neu generieren, Denkprozess, Gedächtnis, Compare, Research (mit gestubbter Suche), Dokumente, Modell-Download mit Fortschritt, Ollama-Status und Katalog, Claude (Streaming, Header, Denkprozess, Ablehnung, falscher Key, Key-Maskierung), Login, CSRF-Schutz und Pfad-Traversal. GitHub Actions führt sie auf Linux, macOS und Windows aus (`.github/workflows/test.yml`).
+Die Tests starten Sunak und einen simulierten Server, der die Ollama-, Anthropic- und OpenAI-API nachbildet. Abgedeckt sind Chat, Wissensbasis (Hochladen, Suche, Auszüge im Prompt, Quellen), Textauslese aus PDF, Word, OpenDocument und PowerPoint, Datenbank-Migration, Neu generieren, Denkprozess, Gedächtnis, Compare, Research (mit gestubbter Suche), Dokumente, Modell-Download mit Fortschritt, Ollama-Status und Katalog, Claude (Streaming, Header, Denkprozess, Ablehnung, falscher Key, Key-Maskierung), Login, CSRF-Schutz und Pfad-Traversal. GitHub Actions führt sie auf Linux, macOS und Windows aus (`.github/workflows/test.yml`).
 
 ## Erweitern
 

@@ -1,6 +1,7 @@
 """End-to-end tests against fake Ollama, Claude (Anthropic) and OpenAI-compatible backends.
 Run:  python -m unittest discover tests"""
 
+import base64
 import json
 import tempfile
 import threading
@@ -285,6 +286,48 @@ class SunakTest(unittest.TestCase):
         self.assertNotIn("wrong", str(cm.exception))
         p = dict(p, base_url=f"http://127.0.0.1:{self.bport}/nowhere", api_key="sk-test")
         self.assertEqual(providers.list_models(p), providers.CLAUDE_FALLBACK_MODELS)
+
+    def test_knowledge_base_in_chat(self):
+        data = base64.b64encode("Die Hauptstadt von Atlantis heißt Poseidonia.".encode()).decode()
+        f = self.call("POST", "/api/knowledge", {"name": "atlantis.md", "data": data})
+        self.assertEqual((f["name"], f["chars"]), ("atlantis.md", 45))
+        listing = self.call("GET", "/api/knowledge")
+        self.assertEqual([x["name"] for x in listing["files"]], ["atlantis.md"])
+        hits = self.call("GET", "/api/knowledge/search?q=Poseidonia")
+        self.assertEqual(hits[0]["name"], "atlantis.md")
+        self.assertIn("Poseidonia", hits[0]["snippet"])
+        self.assertEqual(self.call("GET", f"/api/knowledge/{f['id']}")["text"], "Die Hauptstadt von Atlantis heißt Poseidonia.")
+        # chat with the knowledge base switched on: excerpts in the system prompt, sources event and stored meta
+        s = self.call("POST", "/api/sessions", {"use_kb": True})
+        self.assertTrue(s["use_kb"])
+        events = self.call("POST", "/api/chat", {"session_id": s["id"], "model": "ollama::tiny:1b", "content": "Hauptstadt?"})
+        self.assertEqual(events[1], {"type": "sources", "sources": [{"id": f["id"], "name": "atlantis.md"}]})
+        self.assertIn("[atlantis.md]\nDie Hauptstadt", FakeBackend.last_messages[0]["content"])
+        full = self.call("GET", f"/api/sessions/{s['id']}")
+        self.assertEqual(full["messages"][1]["meta"]["sources"][0]["name"], "atlantis.md")
+        # switched off in the request: no excerpts, stored on the chat
+        events = self.call("POST", "/api/chat", {"session_id": s["id"], "model": "ollama::tiny:1b", "content": "x", "use_kb": False})
+        self.assertNotIn("sources", [e["type"] for e in events])
+        self.assertNotIn("Poseidonia", FakeBackend.last_messages[0]["content"])
+        self.assertFalse(self.call("GET", f"/api/sessions/{s['id']}")["use_kb"])
+        self.call("DELETE", f"/api/knowledge/{f['id']}")
+        self.assertEqual(self.call("GET", "/api/knowledge")["files"], [])
+
+    def test_title_ignores_attached_files(self):
+        s = self.call("POST", "/api/sessions", {})
+        ev = self.call("POST", "/api/chat", {"session_id": s["id"], "model": "ollama::tiny:1b",
+                                             "content": "File `a.txt`:\n```\nlong text\n```\n\nSummarize this"})
+        self.assertEqual(ev[0]["title"], "Summarize this")
+
+    def test_extract_and_bad_uploads(self):
+        r = self.call("POST", "/api/extract", {"name": "n.txt", "data": base64.b64encode(b"note").decode()})
+        self.assertEqual(r, {"name": "n.txt", "text": "note"})
+        for body, msg in (({"name": "x.txt", "data": "%%%"}, "damaged"), ({"name": "", "data": ""}, "name"),
+                          ({"name": "x.pdf", "data": base64.b64encode(b"%PDF-1.4 nothing").decode()}, "no text"),
+                          ({"name": "e.txt", "data": ""}, "no text")):
+            with self.assertRaises(urllib.error.HTTPError) as cm:
+                self.call("POST", "/api/knowledge", body)
+            self.assertIn(msg, json.loads(cm.exception.read())["error"])
 
     def test_csrf_header_required(self):
         with self.assertRaises(urllib.error.HTTPError) as cm:

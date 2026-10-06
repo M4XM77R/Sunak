@@ -10,7 +10,8 @@ const store = {
 };
 
 const state = { settings: null, models: [], modelErrors: [], sessions: [], session: null, view: 'chat',
-  busy: null, attachments: [], doc: null, docUndo: null, status: null, ollama: null, pulls: {}, catFilter: 'fits' };
+  busy: null, attachments: [], doc: null, docUndo: null, status: null, ollama: null, pulls: {}, catFilter: 'fits',
+  kb: { files: [], chars: 0 } };
 
 /* ---------------- API ---------------- */
 async function api(path, opts = {}) {
@@ -181,16 +182,17 @@ $('#themeBtn').onclick = () => {
 };
 
 /* ---------------- Navigation ---------------- */
-const TITLES = { chat: 'Chat', compare: 'Compare models', research: 'Deep Research', documents: 'Documents', notes: 'Notes & Memory', models: 'Models', settings: 'Settings' };
+const TITLES = { chat: 'Chat', compare: 'Compare models', research: 'Deep Research', documents: 'Documents', knowledge: 'Knowledge', notes: 'Notes & Memory', models: 'Models', settings: 'Settings' };
 function show(view) {
   state.view = view;
   $$('.nav button').forEach((b) => b.classList.toggle('active', b.dataset.view === view));
   $$('.view').forEach((v) => v.classList.toggle('active', v.id === `view-${view}`));
   $('#viewTitle').textContent = view === 'chat' && state.session ? state.session.title : TITLES[view];
-  $('#modelSelect').classList.toggle('hidden', ['notes', 'settings', 'compare', 'models'].includes(view));
+  $('#modelSelect').classList.toggle('hidden', ['notes', 'settings', 'compare', 'models', 'knowledge'].includes(view));
   closeSidebar();
   if (view === 'documents') loadDocs();
   if (view === 'notes') loadNotes();
+  if (view === 'knowledge') loadKb();
   if (view === 'settings') renderSettings();
   if (view === 'compare') renderCompareModels();
   if (view === 'models') { renderModelsView(); loadOllama(); }
@@ -253,6 +255,7 @@ $('#sessionFilter').oninput = renderSessions;
 async function openSession(id) {
   state.session = await api(`/api/sessions/${id}`);
   syncModelSelect();
+  renderKbToggle();
   renderMessages();
   renderSessions();
   show('chat');
@@ -261,6 +264,7 @@ function newChat() {
   state.session = null;
   state.attachments = [];
   renderAttachments();
+  renderKbToggle();
   renderMessages();
   renderSessions();
   show('chat');
@@ -298,8 +302,11 @@ function setupCard() {
 function messageEl(m, i, msgs) {
   const isUser = m.role === 'user';
   const body = el('div', { class: 'body' });
-  if (isUser) body.append(el('div', { class: 'bubble' }, m.content));
-  else body.append(el('div', { class: 'md', html: md(m.content) }));
+  if (isUser) body.append(userBubble(m.content));
+  else {
+    if (m.meta?.sources) body.append(sourcesEl(m.meta.sources));
+    body.append(el('div', { class: 'md', html: md(m.content) }));
+  }
   const meta = el('div', { class: 'meta' });
   meta.append(el('button', { onclick: () => navigator.clipboard.writeText(m.content.replace(/<think>[\s\S]*?(<\/think>|$)/g, '').trim()).then(() => toast('Copied')) }, 'Copy'));
   if (!state.busy && m.id) {
@@ -309,6 +316,16 @@ function messageEl(m, i, msgs) {
   if (!isUser && m.model) meta.append(el('span', {}, m.model.split('::')[1] || m.model));
   body.append(meta);
   return el('div', { class: `msg ${m.role}` }, el('div', { class: 'avatar' }, isUser ? '🙂' : '⛵'), body);
+}
+
+// attached files (File `name`: ``` text ```) are shown folded, the question as text
+const ATTACHED_RE = /File `([^`\n]+)`:\n```\n([\s\S]*?)\n```\s*/g;
+function userBubble(content) {
+  const files = [...content.matchAll(ATTACHED_RE)];
+  const rest = content.replace(ATTACHED_RE, '').trim();
+  return el('div', { class: 'bubble' },
+    files.map((f) => el('details', { class: 'attached' }, el('summary', {}, `📄 ${f[1]}`), el('pre', { class: 'kb-text' }, f[2]))),
+    rest);
 }
 
 function renderMessages() {
@@ -334,13 +351,14 @@ async function send() {
   let text = promptEl.value.trim();
   if (!text && !state.attachments.length) return;
   if (!currentModel()) { toast('Install or connect a model first'); show('settings'); return; }
+  if (state.attachments.some((a) => a.loading)) { toast('Still reading your files…'); return; }
   if (state.attachments.length) {
     text = state.attachments.map((a) => `File \`${a.name}\`:\n\`\`\`\n${a.text}\n\`\`\``).join('\n\n') + (text ? `\n\n${text}` : '');
   }
   promptEl.value = ''; autosize();
   state.attachments = []; renderAttachments();
   if (!state.session) {
-    state.session = await api('/api/sessions', { method: 'POST', body: { model: currentModel() } });
+    state.session = await api('/api/sessions', { method: 'POST', body: { model: currentModel(), use_kb: kbOn() } });
     state.session.messages = [];
   }
   await runChat({ content: text }, { role: 'user', content: text });
@@ -366,8 +384,9 @@ async function runChat(payload, localUserMsg) {
     if (nearBottom) box.scrollTop = box.scrollHeight;
   };
   try {
-    await stream('/api/chat', { session_id: s.id, model: currentModel(), ...payload }, (ev) => {
+    await stream('/api/chat', { session_id: s.id, model: currentModel(), use_kb: kbOn(), ...payload }, (ev) => {
       if (ev.type === 'start') { s.title = ev.title; $('#viewTitle').textContent = ev.title; }
+      else if (ev.type === 'sources') target.before(sourcesEl(ev.sources));
       else if (ev.type === 'think') { if (!thinking) { raw += '<think>'; thinking = true; } raw += ev.t; }
       else if (ev.type === 'text') { if (thinking) { raw += '</think>\n\n'; thinking = false; } raw += ev.t; }
       else if (ev.type === 'error') error = ev.error;
@@ -396,23 +415,150 @@ function editMessage(m) {
   runChat({ truncate_from: m.id, content: text.trim() }, { role: 'user', content: text.trim() });
 }
 
-/* attachments: text files are inlined into the prompt */
-$('#fileInput').onchange = async (e) => {
-  for (const f of e.target.files) {
-    if (f.size > 300000) { toast(`${f.name} is too big (max 300 KB)`); continue; }
-    const text = await f.text();
-    if (/\u0000/.test(text.slice(0, 2000))) { toast(`${f.name} is not a text file`); continue; }
-    state.attachments.push({ name: f.name, text });
+/* attachments: the text of each file (also PDF, Word, …) is inlined into the prompt */
+const MAX_UPLOAD = 15 * 1024 * 1024;
+const MAX_ATTACH_CHARS = 60000;
+function fileData(f) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result.slice(r.result.indexOf(',') + 1));
+    r.onerror = () => reject(new Error(`Could not read ${f.name}`));
+    r.readAsDataURL(f);
+  });
+}
+async function attachFiles(files) {
+  for (const f of files) {
+    if (f.size > MAX_UPLOAD) { toast(`${f.name} is too big (max 15 MB)`); continue; }
+    const a = { name: f.name, text: '', loading: true };
+    state.attachments.push(a);
+    renderAttachments();
+    try {
+      const r = await api('/api/extract', { method: 'POST', body: { name: f.name, data: await fileData(f) } });
+      if (r.text.length > MAX_ATTACH_CHARS) {
+        state.attachments.splice(state.attachments.indexOf(a), 1);
+        toast(`${f.name} is long (${Math.round(r.text.length / 1000)}k characters). Add it to your knowledge base instead?`,
+          { label: 'Add to knowledge', fn: () => uploadKb([f]).then(() => setKb(true)) });
+      } else { a.text = r.text; a.loading = false; }
+    } catch (e) {
+      state.attachments.splice(state.attachments.indexOf(a), 1);
+      toast(e.message);
+    }
+    renderAttachments();
   }
-  e.target.value = '';
-  renderAttachments();
-};
+}
+$('#fileInput').onchange = (e) => { attachFiles([...e.target.files]); e.target.value = ''; };
 function renderAttachments() {
   const box = $('#attachments');
   box.innerHTML = '';
-  state.attachments.forEach((a, i) => box.append(el('span', { class: 'chip' }, `📄 ${a.name}`,
+  state.attachments.forEach((a, i) => box.append(el('span', { class: 'chip' }, `${a.loading ? '⏳' : '📄'} ${a.name}`,
     el('button', { type: 'button', onclick: () => { state.attachments.splice(i, 1); renderAttachments(); } }, '✕'))));
 }
+// drop files anywhere on the chat to attach them
+const chatView = $('#view-chat');
+chatView.addEventListener('dragover', (e) => { if ([...e.dataTransfer.types].includes('Files')) { e.preventDefault(); chatView.classList.add('drag'); } });
+chatView.addEventListener('dragleave', (e) => { if (!chatView.contains(e.relatedTarget)) chatView.classList.remove('drag'); });
+chatView.addEventListener('drop', (e) => { e.preventDefault(); chatView.classList.remove('drag'); attachFiles([...e.dataTransfer.files]); });
+
+/* ---------------- Knowledge base ---------------- */
+const kbOn = () => (state.session ? !!state.session.use_kb : store.get('sunak-kb') === '1');
+function renderKbToggle() {
+  const b = $('#kbToggle');
+  b.setAttribute('aria-pressed', String(kbOn()));
+  b.title = kbOn() ? 'Knowledge base on: answers use your files' : 'Answer with my knowledge base';
+}
+async function setKb(on) {
+  store.set('sunak-kb', on ? '1' : '0');
+  if (state.session) {
+    state.session.use_kb = on;
+    if (state.session.id) await api(`/api/sessions/${state.session.id}`, { method: 'PATCH', body: { use_kb: on } });
+  }
+  renderKbToggle();
+}
+$('#kbToggle').onclick = async () => {
+  const on = !kbOn();
+  await setKb(on);
+  if (on) {
+    await loadKbData();
+    if (!state.kb.files.length) toast('Your knowledge base is empty.', { label: 'Add files', fn: () => show('knowledge') });
+    else toast(`Knowledge base on (${state.kb.files.length} file${state.kb.files.length > 1 ? 's' : ''})`);
+  } else toast('Knowledge base off');
+};
+function sourcesEl(sources) {
+  const box = el('div', { class: 'sources kb-sources' });
+  if (!sources.length) box.append(el('span', { class: 'muted small' }, '📚 No matching files'));
+  sources.forEach((src) => box.append(el('button', { class: 'chip', type: 'button', title: 'Show file',
+    onclick: () => { show('knowledge'); previewKb(src.id); } }, `📚 ${src.name}`)));
+  return box;
+}
+async function loadKbData() {
+  state.kb = await api('/api/knowledge');
+}
+async function loadKb() {
+  await loadKbData();
+  const box = $('#kbList');
+  box.innerHTML = '';
+  if (!state.kb.files.length) { box.append(el('p', { class: 'muted' }, 'No files yet.')); return; }
+  box.append(el('p', { class: 'muted small' }, `${state.kb.files.length} file${state.kb.files.length > 1 ? 's' : ''} · ${Math.round(state.kb.chars / 1000)}k characters`));
+  for (const f of state.kb.files) {
+    box.append(el('div', { class: 'kb-item' },
+      el('button', { class: 'kb-name', title: 'Show text', onclick: () => previewKb(f.id) }, `📄 ${f.name}`),
+      el('span', { class: 'muted small' }, `${(f.size / 1024).toFixed(f.size < 10240 ? 1 : 0)} KB · ${Math.round(f.chars / 100) / 10}k chars`),
+      el('button', { class: 'icon-btn', title: 'Remove', onclick: async () => {
+        if (!confirm(`Remove “${f.name}” from your knowledge base?`)) return;
+        await api(`/api/knowledge/${f.id}`, { method: 'DELETE' });
+        $('#kbPreview').classList.add('hidden');
+        loadKb();
+      } }, '🗑')));
+  }
+}
+async function previewKb(id) {
+  const box = $('#kbPreview');
+  try {
+    const f = await api(`/api/knowledge/${id}`);
+    box.innerHTML = '';
+    box.append(el('div', { class: 'row' }, el('h3', { style: 'margin:0;flex:1' }, f.name),
+      el('button', { class: 'icon-btn', onclick: () => box.classList.add('hidden') }, '✕')),
+      el('pre', { class: 'kb-text' }, f.text.length > 20000 ? `${f.text.slice(0, 20000)}\n\n… (${Math.round(f.text.length / 1000)}k characters in total)` : f.text));
+    box.classList.remove('hidden');
+    box.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } catch (e) { toast(e.message); }
+}
+async function uploadKb(files) {
+  const box = $('#kbUploads');
+  let added = 0;
+  for (const f of files) {
+    const line = el('div', { class: 'kb-upload muted small' }, `⏳ Reading ${f.name}…`);
+    box.append(line);
+    if (f.size > MAX_UPLOAD) { line.textContent = `✕ ${f.name} is too big (max 15 MB)`; line.classList.add('err'); continue; }
+    try {
+      const r = await api('/api/knowledge', { method: 'POST', body: { name: f.name, data: await fileData(f) } });
+      line.remove();
+      added++;
+      toast(`Added ${r.name}`);
+    } catch (e) { line.textContent = `✕ ${e.message}`; line.classList.add('err'); }
+  }
+  if (state.view === 'knowledge') loadKb(); else loadKbData();
+  return added;
+}
+$('#kbInput').onchange = (e) => { uploadKb([...e.target.files]); e.target.value = ''; };
+const kbDrop = $('#kbDrop');
+kbDrop.addEventListener('dragover', (e) => { e.preventDefault(); kbDrop.classList.add('drag'); });
+kbDrop.addEventListener('dragleave', () => kbDrop.classList.remove('drag'));
+kbDrop.addEventListener('drop', (e) => { e.preventDefault(); kbDrop.classList.remove('drag'); $('#kbUploads').innerHTML = ''; uploadKb([...e.dataTransfer.files]); });
+let kbSearchTimer = null;
+$('#kbSearch').oninput = () => {
+  clearTimeout(kbSearchTimer);
+  kbSearchTimer = setTimeout(async () => {
+    const q = $('#kbSearch').value.trim();
+    const box = $('#kbResults');
+    box.innerHTML = '';
+    if (!q) return;
+    const hits = await api(`/api/knowledge/search?q=${encodeURIComponent(q)}`);
+    if (!hits.length) box.append(el('p', { class: 'muted small' }, 'Nothing found.'));
+    hits.forEach((h) => box.append(el('button', { class: 'kb-hit', onclick: () => previewKb(h.file_id) },
+      el('b', {}, h.name), el('span', { class: 'muted small' }, h.snippet))));
+  }, 250);
+};
 
 /* ---------------- Models (native Ollama) ---------------- */
 const gb = (bytes) => `${(bytes / 1e9).toFixed(1)} GB`;
@@ -881,6 +1027,7 @@ async function refreshAll() {
   applyLook();
   [state.status, state.settings] = await Promise.all([api('/api/status'), api('/api/settings')]);
   applyLook();
+  renderKbToggle();
   await Promise.all([refreshAll(), loadSessions()]);
   renderMessages();
   promptEl.focus();

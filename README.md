@@ -56,8 +56,9 @@ docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d   # mit NVI
 
 | | |
 |---|---|
-| 💬 **Chat** | Streaming-Antworten, Verlauf mit Suche, Bearbeiten und Neu generieren, Markdown, Tabellen, Code mit Kopier-Knopf, Denkprozess von Reasoning-Modellen ein- und ausklappbar, Textdateien anhängen |
+| 💬 **Chat** | Streaming-Antworten, Verlauf mit Suche, Bearbeiten und Neu generieren, Markdown, Tabellen, Code mit Kopier-Knopf, Denkprozess von Reasoning-Modellen ein- und ausklappbar, Dateien anhängen (auch PDF, Word, PowerPoint) per 📎 oder Drag & Drop |
 | 🤖 **Claude** | Claude als eigener Anbieter: API-Key eintragen, die verfügbaren Claude-Modelle erscheinen automatisch in der Auswahl. Antworten werden gestreamt, der Denkprozess ist zusammengefasst sichtbar. Funktioniert in Chat, Compare, Research und Documents |
+| 📚 **Knowledge** | Eigene Wissensbasis: PDFs, Word (.docx), OpenDocument (.odt), PowerPoint (.pptx), HTML, Markdown, Text, CSV und Code hochladen, im Chat mit 📚 einschalten und Fragen dazu stellen. Antworten zeigen, aus welchen Dateien sie stammen. Volltextsuche über alle Dateien. Alles bleibt lokal, ohne Zusatzsoftware |
 | ⚖️ **Compare** | Ein Prompt an 2 bis 4 Modelle gleichzeitig, Antworten und Geschwindigkeit nebeneinander |
 | 🔎 **Research** | Sucht im Web, liest die besten Seiten und schreibt einen Bericht mit Quellenangaben; als Dokument speicherbar |
 | 📝 **Documents** | Markdown-Editor mit Autosave, Vorschau, Export und KI-Bearbeitung („kürzer“, „Grammatik korrigieren“), auch nur für markierten Text, mit Rückgängig |
@@ -77,6 +78,7 @@ docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d   # mit NVI
 | Neuer Chat | `Strg+K` (Mac: `⌘K`) |
 | Modell herunterladen | 🧩 Models → Modell aussuchen → Download (Abbrechen jederzeit möglich, der Download läuft beim nächsten Mal weiter) |
 | Modell wechseln | Auswahl oben rechts |
+| Fragen zu eigenen Dateien | 📚 Knowledge → Dateien hineinziehen → im Chat 📚 neben dem Eingabefeld einschalten. Für eine einzelne Datei reicht auch 📎 |
 | Claude nutzen | Settings → Providers → Preset „Claude (Anthropic)“ → API-Key von [console.anthropic.com](https://console.anthropic.com) einfügen → Save settings. Alternativ beim ersten Start „Use Claude with an API key“ klicken |
 | Anderes Cloud-Modell nutzen | Settings → Providers → Preset wählen → API-Key eintragen → Save settings |
 | Vom Handy nutzen | `sunak --host 0.0.0.0`, in Settings ein Passwort setzen, dann `http://<PC-IP>:7000` öffnen |
@@ -116,6 +118,8 @@ SUNAK_DEBUG=1 python3 -m sunak                    # mit Zugriffslog
 | `sunak/providers.py` | Anbindung von Ollama, Claude (Anthropic API) und OpenAI-kompatiblen APIs (Streaming) |
 | `sunak/ollama.py` | Ollama-Integration: Modellkatalog, Status, Ollama starten und installieren |
 | `sunak/research.py` | Websuche und Seitenauswertung für Research |
+| `sunak/extract.py` | Text aus PDF, Word, OpenDocument, PowerPoint, HTML und Textdateien (eigener kleiner PDF-Leser) |
+| `sunak/knowledge.py` | Wissensbasis: Zerlegen in Abschnitte, Volltextsuche, Auswahl der passenden Abschnitte für den Chat |
 | `sunak/db.py` | SQLite-Speicher |
 | `sunak/static/` | Oberfläche (HTML, CSS, ein JavaScript-File) |
 

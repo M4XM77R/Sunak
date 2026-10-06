@@ -22,6 +22,7 @@
       <button data-view="compare">⚖️ Compare</button>
       <button data-view="research">🔎 Research</button>
       <button data-view="documents">📝 Documents</button>
+      <button data-view="knowledge">📚 Knowledge</button>
       <button data-view="notes">🧠 Notes &amp; Memory</button>
       <button data-view="models">🧩 Models</button>
       <button data-view="settings">⚙️ Settings</button>
@@ -49,7 +50,8 @@
       <form class="composer" id="composer">
         <div class="attachments" id="attachments"></div>
         <div class="composer-row">
-          <label class="icon-btn" title="Attach text file">📎<input type="file" id="fileInput" multiple hidden></label>
+          <label class="icon-btn" title="Attach files (text, PDF, Word, PowerPoint…)">📎<input type="file" id="fileInput" multiple hidden></label>
+          <button class="icon-btn kb-toggle" id="kbToggle" type="button" aria-pressed="false" title="Answer with my knowledge base">📚</button>
           <textarea id="prompt" rows="1" placeholder="Message Sunak…" title="Enter to send, Shift+Enter for a new line"></textarea>
           <button class="btn primary" id="sendBtn" type="submit">Send</button>
         </div>
@@ -110,6 +112,25 @@
           </form>
         </div>
         <div class="empty doc-empty" id="docEmpty">Pick a document or create a new one.</div>
+      </div>
+    </section>
+
+    <!-- KNOWLEDGE -->
+    <section class="view" id="view-knowledge">
+      <div class="pad narrow">
+        <p class="muted">Add your files and ask about them in the chat: switch on <b>📚</b> next to the message box. Everything stays on this computer.</p>
+        <label class="dropzone" id="kbDrop">
+          <input type="file" id="kbInput" multiple hidden>
+          <b>Drop files here</b> or click to choose
+          <span class="muted small">PDF, Word (.docx), OpenDocument (.odt), PowerPoint (.pptx), HTML, Markdown, text, CSV, code · up to 15 MB each</span>
+        </label>
+        <div id="kbUploads"></div>
+        <div class="row">
+          <input id="kbSearch" type="search" placeholder="Search your files…" aria-label="Search knowledge base">
+        </div>
+        <div id="kbResults" class="kb-results"></div>
+        <div id="kbList" class="kb-list"></div>
+        <div id="kbPreview" class="card hidden"></div>
       </div>
     </section>
 

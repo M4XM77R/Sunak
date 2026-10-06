@@ -1,5 +1,7 @@
 """HTTP server and JSON API. Python standard library only."""
 
+import base64
+import binascii
 import hashlib
 import hmac
 import json
@@ -15,13 +17,14 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
-from . import __version__, ollama, providers, research
+from . import __version__, extract, knowledge, ollama, providers, research
 from .db import DB
 
 STATIC = Path(__file__).parent / "static"
-MAX_BODY = 20 * 1024 * 1024
+ATTACHED_RE = re.compile(r"File `([^`\n]+)`:\n```\n.*?\n```\s*", re.S)  # files attached in the chat
+MAX_BODY = 24 * 1024 * 1024  # a 15 MB upload is 20 MB as base64
 
 DEFAULT_SETTINGS = {
     "default_model": "",
@@ -198,14 +201,17 @@ class App:
                         "sha256").hexdigest()
 
     # chat -------------------------------------------------------------
-    def build_messages(self, session, history):
-        """Chat history for the model: system prompt, session prompt, memory notes, then the messages."""
+    def build_messages(self, session, history, extra=""):
+        """Chat history for the model: system prompt, session prompt, memory notes, `extra`
+        (knowledge-base excerpts), then the messages."""
         s = self.settings()
         system = "\n\n".join(x for x in (s["system_prompt"], session.get("system", "")) if x.strip())
         if s["use_memory"]:
             mem = self.db.memories()
             if mem:
                 system += "\n\nThings you remember about the user:\n" + "\n".join(f"- {m}" for m in mem)
+        if extra:
+            system += "\n\n" + extra
         msgs = [{"role": "system", "content": system}] if system.strip() else []
         for m in history:
             content = providers.strip_think(m["content"]) if m["role"] == "assistant" else m["content"]
@@ -411,7 +417,8 @@ class Handler(BaseHTTPRequestHandler):
     def create_session(self):
         """POST /api/sessions"""
         d = self.body()
-        self.send_json(self.app.db.create_session(model=d.get("model", ""), system=d.get("system", "")))
+        self.send_json(self.app.db.create_session(model=d.get("model", ""), system=d.get("system", ""),
+                                                  use_kb=d.get("use_kb", False)))
 
     def get_session(self, sid):
         """GET /api/sessions/<id>: session with all messages."""
@@ -432,7 +439,9 @@ class Handler(BaseHTTPRequestHandler):
         """POST /api/chat: store the user message, stream the answer, store it.
 
         `truncate_from` deletes that message and everything after it first (regenerate / edit).
-        Events: start, think, text, done | error. A partial answer is kept if the stream breaks."""
+        `use_kb` switches the knowledge base on or off for this chat (stored with the chat).
+        Events: start, sources (knowledge base only), think, text, done | error.
+        A partial answer is kept if the stream breaks."""
         d = self.body()
         db = self.app.db
         session = db.get_session(d.get("session_id", ""))
@@ -451,14 +460,28 @@ class Handler(BaseHTTPRequestHandler):
         if not session["messages"] or session["messages"][-1]["role"] != "user":
             return self.error("Nothing to answer")
         updates = {"model": model_id}
+        if "use_kb" in d:
+            updates["use_kb"] = session["use_kb"] = bool(d["use_kb"])
         if session["title"] == "New chat":
-            first = session["messages"][0]["content"].strip().splitlines()[0]
+            # name the chat after the question, not after attached files (File `x`: ``` … ```)
+            first_msg = session["messages"][0]["content"]
+            first = (ATTACHED_RE.sub("", first_msg).strip() or first_msg.strip()).splitlines()[0]
             updates["title"] = (first[:57] + "…") if len(first) > 58 else first
         db.update_session(sid, **updates)
 
-        messages = self.app.build_messages(session, session["messages"])
+        extra, meta = "", None
+        if session["use_kb"]:
+            # search with the last two questions so follow-ups ("and in 2023?") keep their topic
+            asked = [m["content"] for m in session["messages"] if m["role"] == "user"][-2:]
+            found = knowledge.retrieve(db, "\n".join(reversed(asked)))
+            if found:
+                extra = knowledge.context(found)
+            meta = {"sources": knowledge.sources(found)}
+        messages = self.app.build_messages(session, session["messages"], extra)
         self.start_stream()
         self.emit({"type": "start", "title": updates.get("title", session["title"]), "model": model_id})
+        if meta is not None:
+            self.emit({"type": "sources", "sources": meta["sources"]})
         chunks = []
         try:
             for kind, c in providers.chat_stream(prov, model, messages, self.app.options()):
@@ -467,14 +490,14 @@ class Handler(BaseHTTPRequestHandler):
         except providers.ProviderError as e:
             text = stream_to_text(chunks)
             if text:
-                db.add_message(sid, "assistant", text, model_id)
+                db.add_message(sid, "assistant", text, model_id, meta)
             return self.emit({"type": "error", "error": str(e)})
         except (BrokenPipeError, ConnectionResetError):
             text = stream_to_text(chunks)
             if text:
-                db.add_message(sid, "assistant", text, model_id)
+                db.add_message(sid, "assistant", text, model_id, meta)
             return
-        db.add_message(sid, "assistant", stream_to_text(chunks), model_id)
+        db.add_message(sid, "assistant", stream_to_text(chunks), model_id, meta)
         self.emit({"type": "done"})
 
     def compare(self):
@@ -645,6 +668,55 @@ class Handler(BaseHTTPRequestHandler):
         self.app.db.delete_note(nid)
         self.send_json({"ok": True})
 
+    # knowledge base
+    def file_upload(self):
+        """Decode an upload {name, data (base64)} and return (name, bytes, text). Raises ValueError."""
+        d = self.body()
+        name = re.sub(r"[\\/\x00-\x1f]", "_", (d.get("name") or "").strip())[-200:]
+        if not name:
+            raise ValueError("File name missing")
+        try:
+            data = base64.b64decode(d.get("data") or "", validate=True)
+        except (binascii.Error, ValueError):
+            raise ValueError("Upload is damaged, please try again") from None
+        text = extract.extract_text(name, data).strip()
+        if not text:
+            raise ValueError(f"{name}: the file contains no text")
+        return name, data, text
+
+    def kb_list(self):
+        """GET /api/knowledge: files, total size, and whether full-text search (FTS5) is available."""
+        db = self.app.db
+        self.send_json({"files": db.kb_files(), "chars": db.kb_total_chars(), "fts": db.fts})
+
+    def kb_upload(self):
+        """POST /api/knowledge {name, data}: extract the text, chunk and index it. Same name replaces."""
+        name, data, text = self.file_upload()
+        self.send_json(self.app.db.kb_add(name, len(data), knowledge.chunk(text)))
+
+    def kb_get(self, fid):
+        """GET /api/knowledge/<id>: one file with its extracted text."""
+        f = self.app.db.kb_file(fid)
+        return self.send_json(f) if f else self.error("Not found", 404)
+
+    def kb_delete(self, fid):
+        """DELETE /api/knowledge/<id>"""
+        self.app.db.kb_delete(fid)
+        self.send_json({"ok": True})
+
+    def kb_search(self):
+        """GET /api/knowledge/search?q=: matching chunks with a short snippet."""
+        q = parse_qs(urlparse(self.path).query).get("q", [""])[0]
+        words = knowledge.terms(q)
+        hits = knowledge.search(self.app.db, q, 20)
+        self.send_json([{"file_id": h["file_id"], "name": h["name"], "idx": h["idx"],
+                         "snippet": knowledge.snippet(h["text"], words)} for h in hits])
+
+    def extract_file(self):
+        """POST /api/extract {name, data}: plain text of a file, for attaching it to a chat message."""
+        name, _, text = self.file_upload()
+        self.send_json({"name": name, "text": text})
+
     # model management (Ollama)
     def pull(self):
         """POST /api/models/pull: download an Ollama model and stream its progress.
@@ -737,6 +809,12 @@ ROUTES = [
     (rf"/api/documents/{ID}", "GET", Handler.get_document),
     (rf"/api/documents/{ID}", "PUT", Handler.put_document),
     (rf"/api/documents/{ID}", "DELETE", Handler.delete_document),
+    (r"/api/knowledge", "GET", Handler.kb_list),
+    (r"/api/knowledge", "POST", Handler.kb_upload),
+    (r"/api/knowledge/search", "GET", Handler.kb_search),
+    (rf"/api/knowledge/{ID}", "GET", Handler.kb_get),
+    (rf"/api/knowledge/{ID}", "DELETE", Handler.kb_delete),
+    (r"/api/extract", "POST", Handler.extract_file),
     (r"/api/notes", "GET", Handler.list_notes),
     (r"/api/notes", "POST", Handler.create_note),
     (rf"/api/notes/{ID}", "PATCH", Handler.patch_note),
