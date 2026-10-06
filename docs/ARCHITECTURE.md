@@ -27,7 +27,7 @@ Browser (sunak/static)  ──HTTP/JSON, NDJSON-Streams──▶  sunak/server.p
 | `sunak/research.py` | Websuche, Seiten lesen, Prompt für den Recherchebericht |
 | `sunak/extract.py` | Text aus hochgeladenen Dateien: PDF (eigener Leser), .docx, .odt, .pptx, HTML, Text |
 | `sunak/knowledge.py` | Wissensbasis: Abschnitte bilden, suchen, passende Abschnitte für den Chat auswählen |
-| `sunak/static/` | Oberfläche: `index.html`, `app.js` (gesamte Logik), `app.css`, `login.html`, Icon, PWA-Manifest |
+| `sunak/static/` | Oberfläche: `index.html`, `app.js` (gesamte Logik), `app.css` (inklusive Themes), `theme.js` (setzt das Theme vor dem ersten Zeichnen), `login.html`, Icon, PWA-Manifest |
 | `tests/test_server.py` | End-to-End-Tests gegen simulierte Backends |
 | `tests/test_extract.py` | Tests für Textauslese und Wissensbasis (die Testdateien werden im Test erzeugt) |
 | `install.sh`, `install.ps1` | Installer für macOS/Linux und Windows |
@@ -185,7 +185,11 @@ Passwörter werden mit PBKDF2-SHA256 und Salt gespeichert. Das Login-Cookie ist 
 
 - Der Markdown-Renderer maskiert zuerst alles HTML und baut dann nur bekannte Elemente auf. Modellausgaben können daher kein Skript einschleusen.
 - Streams werden mit `fetch` und einem `ReadableStream` zeilenweise gelesen und pro Animationsframe neu gezeichnet.
-- Theme und Akzentfarbe liegen in CSS-Variablen (`--accent`, Standard `#ff4fa3`). Gespeichert werden sie in den Einstellungen und zusätzlich in `localStorage`, damit auch die Login-Seite passend aussieht.
+- **Themes:** Jedes Theme ist ein Block `[data-theme="…"]` in `app.css`, der alle Farben als CSS-Variablen setzt (`--bg`, `--panel`, `--panel-2`, `--border`, `--text`, `--muted`, `--code-bg`, `--danger`, `--ok`, `--accent`, `--accent-text`), dazu bei Bedarf Schrift (`--font`), Ecken (`--radius`) und Leuchten (`--glow`). Mitgeliefert: `dark`, `light`, `retro`, `cyberpunk`, `ocean`, `forest`, `sunset`. Die Liste steht dreimal und muss übereinstimmen: CSS, `THEMES` in `app.js` (Name, Untertitel) und `THEMES` in `server.py` (erlaubte Werte); `tests/test_themes.py` prüft das und den Kontrast (Text mindestens 7:1, gedämpfter Text, Akzent, Fehler- und Erfolgsfarbe mindestens 4,5:1, Schrift auf Akzent-Knöpfen mindestens 4,5:1).
+- **Neues Theme:** Block in `app.css` kopieren und Farben ändern, Eintrag in beiden `THEMES`-Listen ergänzen, Tests laufen lassen.
+- **Auswahl:** 🎨 in der oberen Leiste (Menü) und Karten mit Vorschau in Settings → Look. Die Karten tragen selbst `data-theme`, zeigen also das echte Theme. Ein Klick gilt sofort und wird gleich gespeichert (`PUT /api/settings` mit `theme` und `accent`).
+- **Akzentfarbe:** `accent` leer heißt „Farbe des Themes“. Eine eigene Farbe wird als Inline-Variable auf `<html>` gesetzt; die Schriftfarbe darauf (schwarz oder weiß) berechnet `theme.js` aus der Helligkeit.
+- **Ohne Flackern:** `static/theme.js` wird im `<head>` von `index.html` und `login.html` geladen, bevor die Seite gezeichnet wird, und setzt Theme und Akzent aus `localStorage`. `app.js` schreibt die Werte aus den Einstellungen dorthin zurück, damit jedes Gerät die zuletzt gewählten Werte sofort hat.
 
 ## Konfiguration
 
@@ -199,7 +203,7 @@ Umgebungsvariablen: `SUNAK_HOST`, `SUNAK_PORT`, `SUNAK_DATA`, `SUNAK_PASSWORD`, 
 python3 -m unittest discover tests -v
 ```
 
-Die Tests starten Sunak und einen simulierten Server, der die Ollama-, Anthropic- und OpenAI-API nachbildet. Abgedeckt sind Chat, Personas, GPU-Erkennung (simulierte `nvidia-smi`-Ausgabe, sysfs-Bäume, Windows-Registry, Apple Silicon, `/api/ps`, Warnung, Katalog und Empfehlung), Update-Prüfung (echte Git-Repositories mit lokalem Remote, installierte Kopie, Fehlerfälle, Update-Knopf), Kommandozeile (bereits laufend, `status`, `stop`) und Autostart-Dateien, Chat-Suche und Export, Wissensbasis (Hochladen, Suche, Auszüge im Prompt, Quellen), Textauslese aus PDF, Word, OpenDocument und PowerPoint, Datenbank-Migration, Neu generieren, Denkprozess, Gedächtnis, Compare, Research (mit gestubbter Suche), Dokumente, Modell-Download mit Fortschritt, Ollama-Status und Katalog, Claude (Streaming, Header, Denkprozess, Ablehnung, falscher Key, Key-Maskierung), Login, CSRF-Schutz und Pfad-Traversal. GitHub Actions führt sie auf Linux, macOS und Windows aus (`.github/workflows/test.yml`).
+Die Tests starten Sunak und einen simulierten Server, der die Ollama-, Anthropic- und OpenAI-API nachbildet. Abgedeckt sind Chat, Personas, Themes (gleiche Namen in CSS, JavaScript und Server, Kontrast aller Farben, Prüfung der Einstellungen), GPU-Erkennung (simulierte `nvidia-smi`-Ausgabe, sysfs-Bäume, Windows-Registry, Apple Silicon, `/api/ps`, Warnung, Katalog und Empfehlung), Update-Prüfung (echte Git-Repositories mit lokalem Remote, installierte Kopie, Fehlerfälle, Update-Knopf), Kommandozeile (bereits laufend, `status`, `stop`) und Autostart-Dateien, Chat-Suche und Export, Wissensbasis (Hochladen, Suche, Auszüge im Prompt, Quellen), Textauslese aus PDF, Word, OpenDocument und PowerPoint, Datenbank-Migration, Neu generieren, Denkprozess, Gedächtnis, Compare, Research (mit gestubbter Suche), Dokumente, Modell-Download mit Fortschritt, Ollama-Status und Katalog, Claude (Streaming, Header, Denkprozess, Ablehnung, falscher Key, Key-Maskierung), Login, CSRF-Schutz und Pfad-Traversal. GitHub Actions führt sie auf Linux, macOS und Windows aus (`.github/workflows/test.yml`).
 
 ## Erweitern
 

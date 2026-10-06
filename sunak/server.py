@@ -34,10 +34,13 @@ DEFAULT_SETTINGS = {
     "system_prompt": "You are Sunak, a helpful, honest and concise assistant. Use Markdown when it helps.",
     "temperature": 0.7,
     "use_memory": True,
-    "accent": "#ff4fa3",
+    "accent": "",       # "" = the theme's own accent color
     "theme": "dark",
     "check_updates": True,
 }
+
+# Themes: [data-theme] blocks in static/app.css, THEMES in static/app.js.
+THEMES = ("dark", "light", "retro", "cyberpunk", "ocean", "forest", "sunset")
 
 # Built-in personas; the user can edit, add and delete them in Settings → Personas.
 DEFAULT_PERSONAS = [
@@ -122,6 +125,10 @@ def _check_pref(key, value, default):
         return float(value)
     if not isinstance(value, str):
         raise ValueError(f"{key} must be text")
+    if key == "theme" and value not in THEMES:
+        raise ValueError("Unknown theme. Choose one of: " + ", ".join(THEMES))
+    if key == "accent" and value and not re.fullmatch(r"#[0-9a-fA-F]{6}", value):
+        raise ValueError("accent must be a color like #ff4fa3, or empty for the theme's color")
     return value
 
 

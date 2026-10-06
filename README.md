@@ -85,7 +85,7 @@ Sunak rechnet nicht selbst, die Modelle laufen in Ollama. Ollama nutzt eine pass
 | 📝 **Documents** | Markdown-Editor mit Autosave, Vorschau, Export und KI-Bearbeitung („kürzer“, „Grammatik korrigieren“), auch nur für markierten Text, mit Rückgängig |
 | 🧠 **Notes & Memory** | Notizen; als „memory“ markierte Notizen kennt die KI in jedem Chat |
 | 🧩 **Modelle** | Eingebaute Ollama-Verwaltung: GPU-Erkennung (NVIDIA, AMD, Apple Silicon) mit Warnung, wenn Ollama sie nicht nutzt, Modellkatalog mit Empfehlungen passend zu RAM und Grafikspeicher, Download per Klick mit Fortschrittsbalken und Abbrechen, jedes Ollama-Modell per Name, installierte Modelle anzeigen und löschen. Ollama lässt sich aus Sunak heraus starten und unter Windows (winget) und macOS (Homebrew) auch installieren. Zusätzlich jede OpenAI-kompatible API: OpenAI, OpenRouter, Groq, LM Studio, llama.cpp, vLLM |
-| 🎨 **Look** | Dunkel/Hell, Pink als Standard-Akzent, weitere Akzentfarben in den Einstellungen, als App installierbar (PWA), handytauglich |
+| 🎨 **Themes** | Sieben Themes: Sunak Dark und Sunak Light (Pink), Retro (grünes Terminal mit Monospace-Schrift), Cyberpunk (Neon), Ocean, Forest und Sunset (hell und warm). Umschalten mit 🎨 oben rechts oder mit Vorschau in Settings → Look, dazu eigene Akzentfarben. Alle Themes sind auf gute Lesbarkeit geprüft. Als App installierbar (PWA), handytauglich |
 | 🔒 **Sicherheit** | Läuft standardmäßig nur auf `localhost`; optionales Passwort; Daten in einer SQLite-Datei unter `~/.sunak` |
 
 <p align="center"><img src="docs/models.png" alt="Modelle" width="820"></p>
@@ -108,6 +108,7 @@ Sunak rechnet nicht selbst, die Modelle laufen in Ollama. Ollama nutzt eine pass
 | Anderes Cloud-Modell nutzen | Settings → Providers → Preset wählen → API-Key eintragen → Save settings |
 | Vom Handy nutzen | `sunak --host 0.0.0.0`, in Settings ein Passwort setzen, dann `http://<PC-IP>:7000` öffnen |
 | Sunak beenden | Settings → ⏻ Stop Sunak, oder `sunak stop` |
+| Theme wechseln | 🎨 oben rechts, oder Settings → Look (mit Vorschau) |
 | Läuft Sunak? | `sunak status` |
 | Welche GPU wird genutzt? | `sunak gpu`, oder die Seite Models |
 | Automatisch beim Anmelden starten | `sunak autostart on` (aus: `sunak autostart off`) |

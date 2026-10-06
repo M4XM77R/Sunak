@@ -6,6 +6,7 @@
   <title>Sunak · Login</title>
   <link rel="icon" href="/icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/app.css">
+  <script src="/theme.js"></script>
 </head>
 <body class="login-body">
   <form class="login" id="login">
@@ -16,8 +17,6 @@
     <p class="error" id="err"></p>
   </form>
 <script>
-try { const t = localStorage.getItem('sunak-theme'); if (t) document.documentElement.dataset.theme = t;
-      const a = localStorage.getItem('sunak-accent'); if (a) document.documentElement.style.setProperty('--accent', a); } catch (e) {}
 document.getElementById('login').addEventListener('submit', async (e) => {
   e.preventDefault();
   const r = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'sunak' },

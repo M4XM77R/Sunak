@@ -3,7 +3,17 @@
 
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
-const ACCENTS = ['#ff4fa3', '#ff2d7a', '#f472b6', '#e879f9', '#c084fc', '#fb7185', '#ff8fab', '#38bdf8'];
+const ACCENTS = ['#ff4fa3', '#ff2d7a', '#f472b6', '#e879f9', '#c084fc', '#38bdf8', '#34d399', '#fcee0a', '#f97316'];
+// keep in sync with the [data-theme] blocks in app.css and THEMES in sunak/server.py
+const THEMES = [
+  { id: 'dark', name: 'Sunak Dark', sub: 'Pink on night' },
+  { id: 'light', name: 'Sunak Light', sub: 'Pink on white' },
+  { id: 'retro', name: 'Retro', sub: 'Green terminal' },
+  { id: 'cyberpunk', name: 'Cyberpunk', sub: 'Neon on night' },
+  { id: 'ocean', name: 'Ocean', sub: 'Deep blue' },
+  { id: 'forest', name: 'Forest', sub: 'Calm green' },
+  { id: 'sunset', name: 'Sunset', sub: 'Warm and light' },
+];
 const store = {
   get(k, d = null) { try { const v = localStorage.getItem(k); return v === null ? d : v; } catch (e) { return d; } },
   set(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* private mode */ } },
@@ -170,18 +180,55 @@ document.addEventListener('click', (e) => {
 
 /* ---------------- Theme ---------------- */
 function applyLook() {
-  const theme = store.get('sunak-theme', state.settings?.theme || 'dark');
-  const accent = state.settings?.accent || store.get('sunak-accent', ACCENTS[0]);
-  document.documentElement.dataset.theme = theme;
-  document.documentElement.style.setProperty('--accent', accent);
-  $('meta[name="theme-color"]').content = accent;
-  store.set('sunak-accent', accent);
+  const s = state.settings;
+  const theme = THEMES.some((t) => t.id === s?.theme) ? s.theme : store.get('sunak-theme', 'dark');
+  const accent = s ? s.accent : store.get('sunak-accent', '');
+  sunakApplyTheme(theme, accent); // from theme.js, which applies the stored values on the next page load
+  store.set('sunak-theme', theme);
+  store.set('sunak-accent', accent || '');
+  $('meta[name="theme-color"]').content = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#ff4fa3';
 }
-$('#themeBtn').onclick = () => {
-  const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
-  store.set('sunak-theme', next);
+async function saveLook(body) {
+  try { await api('/api/settings', { method: 'PUT', body }); } catch (e) { toast(e.message); }
+}
+function setTheme(id) {
+  Object.assign(state.settings, { theme: id, accent: '' }); // each theme brings its own accent
   applyLook();
-};
+  renderLook();
+  saveLook({ theme: id, accent: '' });
+}
+function setAccent(color) {
+  state.settings.accent = color;
+  applyLook();
+  renderLook();
+  saveLook({ accent: color });
+}
+function renderLook() {
+  const s = state.settings;
+  if (!s) return;
+  const menu = $('#themeMenu');
+  menu.innerHTML = '';
+  const cards = $('#themes');
+  cards.innerHTML = '';
+  for (const t of THEMES) {
+    const on = s.theme === t.id;
+    menu.append(el('button', { type: 'button', class: `theme-opt${on ? ' on' : ''}`, onclick: () => setTheme(t.id) },
+      el('span', { class: 'theme-dot', 'data-theme': t.id }), t.name));
+    cards.append(el('button', { type: 'button', class: `theme-card${on ? ' on' : ''}`, 'data-theme': t.id, 'aria-pressed': String(on),
+      title: t.name, onclick: () => setTheme(t.id) },
+      el('span', { class: 'tc-bar' }, el('span', { class: 'tc-panel' }), el('span', { class: 'tc-btn' }, 'Aa')),
+      el('span', { class: 'tc-name' }, t.name), el('span', { class: 'tc-sub' }, t.sub)));
+  }
+  const sw = $('#swatches');
+  sw.innerHTML = '';
+  sw.append(el('button', { class: s.accent ? '' : 'on', 'data-theme': s.theme, style: 'background:var(--accent)', title: 'Theme color',
+    'aria-label': 'Theme color', onclick: () => setAccent('') }));
+  ACCENTS.forEach((c) => sw.append(el('button', { class: c === s.accent ? 'on' : '', style: `background:${c}`, title: c, 'aria-label': c,
+    onclick: () => setAccent(c) })));
+}
+$('#themeBtn').onclick = (e) => { e.stopPropagation(); $('#themeMenu').classList.toggle('hidden'); };
+$('#themeMenu').onclick = () => $('#themeMenu').classList.add('hidden');
+document.addEventListener('click', (e) => { if (!$('#themeWrap').contains(e.target)) $('#themeMenu').classList.add('hidden'); });
 
 /* ---------------- Navigation ---------------- */
 const TITLES = { chat: 'Chat', compare: 'Compare models', research: 'Deep Research', documents: 'Documents', knowledge: 'Knowledge', notes: 'Notes & Memory', models: 'Models', settings: 'Settings' };
@@ -1053,10 +1100,7 @@ function renderSettings() {
   $('#tempVal').textContent = s.temperature;
   $('#useMemory').checked = s.use_memory;
   $('#checkUpdates').checked = s.check_updates;
-  const sw = $('#swatches');
-  sw.innerHTML = '';
-  ACCENTS.forEach((c) => sw.append(el('button', { class: c === s.accent ? 'on' : '', style: `background:${c}`, title: c,
-    onclick: () => { s.accent = c; applyLook(); renderSettings(); } })));
+  renderLook();
   $('#logoutBtn').classList.toggle('hidden', !s.password_set);
   $('#aboutLine').textContent = `Sunak ${state.status?.version || ''} · ${state.status?.ram_gb ? state.status.ram_gb + ' GB RAM' : ''}`;
 }
@@ -1129,7 +1173,7 @@ $('#saveSettings').onclick = async () => {
       providers: draftProviders.filter((p) => p.base_url.trim()), system_prompt: $('#sysPrompt').value,
       temperature: parseFloat($('#temperature').value), use_memory: $('#useMemory').checked,
       check_updates: $('#checkUpdates').checked,
-      accent: s.accent, default_model: $('#defaultModel').value, personas: draftPersonas,
+      accent: s.accent, theme: s.theme, default_model: $('#defaultModel').value, personas: draftPersonas,
     } });
     applyLook();
     renderPersonaSelect();
@@ -1205,6 +1249,7 @@ async function refreshAll(poll = false) {
   applyLook();
   [state.status, state.settings] = await Promise.all([api('/api/status'), api('/api/settings')]);
   applyLook();
+  renderLook();
   renderKbToggle();
   renderPersonaSelect();
   await Promise.all([refreshAll(), loadSessions()]);

@@ -8,6 +8,7 @@
   <link rel="icon" href="/icon.svg" type="image/svg+xml">
   <link rel="manifest" href="/manifest.json">
   <link rel="stylesheet" href="/app.css">
+  <script src="/theme.js"></script>
 </head>
 <body>
 <div class="app">
@@ -54,7 +55,10 @@
           <button type="button" id="exportPrint">Print / PDF</button>
         </div>
       </div>
-      <button class="icon-btn" id="themeBtn" title="Toggle light/dark">🌓</button>
+      <div class="pop-wrap" id="themeWrap">
+        <button class="icon-btn" id="themeBtn" title="Theme" aria-haspopup="true">🎨</button>
+        <div class="pop hidden" id="themeMenu"></div>
+      </div>
     </header>
 
     <!-- CHAT -->
@@ -211,6 +215,8 @@
         <button class="btn" id="addPersona">＋ Add persona</button>
 
         <h2>Look</h2>
+        <p class="muted small">Pick a theme, it applies right away. The accent color below changes buttons and links.</p>
+        <div class="themes" id="themes"></div>
         <div class="row swatches" id="swatches"></div>
 
         <h2>Data</h2>
