@@ -37,6 +37,7 @@ DEFAULT_SETTINGS = {
     "use_memory": True,
     "accent": "",       # "" = the theme's own accent color
     "theme": "dark",
+    "language": "",     # "" = the browser's language; else one of LANGUAGES
     "check_updates": True,
     "agent_enabled": False,  # agent mode (agentic coding): off until the user switches it on
     "agent_timeout": 120,    # seconds a command of the agent may run
@@ -46,6 +47,8 @@ INT_PREFS = {"agent_timeout": (5, 3600), "agent_max_steps": (1, 200)}  # allowed
 
 # Themes: [data-theme] blocks in static/app.css, THEMES in static/app.js.
 THEMES = ("dark", "light", "retro", "cyberpunk", "ocean", "forest", "sunset", "corporate")
+# Interface languages: English plus a static/lang-<code>.js file for each other one.
+LANGUAGES = ("en", "de")
 
 # Built-in personas; the user can edit, add and delete them in Settings → Personas.
 DEFAULT_PERSONAS = [
@@ -135,6 +138,8 @@ def _check_pref(key, value, default):
         return float(value)
     if not isinstance(value, str):
         raise ValueError(f"{key} must be text")
+    if key == "language" and value and value not in LANGUAGES:
+        raise ValueError("Unknown language. Choose one of: " + ", ".join(LANGUAGES))
     if key == "theme" and value not in THEMES:
         raise ValueError("Unknown theme. Choose one of: " + ", ".join(THEMES))
     if key == "accent" and value and not re.fullmatch(r"#[0-9a-fA-F]{6}", value):

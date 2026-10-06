@@ -108,6 +108,7 @@ Sunak rechnet nicht selbst, die Modelle laufen in Ollama. Ollama nutzt eine pass
 | 🧠 **Notes & Memory** | Notizen; als „memory“ markierte Notizen kennt die KI in jedem Chat |
 | 🧩 **Modelle** | Eingebaute Ollama-Verwaltung: GPU-Erkennung (NVIDIA, AMD, Apple Silicon) mit Warnung, wenn Ollama sie nicht nutzt, Modellkatalog mit Empfehlungen passend zu RAM und Grafikspeicher, Download per Klick mit Fortschrittsbalken und Abbrechen, jedes Ollama-Modell per Name, installierte Modelle anzeigen und löschen. Ollama lässt sich aus Sunak heraus starten und unter Windows (winget) und macOS (Homebrew) auch installieren. Zusätzlich jede OpenAI-kompatible API: OpenAI, OpenRouter, Groq, LM Studio, llama.cpp, vLLM |
 | 🎨 **Themes** | Acht Themes: Sunak Dark und Sunak Light (Pink), Retro (grünes Terminal mit Monospace-Schrift), Cyberpunk (Neon), Ocean, Forest, Sunset (hell und warm) und 80s Corporate (beige Bürotechnik, marineblaue Titelleiste, Bordeaux, kantige Knöpfe mit 3D-Rand). Umschalten mit 🎨 oben rechts oder mit Vorschau in Settings → Look, dazu eigene Akzentfarben. Alle Themes sind auf gute Lesbarkeit geprüft. Als App installierbar (PWA), handytauglich, Handy-Zugriff im WLAN per QR-Code |
+| 🌍 **Sprachen** | Oberfläche auf Deutsch oder Englisch, standardmäßig in der Sprache des Browsers, umschaltbar unter Settings → Look → Language (Einstellungen → Aussehen → Sprache). Weitere Sprachen lassen sich als eine Datei ergänzen |
 | 🔒 **Sicherheit** | Läuft standardmäßig nur auf `localhost`; optionales Passwort; Daten in einer SQLite-Datei unter `~/.sunak` |
 
 <p align="center"><img src="docs/models.png" alt="Modelle" width="820"></p>
@@ -136,6 +137,7 @@ Sunak rechnet nicht selbst, die Modelle laufen in Ollama. Ollama nutzt eine pass
 | Vom Handy oder Tablet nutzen | Settings → Security: Passwort setzen. Dann Settings → Phone & tablet → „Allow phones and tablets in my network“ einschalten und den QR-Code mit der Handykamera scannen (oder die angezeigte Adresse eintippen). Handy und Computer müssen im selben WLAN sein; fragt die Firewall des Computers, Python erlauben. Für ein App-Icon im Browsermenü „Zum Startbildschirm hinzufügen“ wählen. Die Einstellung bleibt nach einem Neustart erhalten, ohne Passwort geht sie nicht |
 | Sunak beenden | Settings → ⏻ Stop Sunak, oder `sunak stop` |
 | Theme wechseln | 🎨 oben rechts, oder Settings → Look (mit Vorschau) |
+| Sprache wechseln | Settings → Look → Language (auf Deutsch: Einstellungen → Aussehen → Sprache). „Automatisch“ folgt der Sprache des Browsers; die Seite lädt danach neu. Die Wahl gilt für alle Geräte |
 | Läuft Sunak? | `sunak status` |
 | Welche GPU wird genutzt? | `sunak gpu`, oder die Seite Models |
 | Automatisch beim Anmelden starten | `sunak autostart on` (aus: `sunak autostart off`) |

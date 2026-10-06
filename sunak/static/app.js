@@ -162,7 +162,7 @@ function md(text) {
   // reasoning of thinking models
   text = text.replace(/<think>([\s\S]*?)(<\/think>|$)/g, (_, t, closed) => {
     if (!t.trim()) return '';
-    html += `<details class="think"${closed ? '' : ' open'}><summary>${closed ? 'Thought process' : 'Thinking…'}</summary>${blocks(t.trim())}</details>`;
+    html += `<details class="think"${closed ? '' : ' open'}><summary>${closed ? tr('Thought process') : tr('Thinking…')}</summary>${blocks(t.trim())}</details>`;
     return '';
   });
   const parts = text.split(/^```/m);
@@ -171,7 +171,7 @@ function md(text) {
     const nl = part.indexOf('\n');
     const lang = nl >= 0 ? part.slice(0, nl).trim() : '';
     const code = nl >= 0 ? part.slice(nl + 1).replace(/\n$/, '') : part;
-    html += `<pre>${lang ? `<span class="lang">${esc(lang)}</span>` : ''}<button class="copy" type="button">Copy</button><code>${esc(code)}</code></pre>`;
+    html += `<pre>${lang ? `<span class="lang">${esc(lang)}</span>` : ''}<button class="copy" type="button">${tr('Copy')}</button><code>${esc(code)}</code></pre>`;
   });
   return html;
 }
@@ -231,7 +231,18 @@ function renderLook() {
     'aria-label': 'Theme color', onclick: () => setAccent('') }));
   ACCENTS.forEach((c) => sw.append(el('button', { class: c === s.accent ? 'on' : '', style: `background:${c}`, title: c, 'aria-label': c,
     onclick: () => setAccent(c) })));
+  const ls = $('#language'); // languages: i18n.js and the lang-*.js files
+  ls.replaceChildren(el('option', { value: '' }, tr('Automatic (browser language)')),
+    ...Object.entries(SUNAK_LANG_NAMES).map(([code, name]) => el('option', { value: code, 'data-no-i18n': '' }, name)));
+  ls.value = s.language || '';
 }
+$('#language').onchange = async (e) => {
+  const lang = e.target.value;
+  try { await api('/api/settings', { method: 'PUT', body: { language: lang } }); }
+  catch (err) { toast(err.message); e.target.value = state.settings.language || ''; return; }
+  store.set('sunak-lang', lang);
+  location.reload(); // the page is drawn again in the new language
+};
 $('#themeBtn').onclick = (e) => { e.stopPropagation(); $('#themeMenu').classList.toggle('hidden'); };
 $('#themeMenu').onclick = () => $('#themeMenu').classList.add('hidden');
 document.addEventListener('click', (e) => { if (!$('#themeWrap').contains(e.target)) $('#themeMenu').classList.add('hidden'); });
@@ -243,7 +254,7 @@ function show(view) {
   document.body.dataset.view = view;
   $$('.nav button').forEach((b) => b.classList.toggle('active', b.dataset.view === view));
   $$('.view').forEach((v) => v.classList.toggle('active', v.id === `view-${view}`));
-  $('#viewTitle').textContent = view === 'chat' && state.session ? state.session.title : TITLES[view];
+  $('#viewTitle').textContent = view === 'chat' && state.session ? state.session.title : tr(TITLES[view]);
   $('#modelSelect').classList.toggle('hidden', ['notes', 'settings', 'compare', 'models', 'knowledge'].includes(view));
   $('#personaSelect').classList.toggle('hidden', view !== 'chat');
   syncExport();
@@ -269,7 +280,7 @@ async function loadModels() {
   state.modelErrors = r.errors;
   const sel = $('#modelSelect');
   sel.innerHTML = '';
-  if (!state.models.length) sel.append(el('option', { value: '' }, 'No model installed'));
+  if (!state.models.length) sel.append(el('option', { value: '' }, tr('No model installed')));
   const groups = {};
   for (const m of state.models) (groups[m.provider_name] ||= []).push(m);
   for (const [name, ms] of Object.entries(groups)) {
@@ -304,7 +315,7 @@ $('#personaSelect').onchange = async (e) => {
   store.set('sunak-persona', e.target.value);
   if (state.session?.id) { state.session.persona = e.target.value; await api(`/api/sessions/${state.session.id}`, { method: 'PATCH', body: { persona: e.target.value } }); }
   const p = state.settings.personas.find((x) => x.id === e.target.value);
-  toast(`${p.icon || ''} ${p.name}${p.prompt ? '' : ' (no extra instructions)'}`);
+  toast(`${p.icon || ''} ${p.name}${p.prompt ? '' : ` ${tr('(no extra instructions)')}`}`);
 };
 
 /* ---------------- Sessions ---------------- */
@@ -321,7 +332,7 @@ function renderSessions() {
       el('span', { class: 't', title: s.title }, s.title),
       el('button', { class: 'x', title: 'Delete', onclick: async (e) => {
         e.stopPropagation();
-        if (!confirm(`Delete “${s.title}”?`)) return;
+        if (!confirm(tr('Delete “{title}”?', { title: s.title }))) return;
         await api(`/api/sessions/${s.id}`, { method: 'DELETE' });
         if (state.session?.id === s.id) newChat();
         loadSessions();
@@ -383,7 +394,7 @@ function welcome() {
   if (!state.models.length) box.append(setupCard());
   else {
     const ideas = ['Explain how a transformer model works, simply', 'Write a polite email declining a meeting',
-      'Plan a 3-day trip to Stockholm', 'Give me 5 dinner ideas with pasta and spinach'];
+      'Plan a 3-day trip to Stockholm', 'Give me 5 dinner ideas with pasta and spinach'].map((x) => tr(x));
     box.append(el('div', { class: 'suggestions' }, ideas.map((t) => el('button', { onclick: () => { $('#prompt').value = t; send(); } }, t))));
   }
   return box;
@@ -397,10 +408,10 @@ function setupCard() {
         ' or ', el('a', { href: '#', onclick: (e) => { e.preventDefault(); show('settings'); } }, 'another provider'), '.'));
   }
   const rec = state.status?.recommended || { model: 'qwen3:4b', size: '2.6 GB' };
-  const ram = state.status?.ram_gb ? `${state.status.ram_gb} GB RAM detected. ` : '';
+  const ram = state.status?.ram_gb ? `${tr('{gb} GB RAM detected.', { gb: state.status.ram_gb })} ` : '';
   return el('div', { class: 'card' }, el('h3', {}, 'Download your first model'),
-    el('p', { class: 'muted' }, `${ram}Recommended for your computer: `, el('b', {}, rec.model), ` (${rec.size}).`),
-    el('div', { class: 'row' }, pullButton(rec.model, `Download ${rec.model}`),
+    el('p', { class: 'muted' }, `${ram}${tr('Recommended for your computer:')} `, el('b', {}, rec.model), ` (${rec.size}).`),
+    el('div', { class: 'row' }, pullButton(rec.model, tr('Download {model}', { model: rec.model })),
       el('button', { class: 'btn', onclick: () => show('models') }, 'Browse models')));
 }
 
@@ -432,7 +443,7 @@ function userBubble(content, images = []) {
   const rest = content.replace(ATTACHED_RE, '').trim();
   return el('div', { class: 'bubble' },
     images.length ? el('div', { class: 'msg-images' }, images.map((src) =>
-      el('a', { href: src, target: '_blank', rel: 'noopener' }, el('img', { src, alt: 'Attached image', loading: 'lazy' })))) : '',
+      el('a', { href: src, target: '_blank', rel: 'noopener' }, el('img', { src, alt: tr('Attached image'), loading: 'lazy' })))) : '',
     files.map((f) => el('details', { class: 'attached' }, el('summary', {}, `📄 ${f[1]}`), el('pre', { class: 'kb-text' }, f[2]))),
     rest);
 }
@@ -673,7 +684,7 @@ async function runAgent(payload, localUserMsg) {
         if (!pending) { pending = true; requestAnimationFrame(paint); }
       } else if (ev.type === 'step' || ev.type === 'step_done') { endText(); showStep(ev); }
       else if (ev.type === 'confirm') showStep(ev, true);
-      else if (ev.type === 'notice') { endText(); target.append(el('p', { class: 'notice muted small' }, `ℹ️ ${ev.t}`)); }
+      else if (ev.type === 'notice') { endText(); target.append(el('p', { class: 'notice muted small' }, 'ℹ️ ', ev.t)); }
       else if (ev.type === 'done') stopped = !!ev.stopped;
       else if (ev.type === 'error') error = ev.error;
     }, ctrl.signal);
@@ -721,7 +732,7 @@ function fileData(f) {
   return new Promise((resolve, reject) => {
     const r = new FileReader();
     r.onload = () => resolve(r.result.slice(r.result.indexOf(',') + 1));
-    r.onerror = () => reject(new Error(`Could not read ${f.name}`));
+    r.onerror = () => reject(new Error(tr('Could not read {name}', { name: f.name })));
     r.readAsDataURL(f);
   });
 }
@@ -736,7 +747,7 @@ function loadImg(src) {
   return new Promise((resolve, reject) => {
     const i = new Image();
     i.onload = () => resolve(i);
-    i.onerror = () => reject(new Error('this image cannot be read'));
+    i.onerror = () => reject(new Error(tr('this image cannot be read')));
     i.src = src;
   });
 }
@@ -762,7 +773,7 @@ async function prepareImage(f) {
   } finally { URL.revokeObjectURL(url); }
 }
 async function attachImage(f) {
-  if (state.attachments.filter((a) => a.image).length >= MAX_IMAGES) { toast(`At most ${MAX_IMAGES} images per message`); return; }
+  if (state.attachments.filter((a) => a.image).length >= MAX_IMAGES) { toast(tr('At most {n} images per message', { n: MAX_IMAGES })); return; }
   const a = { name: f.name || 'image.png', image: true, loading: true };
   state.attachments.push(a);
   renderAttachments();
@@ -772,7 +783,7 @@ async function attachImage(f) {
 async function attachFiles(files) {
   for (const f of files) {
     if (IMAGE_TYPES.includes(f.type)) { await attachImage(f); continue; }
-    if (f.size > MAX_UPLOAD) { toast(`${f.name} is too big (max 15 MB)`); continue; }
+    if (f.size > MAX_UPLOAD) { toast(tr('{name} is too big (max 15 MB)', { name: f.name })); continue; }
     const a = { name: f.name, text: '', loading: true };
     state.attachments.push(a);
     renderAttachments();
@@ -780,7 +791,7 @@ async function attachFiles(files) {
       const r = await api('/api/extract', { method: 'POST', body: { name: f.name, data: await fileData(f) } });
       if (r.text.length > MAX_ATTACH_CHARS) {
         dropAttachment(a);
-        toast(`${f.name} is long (${Math.round(r.text.length / 1000)}k characters). Add it to your knowledge base instead?`,
+        toast(tr('{name} is long ({k}k characters). Add it to your knowledge base instead?', { name: f.name, k: Math.round(r.text.length / 1000) }),
           { label: 'Add to knowledge', fn: () => uploadKb([f]).then(() => setKb(true)) });
       } else { a.text = r.text; a.loading = false; }
     } catch (e) {
@@ -796,7 +807,7 @@ function renderAttachments() {
   box.innerHTML = '';
   state.attachments.forEach((a, i) => box.append(el('span', { class: 'chip' },
     a.image && a.url ? el('img', { class: 'thumb', src: a.url, alt: '' }) : (a.loading ? '⏳' : a.image ? '🖼' : '📄'), ` ${a.name}`,
-    el('button', { type: 'button', 'aria-label': `Remove ${a.name}`, onclick: () => { state.attachments.splice(i, 1); renderAttachments(); } }, '✕'))));
+    el('button', { type: 'button', 'aria-label': tr('Remove {name}', { name: a.name }), onclick: () => { state.attachments.splice(i, 1); renderAttachments(); } }, '✕'))));
 }
 // paste a screenshot straight into the message box
 promptEl.addEventListener('paste', (e) => {
@@ -832,13 +843,13 @@ $('#kbToggle').onclick = async () => {
   if (on) {
     await loadKbData();
     if (!state.kb.files.length) toast('Your knowledge base is empty.', { label: 'Add files', fn: () => show('knowledge') });
-    else toast(`Knowledge base on (${state.kb.files.length} file${state.kb.files.length > 1 ? 's' : ''})`);
+    else toast(trn(state.kb.files.length, 'Knowledge base on ({n} file)', 'Knowledge base on ({n} files)'));
   } else toast('Knowledge base off');
 };
 function sourcesEl(sources) {
   const box = el('div', { class: 'sources kb-sources' });
-  if (!sources.length) box.append(el('span', { class: 'muted small' }, '📚 No matching files'));
-  sources.forEach((src) => box.append(el('button', { class: 'chip', type: 'button', title: 'Show file',
+  if (!sources.length) box.append(el('span', { class: 'muted small' }, tr('📚 No matching files')));
+  sources.forEach((src) => box.append(el('button', { class: 'chip', type: 'button', title: tr('Show file'),
     onclick: () => { show('knowledge'); previewKb(src.id); } }, `📚 ${src.name}`)));
   return box;
 }
@@ -866,7 +877,7 @@ $('#webToggle').onclick = async () => {
 };
 function webSourcesEl(web) {
   return el('div', { class: 'sources kb-sources' },
-    el('span', { class: 'muted small', title: `Searched for: ${web.query}` }, '🌐'),
+    el('span', { class: 'muted small', title: tr('Searched for: {query}', { query: web.query }) }, '🌐'),
     web.sources.map((src, i) => el('a', { class: 'chip', href: src.url, target: '_blank', rel: 'noopener noreferrer', title: src.url },
       `[${i + 1}] ${src.title || new URL(src.url).hostname}`)));
 }
@@ -879,13 +890,13 @@ async function loadKb() {
   const box = $('#kbList');
   box.innerHTML = '';
   if (!state.kb.files.length) { box.append(el('p', { class: 'muted' }, 'No files yet.')); return; }
-  box.append(el('p', { class: 'muted small' }, `${state.kb.files.length} file${state.kb.files.length > 1 ? 's' : ''} · ${Math.round(state.kb.chars / 1000)}k characters`));
+  box.append(el('p', { class: 'muted small' }, `${trn(state.kb.files.length, '{n} file', '{n} files')} · ${tr('{k}k characters', { k: Math.round(state.kb.chars / 1000) })}`));
   for (const f of state.kb.files) {
     box.append(el('div', { class: 'kb-item' },
       el('button', { class: 'kb-name', title: 'Show text', onclick: () => previewKb(f.id) }, `📄 ${f.name}`),
       el('span', { class: 'muted small' }, `${(f.size / 1024).toFixed(f.size < 10240 ? 1 : 0)} KB · ${Math.round(f.chars / 100) / 10}k chars`),
       el('button', { class: 'icon-btn', title: 'Remove', onclick: async () => {
-        if (!confirm(`Remove “${f.name}” from your knowledge base?`)) return;
+        if (!confirm(tr('Remove “{name}” from your knowledge base?', { name: f.name }))) return;
         await api(`/api/knowledge/${f.id}`, { method: 'DELETE' });
         $('#kbPreview').classList.add('hidden');
         loadKb();
@@ -899,7 +910,7 @@ async function previewKb(id) {
     box.innerHTML = '';
     box.append(el('div', { class: 'row' }, el('h3', { style: 'margin:0;flex:1' }, f.name),
       el('button', { class: 'icon-btn', onclick: () => box.classList.add('hidden') }, '✕')),
-      el('pre', { class: 'kb-text' }, f.text.length > 20000 ? `${f.text.slice(0, 20000)}\n\n… (${Math.round(f.text.length / 1000)}k characters in total)` : f.text));
+      el('pre', { class: 'kb-text' }, f.text.length > 20000 ? `${f.text.slice(0, 20000)}\n\n… (${tr('{k}k characters in total', { k: Math.round(f.text.length / 1000) })})` : f.text));
     box.classList.remove('hidden');
     box.scrollIntoView({ behavior: 'smooth', block: 'start' });
   } catch (e) { toast(e.message); }
@@ -908,14 +919,14 @@ async function uploadKb(files) {
   const box = $('#kbUploads');
   let added = 0;
   for (const f of files) {
-    const line = el('div', { class: 'kb-upload muted small' }, `⏳ Reading ${f.name}…`);
+    const line = el('div', { class: 'kb-upload muted small' }, tr('⏳ Reading {name}…', { name: f.name }));
     box.append(line);
-    if (f.size > MAX_UPLOAD) { line.textContent = `✕ ${f.name} is too big (max 15 MB)`; line.classList.add('err'); continue; }
+    if (f.size > MAX_UPLOAD) { line.textContent = `✕ ${tr('{name} is too big (max 15 MB)', { name: f.name })}`; line.classList.add('err'); continue; }
     try {
       const r = await api('/api/knowledge', { method: 'POST', body: { name: f.name, data: await fileData(f) } });
       line.remove();
       added++;
-      toast(`Added ${r.name}`);
+      toast(tr('Added {name}', { name: r.name }));
     } catch (e) { line.textContent = `✕ ${e.message}`; line.classList.add('err'); }
   }
   if (state.view === 'knowledge') loadKb(); else loadKbData();
@@ -1056,7 +1067,7 @@ function renderReader(m) {
   r.append(...[el('h2', { class: 'mail-subject' }, m.subject),
     el('div', { class: 'mail-head small' },
       el('div', {}, el('b', {}, who(m)), m.from_name ? el('span', { class: 'muted' }, ` <${m.from_addr}>`) : null),
-      el('div', { class: 'muted' }, `To: ${m.to}${m.cc ? ` · Cc: ${m.cc}` : ''} · ${mailDate(m.date, true)}`)),
+      el('div', { class: 'muted' }, `${tr('To: {to}', { to: m.to })}${m.cc ? ` · Cc: ${m.cc}` : ''} · ${mailDate(m.date, true)}`)),
     el('div', { class: 'row' },
       el('button', { class: 'btn', type: 'button', onclick: () => replyTo(m, false) }, '↩ Reply'),
       el('button', { class: 'btn', type: 'button', onclick: () => replyTo(m, true) }, '↩ Reply all'),
@@ -1065,7 +1076,7 @@ function renderReader(m) {
       el('button', { class: 'btn', type: 'button', title: 'Attach this e-mail to a new chat and ask anything about it', onclick: () => askInChat(m) }, '💬 Ask in chat')),
     aiBox,
     att.length ? el('div', { class: 'sources' }, att) : null,
-    el('div', { class: 'mail-body' }, m.text || '(no text)'),
+    el('div', { class: 'mail-body' }, m.text || tr('(no text)')),
     m.truncated ? el('p', { class: 'muted small' }, 'This e-mail is very long; only the beginning is shown.') : null].filter(Boolean));
   r.scrollTop = 0;
 }
@@ -1082,7 +1093,7 @@ async function mailAi(task, text, box, instruction = '', onText) {
     });
   } catch (e) { failed = e.message; }
   if (box) box.classList.remove('typing');
-  if (failed) toast(`AI error: ${failed}`);
+  if (failed) toast(tr('AI error: {error}', { error: failed }));
   return !failed;
 }
 function askInChat(m) {
@@ -1116,7 +1127,7 @@ $('#mailOverview').onclick = () => {
   const r = $('#mailReader');
   const box = el('div', { class: 'md mail-ai' });
   r.innerHTML = '';
-  r.append(el('h2', { class: 'mail-subject' }, `✨ Overview of ${Math.min(60, state.mail.items.length)} e-mails`),
+  r.append(el('h2', { class: 'mail-subject' }, tr('✨ Overview of {n} e-mails', { n: Math.min(60, state.mail.items.length) })),
     el('p', { class: 'muted small' }, 'Based on sender and subject only.'), box);
   showMailPane('reader');
   mailAi('overview', list, box);
@@ -1135,7 +1146,7 @@ function openCompose(c) {
   if (state.mail.compose && !confirmDiscard()) return;
   state.mail.compose = c;
   const acc = mailAcc();
-  $('#mailFrom').textContent = `From: ${acc.name ? `${acc.name} <${acc.email}>` : acc.email}`;
+  $('#mailFrom').textContent = tr('From: {from}', { from: acc.name ? `${acc.name} <${acc.email}>` : acc.email });
   $('#mailTo').value = c.to || '';
   $('#mailCc').value = c.cc || '';
   $('#mailBcc').value = '';
@@ -1147,7 +1158,7 @@ function openCompose(c) {
   (c.to ? $('#mailBody') : $('#mailTo')).focus();
   $('#mailBody').setSelectionRange(0, 0);
 }
-const quote = (m) => `\n\nOn ${mailDate(m.date, true)}, ${who(m)} wrote:\n${m.text.split('\n').map((l) => `> ${l}`).join('\n')}`;
+const quote = (m) => `\n\n${tr('On {date}, {who} wrote:', { date: mailDate(m.date, true), who: who(m) })}\n${m.text.split('\n').map((l) => `> ${l}`).join('\n')}`;
 const prefixed = (p, s) => (s.toLowerCase().startsWith(p.toLowerCase()) ? s : `${p} ${s}`);
 function replyTo(m, all) {
   const me = mailAcc()?.email.toLowerCase();
@@ -1157,7 +1168,7 @@ function replyTo(m, all) {
     in_reply_to: m.message_id, references: m.references, original: m });
 }
 function forward(m) {
-  const head = `\n\n---------- Forwarded message ----------\n${mailAsText(m)}`;
+  const head = `\n\n---------- ${tr('Forwarded message')} ----------\n${mailAsText(m)}`;
   openCompose({ subject: prefixed('Fwd:', m.subject), start: head });
   if (m.attachments.length) toast('Attachments are not forwarded yet');
 }
@@ -1190,7 +1201,7 @@ $('#mailCompose').onsubmit = async (e) => {
   const to = [...addrs(d.to), ...addrs(d.cc), ...addrs(d.bcc)];
   if (!to.length) return toast('Enter a recipient');
   if (!d.subject.trim() && !confirm('Send without a subject?')) return;
-  if (!confirm(`Send this e-mail to ${to.join(', ')}?`)) return;
+  if (!confirm(tr('Send this e-mail to {to}?', { to: to.join(', ') }))) return;
   const btn = $('#mailSend');
   btn.disabled = true; btn.textContent = 'Sending…';
   try {
@@ -1204,7 +1215,7 @@ $('#mailCompose').onsubmit = async (e) => {
 $('#mailDraft').onclick = async () => {
   try {
     const r = await api(`/api/mail/${$('#mailAccount').value}/draft`, { method: 'POST', body: composeData() });
-    toast(`Saved in ${r.folder} ✓`);
+    toast(tr('Saved in {folder} ✓', { folder: r.folder }));
     state.mail.compose.start = $('#mailBody').value; // nothing unsaved any more
     state.mail.compose.to = $('#mailTo').value.trim();
   } catch (err) { toast(err.message); }
@@ -1223,7 +1234,7 @@ async function renderMailAccounts() {
       el('span', { class: 'muted small' }, a.imap_host),
       el('button', { class: 'btn', type: 'button', onclick: () => editMailAccount(a) }, 'Edit'),
       el('button', { class: 'icon-btn', type: 'button', title: 'Unlink (nothing is deleted on the mail server)', onclick: async () => {
-        if (!confirm(`Unlink ${a.email} from Sunak? Your mail stays on the server.`)) return;
+        if (!confirm(tr('Unlink {email} from Sunak? Your mail stays on the server.', { email: a.email }))) return;
         await api(`/api/mail/accounts/${a.id}`, { method: 'DELETE' });
         if (mailDraftAcc?.id === a.id) editMailAccount(null);
         renderMailAccounts();
@@ -1290,7 +1301,7 @@ function editMailAccount(a) {
   const pw = field('password', { type: 'password', autocomplete: 'new-password',
     placeholder: a.has_password ? '•••••• saved (type to replace)' : 'App password' });
   box.append(el('div', { class: 'card' },
-    el('h3', {}, d.id ? `Edit ${d.email}` : 'Link a mail account'),
+    el('h3', {}, d.id ? tr('Edit {email}', { email: d.email }) : 'Link a mail account'),
     el('div', { class: 'row' }, emailIn, presetSel),
     el('div', { class: 'row' }, field('name', { placeholder: 'Your name (shown to recipients)' }), pw),
     help,
@@ -1303,15 +1314,15 @@ function editMailAccount(a) {
         try {
           const r = await api('/api/mail/test', { method: 'POST', body: { account: d } });
           result.innerHTML = '';
-          result.append(el('div', { class: r.imap ? 'bad' : 'ok' }, r.imap ? `✕ Reading (IMAP): ${r.imap}` : '✓ Reading (IMAP) works'),
-            el('div', { class: r.smtp ? 'bad' : 'ok' }, r.smtp ? `✕ Sending (SMTP): ${r.smtp}` : '✓ Sending (SMTP) works'));
+          result.append(el('div', { class: r.imap ? 'bad' : 'ok' }, r.imap ? `✕ ${tr('Reading (IMAP): {error}', { error: r.imap })}` : '✓ Reading (IMAP) works'),
+            el('div', { class: r.smtp ? 'bad' : 'ok' }, r.smtp ? `✕ ${tr('Sending (SMTP): {error}', { error: r.smtp })}` : '✓ Sending (SMTP) works'));
         } catch (err) { result.innerHTML = ''; result.append(el('div', { class: 'bad' }, err.message)); }
         b.disabled = false;
       } }, 'Test connection'),
       el('button', { class: 'btn primary', type: 'button', onclick: async () => {
         try {
           await api('/api/mail/accounts', { method: 'POST', body: { account: d } });
-          toast(`${d.email} linked ✓`);
+          toast(tr('{email} linked ✓', { email: d.email }));
           editMailAccount(null);
           renderMailAccounts();
         } catch (err) { toast(err.message); }
@@ -1339,12 +1350,13 @@ function ollamaBanner() {
   }
   if (o.running) {
     box.classList.add('ok-banner');
-    box.append(el('span', {}, `● Ollama ${o.version || ''} is running`), el('span', { class: 'muted small' }, ` · ${o.models.length} model${o.models.length === 1 ? "" : "s"} · ${o.base_url}`));
+    box.append(el('span', {}, `● ${tr('Ollama {version} is running', { version: o.version || '' })}`),
+      el('span', { class: 'muted small' }, ` · ${trn(o.models.length, '{n} model', '{n} models')} · ${o.base_url}`));
     return box;
   }
   box.classList.add('warn-banner');
   if (!o.local) {
-    box.append(el('p', {}, `Can’t reach Ollama at ${o.base_url}. Make sure it runs on that computer.`),
+    box.append(el('p', {}, tr('Can’t reach Ollama at {url}. Make sure it runs on that computer.', { url: o.base_url })),
       el('button', { class: 'btn primary', onclick: () => refreshAll() }, 'Check again'));
   } else if (o.installed) {
     const btn = el('button', { class: 'btn primary', onclick: async () => {
@@ -1402,18 +1414,18 @@ function startPull(name) {
         if (ev.type !== 'progress') return;
         if (ev.total) {
           p.pct = Math.min(100, Math.round(ev.completed / ev.total * 100));
-          p.label = `${p.pct}% · ${gb(ev.completed)} of ${gb(ev.total)}`;
+          p.label = `${p.pct}% · ${tr('{done} of {total}', { done: gb(ev.completed), total: gb(ev.total) })}`;
         } else p.label = ev.status;
         updatePullWidgets();
       }, ctrl.signal);
     } catch (e) {
-      if (e.name === 'AbortError') { delete state.pulls[name]; updatePullWidgets(); toast(`Download of ${name} cancelled`); return; }
+      if (e.name === 'AbortError') { delete state.pulls[name]; updatePullWidgets(); toast(tr('Download of {name} cancelled', { name })); return; }
       failed = e.message;
     }
     delete state.pulls[name];
-    if (failed) { toast(`Download failed: ${failed}`); updatePullWidgets(); return; }
+    if (failed) { toast(tr('Download failed: {error}', { error: failed })); updatePullWidgets(); return; }
     store.set('sunak-model', `ollama::${name}`);
-    toast(`${name} is ready ✓`);
+    toast(tr('{name} is ready ✓', { name }));
     await refreshAll();
   })();
 }
@@ -1470,17 +1482,18 @@ function gpuBanners(o) {
   const box = el('div', { class: 'banner' });
   if (g?.usable) {
     box.append(el('span', {}, `⚡ GPU: ${g.name || g.vendor}`), el('span', { class: 'muted small' },
-      g.unified ? ` · Metal, shares the ${o.ram_gb || '?'} GB memory` : ` · ${g.vram_gb} GB VRAM · models marked ⚡ run fully on it`));
+      g.unified ? ` · ${tr('Metal, shares the {gb} GB memory', { gb: o.ram_gb || '?' })}` : ` · ${g.vram_gb} GB VRAM · ${tr('models marked ⚡ run fully on it')}`));
   } else if (g) {
     box.append(el('span', {}, '🖥 No GPU that Ollama can use was found.'), el('span', { class: 'muted small' }, ' Models run on the CPU, smaller models answer faster.'));
   } else if (!o.local) {
-    box.append(el('span', {}, o.gpu_expected ? `⚡ GPU: ${o.gpu_expected === 'nvidia' ? 'NVIDIA' : 'AMD'} via Docker` : `Ollama runs at ${o.base_url} and uses that computer’s GPU, if it has one.`));
+    box.append(el('span', {}, o.gpu_expected ? `⚡ GPU: ${tr('{vendor} via Docker', { vendor: o.gpu_expected === 'nvidia' ? 'NVIDIA' : 'AMD' })}`
+      : tr('Ollama runs at {url} and uses that computer’s GPU, if it has one.', { url: o.base_url })));
   } else return out; // still detecting
   if (o.running) {
     const loaded = el('div', { class: 'gpu-loaded small' });
     if (!o.loaded?.length) loaded.append(el('span', { class: 'muted' }, 'Chat with a model to see whether it runs on the GPU.'));
     for (const m of o.loaded || []) {
-      const where = m.gpu_pct >= 100 ? '100% GPU' : m.gpu_pct > 0 ? `${m.gpu_pct}% GPU, rest CPU (model is bigger than the VRAM)` : 'CPU';
+      const where = m.gpu_pct >= 100 ? '100% GPU' : m.gpu_pct > 0 ? tr('{pct}% GPU, rest CPU (model is bigger than the VRAM)', { pct: m.gpu_pct }) : 'CPU';
       loaded.append(el('span', { class: `chip${m.gpu_pct > 0 ? ' on' : ''}` }, `${m.name}: ${where}`));
     }
     box.append(loaded);
@@ -1508,7 +1521,7 @@ function renderModelsView() {
       el('span', { class: 'muted small' }, gb(m.size)),
       el('button', { class: 'btn', onclick: () => useModel(m.name) }, 'Chat'),
       el('button', { class: 'btn danger', title: 'Delete from disk', onclick: async () => {
-        if (!confirm(`Delete ${m.name} from disk?`)) return;
+        if (!confirm(tr('Delete {name} from disk?', { name: m.name }))) return;
         try { await api('/api/models/delete', { method: 'POST', body: { model: `ollama::${m.name}` } }); toast('Deleted'); await refreshAll(); }
         catch (e) { toast(e.message); }
       } }, '🗑')));
@@ -1574,7 +1587,7 @@ $('#compareForm').onsubmit = async (e) => {
       if (ev.type === 'think') { if (!c.thinking) { c.raw += '<think>'; c.thinking = true; } c.raw += ev.t; }
       else if (ev.type === 'text') { if (c.thinking) { c.raw += '</think>\n\n'; c.thinking = false; } c.raw += ev.t; }
       else if (ev.type === 'done') { c.out.classList.remove('typing'); c.info.textContent = `${ev.seconds}s`; }
-      else if (ev.type === 'error') { c.out.classList.remove('typing'); c.raw += `\n\n**Error:** ${ev.error}`; c.info.textContent = 'failed'; }
+      else if (ev.type === 'error') { c.out.classList.remove('typing'); c.raw += `\n\n**Error:** ${ev.error}`; c.info.textContent = tr('failed'); }
       c.out.innerHTML = md(c.raw);
     });
   } catch (err) { toast(err.message); }
@@ -1605,7 +1618,7 @@ $('#researchForm').onsubmit = async (e) => {
 };
 function researchMarkdown() {
   const links = $$('#researchSources a').map((a) => `- ${a.textContent} – ${a.href}`).join('\n');
-  return `${researchText.replace(/<think>[\s\S]*?(<\/think>|$)/g, '').trim()}\n\n## Sources\n${links}\n`;
+  return `${researchText.replace(/<think>[\s\S]*?(<\/think>|$)/g, '').trim()}\n\n## ${tr('Sources')}\n${links}\n`;
 }
 $('#researchSave').onclick = async () => {
   const doc = await api('/api/documents', { method: 'POST', body: { title: $('#researchQ').value.trim().slice(0, 80), content: researchMarkdown() } });
@@ -1635,7 +1648,7 @@ async function openDoc(id) {
 }
 $('#newDoc').onclick = async () => {
   if (state.docBusy) { toast('Wait until the AI edit is finished'); return; }
-  const d = await api('/api/documents', { method: 'POST', body: { title: 'Untitled', content: '' } });
+  const d = await api('/api/documents', { method: 'POST', body: { title: tr('Untitled'), content: '' } });
   await openDoc(d.id);
   $('#docTitle').select();
 };
@@ -1644,7 +1657,7 @@ function docChanged() { $('#docSaved').textContent = 'Editing…'; clearTimeout(
 async function saveDocNow() {
   clearTimeout(docTimer); docTimer = null;
   if (!state.doc) return;
-  const title = $('#docTitle').value.trim() || 'Untitled', content = $('#docContent').value;
+  const title = $('#docTitle').value.trim() || tr('Untitled'), content = $('#docContent').value;
   if (title === state.doc.title && content === state.doc.content) return;
   const id = state.doc.id;
   const saved = await api(`/api/documents/${id}`, { method: 'PUT', body: { title, content } });
@@ -1667,7 +1680,7 @@ $('#docExport').onclick = () => {
 };
 $('#docDelete').onclick = async () => {
   if (state.docBusy) { toast('Wait until the AI edit is finished'); return; }
-  if (!state.doc || !confirm(`Delete “${state.doc.title}”?`)) return;
+  if (!state.doc || !confirm(tr('Delete “{title}”?', { title: state.doc.title }))) return;
   await api(`/api/documents/${state.doc.id}`, { method: 'DELETE' });
   state.doc = null;
   $('#docEditor').classList.add('hidden'); $('#docEmpty').classList.remove('hidden');
@@ -1697,7 +1710,7 @@ $('#docAiForm').onsubmit = async (e) => {
   state.docBusy = false; ta.readOnly = false;
   btn.disabled = false; btn.textContent = 'Apply';
   if (state.doc?.id !== docId) return;
-  if (failed) { ta.value = before; toast(`AI error: ${failed}`); return; }
+  if (failed) { ta.value = before; toast(tr('AI error: {error}', { error: failed })); return; }
   ta.value = before.slice(0, start) + out.replace(/^```\w*\n([\s\S]*?)\n```\s*$/, '$1') + before.slice(end);
   $('#docAi').value = '';
   docChanged();
@@ -1785,7 +1798,7 @@ function renderProviders() {
       el('input', { value: p.base_url, placeholder: 'Base URL', oninput: bind('base_url') }),
       el('input', { value: p.api_key || '', type: 'password', autocomplete: 'off', class: 'key-input', oninput: bind('api_key'),
         placeholder: p.has_key ? '•••••• saved (type to replace)' : p.type === 'anthropic' ? 'API key (sk-ant-…)' : 'API key (optional)' }),
-      el('span', { class: `status ${err ? 'bad' : 'ok'}`, title: err?.error || '' }, err ? (p.type === 'ollama' ? '● offline' : '● not connected') : p.id ? `● ${count} models` : ''),
+      el('span', { class: `status ${err ? 'bad' : 'ok'}`, title: err?.error || '' }, err ? (p.type === 'ollama' ? '● offline' : '● not connected') : p.id ? `● ${trn(count, '{n} model', '{n} models')}` : ''),
       el('button', { class: 'icon-btn', title: 'Remove', onclick: () => { draftProviders.splice(i, 1); renderProviders(); } }, '✕')));
   });
 }
@@ -1817,7 +1830,7 @@ function renderPersonas() {
       prompt));
   });
 }
-$('#addPersona').onclick = () => { draftPersonas.push({ icon: '✨', name: 'New persona', prompt: '' }); renderPersonas(); $('#personaList .persona:last-child input:not(.emoji)').select(); };
+$('#addPersona').onclick = () => { draftPersonas.push({ icon: '✨', name: tr('New persona'), prompt: '' }); renderPersonas(); $('#personaList .persona:last-child input:not(.emoji)').select(); };
 
 $('#saveSettings').onclick = async () => {
   const s = state.settings;
@@ -1893,10 +1906,10 @@ $('#stopBtn').onclick = async () => {
 async function checkUpdate() {
   let u;
   try { u = await api('/api/update'); } catch (e) { return; } // no hint is better than an error here
-  if (u.result) toast(u.result.ok ? `Update installed ✓ (Sunak ${state.status?.version || ''})` : `Update failed: ${u.result.error}`);
+  if (u.result) toast(u.result.ok ? tr('Update installed ✓ (Sunak {version})', { version: state.status?.version || '' }) : tr('Update failed: {error}', { error: u.result.error }));
   if ($('#updateBtn').disabled) return; // an update is running
   $('#updateNote').classList.toggle('hidden', !u.available);
-  $('#updateText').textContent = `✨ Update available${u.behind > 1 ? ` (${u.behind} changes)` : ''}`;
+  $('#updateText').textContent = `✨ ${tr('Update available')}${u.behind > 1 ? ` (${tr('{n} changes', { n: u.behind })})` : ''}`;
   $('#updateBtn').classList.toggle('hidden', !u.can_update);
   $('#updateNote').title = u.can_update ? '' : 'Run “git pull” and the installer in your Sunak folder to update.';
 }
@@ -1937,6 +1950,12 @@ async function refreshAll(poll = false) {
 (async function boot() {
   applyLook();
   [state.status, state.settings] = await Promise.all([api('/api/status'), api('/api/settings')]);
+  // the language is a setting; the browser keeps a copy, so the page starts in it right away
+  const lang = state.settings.language || '';
+  if (lang !== sunakLangPref) {
+    store.set('sunak-lang', lang);
+    if (store.get('sunak-lang', '') === lang && sunakPickLang(lang) !== sunakLang) { location.reload(); return; }
+  }
   applyLook();
   renderLook();
   renderKbToggle(); renderWebToggle();
