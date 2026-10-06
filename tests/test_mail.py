@@ -4,10 +4,12 @@ Run:  python -m unittest discover tests"""
 import base64
 import json
 import re
+import socket
 import socketserver
 import tempfile
 import threading
 import unittest
+import unittest.mock
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -339,7 +341,10 @@ class MailApiTest(unittest.TestCase):
         self.assertIn("already linked", err)
 
     def test_connection_test(self):
-        r = self.call("POST", "/api/mail/test", {"account": dict(self.form, id=self.acc["id"], password="")})
+        # smtplib must not look up this computer's name: on macOS that reverse DNS lookup can hang for 30 s
+        real = socket.getfqdn
+        with unittest.mock.patch("socket.getfqdn", side_effect=lambda name="": real(name) if name else 1 / 0):
+            r = self.call("POST", "/api/mail/test", {"account": dict(self.form, id=self.acc["id"], password="")})
         self.assertEqual(r, {"imap": "", "smtp": ""})
         r = self.call("POST", "/api/mail/test", {"account": dict(self.form, password="wrong-secret")})
         self.assertIn("IMAP login failed", r["imap"])

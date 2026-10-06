@@ -26,6 +26,10 @@ TIMEOUT = 20
 MAX_FETCH = 10 * 1024 * 1024    # read at most this much of one message
 MAX_TEXT = 200_000              # characters of a message body sent to the browser
 SECURITY = ("ssl", "starttls", "none")
+# Name for SMTP EHLO. Without it smtplib calls socket.getfqdn(), which can hang for half a minute
+# (reverse DNS, e.g. on macOS) and would reveal the computer's name; mail programs like Thunderbird
+# send this address literal instead.
+EHLO_NAME = "[127.0.0.1]"
 
 # Server settings of common providers. Most of them need an app password instead of the normal one.
 PRESETS = {
@@ -507,9 +511,9 @@ def smtp_login(acc):
     host, port, sec = acc["smtp_host"], acc["smtp_port"], acc["smtp_security"]
     try:
         if sec == "ssl":
-            conn = smtplib.SMTP_SSL(host, port, timeout=TIMEOUT, context=_ctx(host))
+            conn = smtplib.SMTP_SSL(host, port, local_hostname=EHLO_NAME, timeout=TIMEOUT, context=_ctx(host))
         else:
-            conn = smtplib.SMTP(host, port, timeout=TIMEOUT)
+            conn = smtplib.SMTP(host, port, local_hostname=EHLO_NAME, timeout=TIMEOUT)
             conn.ehlo()
             if sec == "starttls":
                 conn.starttls(context=_ctx(host))
