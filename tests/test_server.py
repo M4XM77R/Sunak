@@ -67,7 +67,7 @@ class OdysseusTest(unittest.TestCase):
     def setUpClass(cls):
         cls.backend = serve(ThreadingHTTPServer(("127.0.0.1", 0), FakeBackend))
         cls.bport = cls.backend.server_address[1]
-        cls.tmp = tempfile.TemporaryDirectory()
+        cls.tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         cls.app = serve(make_server("127.0.0.1", 0, cls.tmp.name))
         cls.base = f"http://127.0.0.1:{cls.app.server_address[1]}"
         cls.call("PUT", "/api/settings", {"providers": [
@@ -199,7 +199,7 @@ class OdysseusTest(unittest.TestCase):
 
 class AuthTest(unittest.TestCase):
     def test_password_flow(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             srv = serve(make_server("127.0.0.1", 0, tmp))
             base = f"http://127.0.0.1:{srv.server_address[1]}"
             h = {"Content-Type": "application/json", "X-Requested-With": "odysseus"}
