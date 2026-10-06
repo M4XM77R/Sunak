@@ -248,7 +248,7 @@ $('#themeMenu').onclick = () => $('#themeMenu').classList.add('hidden');
 document.addEventListener('click', (e) => { if (!$('#themeWrap').contains(e.target)) $('#themeMenu').classList.add('hidden'); });
 
 /* ---------------- Navigation ---------------- */
-const TITLES = { chat: 'Chat', compare: 'Compare models', research: 'Deep Research', documents: 'Documents', knowledge: 'Knowledge', mail: 'Mail', notes: 'Notes & Memory', models: 'Models', settings: 'Settings' };
+const TITLES = { chat: 'Chat', compare: 'Compare models', research: 'Deep Research', documents: 'Documents', knowledge: 'Knowledge', mail: 'Mail', calendar: 'Calendar', notes: 'Notes & Memory', models: 'Models', settings: 'Settings' };
 function show(view) {
   state.view = view;
   document.body.dataset.view = view;
@@ -263,6 +263,7 @@ function show(view) {
   if (view === 'notes') loadNotes();
   if (view === 'knowledge') loadKb();
   if (view === 'mail') loadMailView();
+  if (view === 'calendar') loadCalendar();
   if (view === 'settings') renderSettings();
   if (view === 'compare') renderCompareModels();
   if (view === 'models') { renderModelsView(); loadOllama(); }
@@ -1257,7 +1258,9 @@ function renderReader(m) {
       el('button', { class: 'btn', type: 'button', onclick: () => replyTo(m, true) }, '↩ Reply all'),
       el('button', { class: 'btn', type: 'button', onclick: () => forward(m) }, '↪ Forward'),
       el('button', { class: 'btn', type: 'button', onclick: () => mailAi('summarize', mailAsText(m), aiBox) }, '✨ Summarize'),
-      el('button', { class: 'btn', type: 'button', title: 'Attach this e-mail to a new chat and ask anything about it', onclick: () => askInChat(m) }, '💬 Ask in chat')),
+      el('button', { class: 'btn', type: 'button', title: 'Attach this e-mail to a new chat and ask anything about it', onclick: () => askInChat(m) }, '💬 Ask in chat'),
+      el('button', { class: 'btn', type: 'button', title: 'The model reads the date out of this e-mail, you check it and save',
+        onclick: () => { show('calendar'); calQuickAdd(`${tr('Sent: {date}', { date: m.date })}\n${mailAsText(m)}`.slice(0, 20000)); } }, '📅 Add to calendar')),
     aiBox,
     att.length ? el('div', { class: 'sources' }, att) : null,
     el('div', { class: 'mail-body' }, m.text || tr('(no text)')),
@@ -1901,6 +1904,348 @@ $('#docAiForm').onsubmit = async (e) => {
   toast('AI edit applied', { label: 'Undo', fn: () => { if (state.doc?.id === docId) { ta.value = before; docChanged(); } } });
 };
 
+/* ---------------- Calendar ----------------
+   Month grid with the events of all calendars (see sunak/cal.py). Times come as UTC and are shown in
+   this device's time zone; all-day events as dates with an exclusive end. */
+const cal = { month: null, sel: null, events: [], info: null, editing: null };
+const pad2 = (n) => String(n).padStart(2, '0');
+const ymd = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+const hm = (d) => `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+const dayOf = (s) => { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d); };
+const addDays = (d, n) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + n);
+const uiLocale = () => ({ de: 'de-DE', en: 'en-US' })[sunakLang] || navigator.language;
+function isoLocal(d) { // 2026-10-06T00:00:00+02:00: the device's own offset, so the server knows its dates
+  const off = -d.getTimezoneOffset(), a = Math.abs(off);
+  return `${ymd(d)}T${hm(d)}:${pad2(d.getSeconds())}${off >= 0 ? '+' : '-'}${pad2(Math.floor(a / 60))}:${pad2(a % 60)}`;
+}
+const calHidden = () => new Set(store.get('sunak-cal-hidden', '').split('\n').filter(Boolean));
+const calKey = (e) => e.calendar ? `${e.source}|${e.calendar}` : e.source;
+function calColor(e) { return e.color || 'var(--accent)'; }
+function calNameOf(key) {
+  if (key === 'local') return 'Sunak';
+  const [sid, href] = key.split('|');
+  const src = (cal.info?.sources || []).find((s) => s.id === sid);
+  if (!src) return '';
+  return href ? (src.calendars || []).find((c) => c.href === href)?.name || src.name : src.name;
+}
+// the days an event covers (all-day: end exclusive; timed: until the minute before its end)
+function eventDays(e) {
+  if (e.all_day) {
+    const out = [];
+    for (let d = dayOf(e.start), end = dayOf(e.end); d < end && out.length < 62; d = addDays(d, 1)) out.push(ymd(d));
+    return out.length ? out : [e.start];
+  }
+  const s = new Date(e.start), en = new Date(Math.max(new Date(e.end) - 1, +s));
+  const out = [];
+  for (let d = new Date(s.getFullYear(), s.getMonth(), s.getDate()); d <= en && out.length < 62; d = addDays(d, 1)) out.push(ymd(d));
+  return out;
+}
+function calRange() {
+  const first = new Date(cal.month.getFullYear(), cal.month.getMonth(), 1);
+  const start = addDays(first, -((first.getDay() + 6) % 7)); // weeks start on Monday
+  return [start, addDays(start, 42)];
+}
+async function loadCalendar() {
+  if (!cal.month) { const t = new Date(); cal.month = new Date(t.getFullYear(), t.getMonth(), 1); cal.sel = ymd(t); }
+  try { cal.info = await api('/api/calendar'); } catch (e) { toast(e.message); return; }
+  renderCalLegend();
+  await loadCalEvents();
+}
+async function loadCalEvents() {
+  const [start, end] = calRange();
+  const month = cal.month;
+  renderCalGrid();
+  let res;
+  try { res = await api(`/api/calendar/events?${new URLSearchParams({ start: isoLocal(start), end: isoLocal(end) })}`); }
+  catch (e) { toast(e.message); return; }
+  if (cal.month !== month) return; // the user went on to another month meanwhile
+  cal.events = res.events;
+  const box = $('#calErrors');
+  box.innerHTML = '';
+  for (const err of res.errors) box.append(el('p', { class: 'err small' }, '⚠️ ', el('b', { 'data-no-i18n': '' }, err.name || calNameOf(err.source)), `: ${err.error}`));
+  renderCalGrid();
+  renderCalDay();
+}
+function visibleEvents() {
+  const hidden = calHidden();
+  return cal.events.filter((e) => !hidden.has(calKey(e)) && !hidden.has(e.source));
+}
+function renderCalGrid() {
+  $('#calTitle').textContent = cal.month.toLocaleDateString(uiLocale(), { month: 'long', year: 'numeric' });
+  const [start] = calRange();
+  const byDay = {};
+  for (const e of visibleEvents()) for (const d of eventDays(e)) (byDay[d] ||= []).push(e);
+  const grid = $('#calGrid');
+  grid.innerHTML = '';
+  for (let i = 0; i < 7; i++) grid.append(el('div', { class: 'cal-wd' }, addDays(start, i).toLocaleDateString(uiLocale(), { weekday: 'short' })));
+  const today = ymd(new Date());
+  for (let i = 0; i < 42; i++) {
+    const d = addDays(start, i), key = ymd(d), evs = byDay[key] || [];
+    const cls = ['cal-day', d.getMonth() !== cal.month.getMonth() && 'other', key === today && 'today', key === cal.sel && 'sel'].filter(Boolean).join(' ');
+    grid.append(el('button', { class: cls, type: 'button', 'aria-label': d.toLocaleDateString(uiLocale(), { dateStyle: 'full' }),
+      onclick: () => { cal.sel = key; renderCalGrid(); renderCalDay(); } },
+      el('span', { class: 'n' }, d.getDate()),
+      evs.slice(0, 3).map((e) => el('span', { class: `cal-chip${e.all_day ? ' all' : ''}${e.status === 'cancelled' ? ' cancelled' : ''}`, 'data-no-i18n': '',
+        style: `--c:${calColor(e)}` }, e.all_day ? '' : el('b', {}, hm(new Date(e.start))), ` ${e.summary || '…'}`)),
+      evs.length > 3 ? el('span', { class: 'cal-more' }, `+${evs.length - 3}`) : null));
+  }
+}
+function timeText(e) {
+  if (e.all_day) {
+    const last = addDays(dayOf(e.end), -1);
+    return e.start === ymd(last) ? tr('All day') : `${dayOf(e.start).toLocaleDateString(uiLocale(), { day: 'numeric', month: 'short' })} – ${last.toLocaleDateString(uiLocale(), { day: 'numeric', month: 'short' })}`;
+  }
+  const s = new Date(e.start), en = new Date(e.end);
+  const sameDay = ymd(s) === ymd(en) || +en === +s;
+  return sameDay ? `${hm(s)}${+en > +s ? ` – ${hm(en)}` : ''}`
+    : `${s.toLocaleDateString(uiLocale(), { day: 'numeric', month: 'short' })} ${hm(s)} – ${en.toLocaleDateString(uiLocale(), { day: 'numeric', month: 'short' })} ${hm(en)}`;
+}
+function renderCalDay() {
+  $('#calDayTitle').textContent = dayOf(cal.sel).toLocaleDateString(uiLocale(), { weekday: 'long', day: 'numeric', month: 'long' });
+  const box = $('#calDay');
+  box.innerHTML = '';
+  const evs = visibleEvents().filter((e) => eventDays(e).includes(cal.sel));
+  if (!evs.length) box.append(el('p', { class: 'muted small' }, 'No events.'));
+  for (const e of evs) {
+    box.append(el('button', { class: `cal-item${e.status === 'cancelled' ? ' cancelled' : ''}`, type: 'button', style: `--c:${calColor(e)}`, onclick: () => editEvent(e) },
+      el('span', { class: 'when' }, timeText(e), e.recurring ? ' ↻' : ''),
+      el('b', { 'data-no-i18n': '' }, e.summary || '…'),
+      e.location ? el('span', { class: 'muted small', 'data-no-i18n': '' }, `📍 ${e.location}`) : null,
+      el('span', { class: 'muted small', 'data-no-i18n': '' }, calNameOf(calKey(e)))));
+  }
+}
+function renderCalLegend() {
+  const box = $('#calLegend');
+  box.innerHTML = '';
+  const hidden = calHidden();
+  const toggle = (key) => (ev) => {
+    const h = calHidden();
+    if (ev.target.checked) h.delete(key); else h.add(key);
+    store.set('sunak-cal-hidden', [...h].join('\n'));
+    renderCalGrid(); renderCalDay();
+  };
+  const row = (key, name, color) => el('label', { class: 'check' }, el('input', { type: 'checkbox', checked: !hidden.has(key), onchange: toggle(key) }),
+    el('span', { class: 'cal-dot', style: `--c:${color || 'var(--accent)'}` }), el('span', { 'data-no-i18n': '' }, name));
+  box.append(el('h3', {}, 'Calendars'));
+  for (const s of cal.info.sources) {
+    if (s.type === 'caldav') for (const c of (s.calendars || []).filter((c) => c.enabled)) box.append(row(`${s.id}|${c.href}`, `${c.name} · ${s.name}`, c.color || s.color));
+    else if (s.enabled !== false) box.append(row(s.id, s.name, s.color));
+  }
+  box.append(el('button', { class: 'btn small-btn', type: 'button', onclick: () => { show('settings'); $('#calSourceList').scrollIntoView({ block: 'center' }); } }, 'Manage calendars'));
+}
+// calendars new events can go to: Sunak's own and every shown CalDAV calendar
+function calTargets() {
+  const out = [{ value: 'local', label: 'Sunak' }];
+  for (const s of cal.info?.sources || []) {
+    if (s.type === 'caldav' && s.enabled !== false) for (const c of (s.calendars || []).filter((c) => c.enabled)) out.push({ value: `${s.id}|${c.href}`, label: `${c.name} · ${s.name}` });
+  }
+  return out;
+}
+function editEvent(e, draft) {
+  // e: an existing event, or null with `draft` {summary, start, end, all_day, location, description} in local form
+  cal.editing = e;
+  const box = $('#calForm');
+  box.innerHTML = '';
+  box.classList.remove('hidden');
+  $('#calDayBox').classList.add('hidden');
+  const writable = !e || e.writable;
+  const series = !!e?.recurring;
+  let d = draft;
+  if (e) {
+    const s = e.all_day ? dayOf(e.start) : new Date(e.start), en = e.all_day ? addDays(dayOf(e.end), -1) : new Date(e.end);
+    d = { summary: e.summary, all_day: e.all_day, location: e.location, description: e.description,
+      start: e.all_day ? ymd(s) : `${ymd(s)}T${hm(s)}`, end: e.all_day ? ymd(en) : `${ymd(en)}T${hm(en)}` };
+  }
+  const [sd, st = '09:00'] = d.start.split('T'), [ed, et = st] = d.end.split('T');
+  const input = (attrs, value) => { const i = el('input', attrs); i.value = value ?? ''; i.disabled = !writable; return i; };
+  const title = input({ placeholder: 'Title', 'aria-label': 'Title' }, d.summary);
+  const allDay = input({ type: 'checkbox' }); allDay.checked = !!d.all_day;
+  const startD = input({ type: 'date', 'aria-label': 'Start date' }, sd), startT = input({ type: 'time', 'aria-label': 'Start time' }, st);
+  const endD = input({ type: 'date', 'aria-label': 'End date' }, ed), endT = input({ type: 'time', 'aria-label': 'End time' }, et);
+  if (series) [allDay, startD, startT, endD, endT].forEach((i) => (i.disabled = true));
+  const place = input({ placeholder: 'Place', 'aria-label': 'Place' }, d.location);
+  const notes = el('textarea', { rows: 3, placeholder: 'Notes', 'aria-label': 'Notes' });
+  notes.value = d.description || ''; notes.disabled = !writable;
+  const repeat = el('select', { 'aria-label': 'Repeat' }, [['', 'Does not repeat'], ['DAILY', 'Every day'], ['WEEKLY', 'Every week'],
+    ['MONTHLY', 'Every month'], ['YEARLY', 'Every year']].map(([v, t]) => el('option', { value: v }, t)));
+  const target = el('select', { 'aria-label': 'Calendar' }, calTargets().map((t) => el('option', { value: t.value }, t.label)));
+  target.value = store.get('sunak-cal-target', 'local');
+  if (!target.value) target.value = 'local';
+  const syncTimes = () => [startT, endT].forEach((i) => i.classList.toggle('hidden', allDay.checked));
+  allDay.onchange = syncTimes; syncTimes();
+  startD.onchange = () => { if (endD.value < startD.value) endD.value = startD.value; };
+  const save = async () => {
+    if (!title.value.trim()) { title.focus(); return toast('Give the event a title'); }
+    if (!startD.value) return toast('Pick a date');
+    let start, end;
+    if (allDay.checked) { start = startD.value; end = ymd(addDays(dayOf(endD.value || startD.value), 1)); }
+    else {
+      start = new Date(`${startD.value}T${startT.value || '00:00'}`).toISOString();
+      end = new Date(`${endD.value || startD.value}T${endT.value || startT.value || '00:00'}`).toISOString();
+    }
+    const event = { summary: title.value, all_day: allDay.checked, start, end, location: place.value, description: notes.value, repeat: e ? '' : repeat.value };
+    try {
+      if (e) await api('/api/calendar/events', { method: 'PUT', body: { source: e.source, uid: e.uid, href: e.href, etag: e.etag, recurring: series, event } });
+      else {
+        const [source, calendar] = target.value.split(/\|(.*)/s);
+        store.set('sunak-cal-target', target.value);
+        await api('/api/calendar/events', { method: 'POST', body: { source, calendar, event } });
+      }
+    } catch (err) { return toast(err.message); }
+    cal.sel = allDay.checked ? startD.value : ymd(new Date(start));
+    const s = dayOf(cal.sel);
+    cal.month = new Date(s.getFullYear(), s.getMonth(), 1);
+    closeEventForm();
+    loadCalEvents();
+    toast('Saved');
+  };
+  const del = async () => {
+    if (!confirm(series ? tr('Delete “{title}” with all its dates?', { title: e.summary }) : tr('Delete “{title}”?', { title: e.summary }))) return;
+    try { await api('/api/calendar/events/delete', { method: 'POST', body: { source: e.source, uid: e.uid, href: e.href, etag: e.etag } }); }
+    catch (err) { return toast(err.message); }
+    closeEventForm();
+    loadCalEvents();
+  };
+  box.append(el('div', { class: 'card cal-form' },
+    el('h3', {}, e ? (writable ? 'Edit event' : 'Event') : 'New event'),
+    !writable ? el('p', { class: 'muted small' }, 'This calendar is a subscription and read-only.') : null,
+    series && writable ? el('p', { class: 'muted small' }, 'A repeating event: date and time belong to the whole series and are changed in the app it comes from. Title, place and notes can be changed here.') : null,
+    title,
+    el('label', { class: 'check' }, allDay, 'All day'),
+    el('div', { class: 'row' }, el('span', { class: 'cal-lbl' }, 'Start'), startD, startT),
+    el('div', { class: 'row' }, el('span', { class: 'cal-lbl' }, 'End'), endD, endT),
+    e ? null : el('div', { class: 'row' }, repeat, target),
+    place, notes,
+    el('div', { class: 'row' },
+      writable ? el('button', { class: 'btn primary', type: 'button', onclick: save }, 'Save') : null,
+      e && writable ? el('button', { class: 'btn danger', type: 'button', onclick: del }, 'Delete') : null,
+      el('button', { class: 'btn', type: 'button', onclick: closeEventForm }, writable ? 'Cancel' : 'Close'))));
+  if (writable) title.focus();
+}
+function closeEventForm() {
+  cal.editing = null;
+  $('#calForm').classList.add('hidden');
+  $('#calForm').innerHTML = '';
+  $('#calDayBox').classList.remove('hidden');
+  renderCalDay();
+}
+function newEvent() {
+  const day = cal.sel || ymd(new Date());
+  const now = new Date(), h = Math.min(now.getHours() + 1, 23);
+  editEvent(null, { summary: '', all_day: false, start: `${day}T${pad2(h)}:00`, end: `${day}T${pad2(Math.min(h + 1, 23))}:${h + 1 > 23 ? '59' : '00'}` });
+}
+async function calQuickAdd(text) {
+  if (!currentModel()) { toast('Install or connect a model first'); return; }
+  if (!cal.info) await loadCalendar();
+  const btn = $('#calQuick button');
+  btn.disabled = true;
+  const old = btn.textContent;
+  btn.textContent = '✨ …';
+  try {
+    const d = await api('/api/calendar/parse', { method: 'POST', body: { text, now: isoLocal(new Date()), model: currentModel() } });
+    cal.sel = d.start.slice(0, 10);
+    const s = dayOf(cal.sel);
+    if (s.getFullYear() !== cal.month.getFullYear() || s.getMonth() !== cal.month.getMonth()) { cal.month = new Date(s.getFullYear(), s.getMonth(), 1); loadCalEvents(); }
+    else renderCalGrid();
+    editEvent(null, d);
+    $('#calQuickText').value = '';
+  } catch (e) { toast(e.message); }
+  finally { btn.disabled = false; btn.textContent = old; }
+}
+$('#calQuick').onsubmit = (ev) => { ev.preventDefault(); const t = $('#calQuickText').value.trim(); if (t) calQuickAdd(t); };
+$('#calPrev').onclick = () => { cal.month = new Date(cal.month.getFullYear(), cal.month.getMonth() - 1, 1); loadCalEvents(); };
+$('#calNext').onclick = () => { cal.month = new Date(cal.month.getFullYear(), cal.month.getMonth() + 1, 1); loadCalEvents(); };
+$('#calToday').onclick = () => { const t = new Date(); cal.month = new Date(t.getFullYear(), t.getMonth(), 1); cal.sel = ymd(t); loadCalEvents(); };
+$('#calNew').onclick = newEvent;
+
+/* calendar accounts (Settings → Calendars). Passwords never come back: an empty field keeps the saved one. */
+async function renderCalSources() {
+  try { cal.info = await api('/api/calendar'); } catch (e) { return; }
+  const box = $('#calSourceList');
+  box.innerHTML = '';
+  for (const s of cal.info.sources.filter((s) => s.type !== 'local')) {
+    box.append(el('div', { class: 'provider' },
+      el('span', { class: 'cal-dot', style: `--c:${s.color}` }),
+      el('span', { style: 'flex:1' }, el('b', { 'data-no-i18n': '' }, s.name), el('span', { class: 'muted small' }, ' · ', s.type === 'ics' ? tr('ICS (read-only)') : trn((s.calendars || []).length, '{n} calendar', '{n} calendars'))),
+      el('button', { class: 'btn', type: 'button', onclick: () => editCalSource(s) }, 'Edit'),
+      el('button', { class: 'icon-btn', type: 'button', title: 'Remove (nothing changes on the calendar server)', onclick: async () => {
+        if (!confirm(tr('Remove {name} from Sunak? The calendar itself stays on its server.', { name: s.name }))) return;
+        await api(`/api/calendar/sources/${s.id}`, { method: 'DELETE' }).catch((e) => toast(e.message));
+        editCalSource(null); renderCalSources();
+      } }, '✕')));
+  }
+}
+function editCalSource(s) {
+  const box = $('#calSourceForm');
+  box.innerHTML = '';
+  $('#addCalSource').classList.toggle('hidden', !!s);
+  if (!s) return;
+  const d = { type: 'caldav', name: '', url: '', username: '', password: '', mail_account: '', ...s, password: '' };
+  const help = el('p', { class: 'muted small' });
+  const field = (k, attrs) => { const i = el('input', { 'aria-label': attrs.placeholder, ...attrs }); i.value = d[k] ?? ''; i.oninput = () => (d[k] = i.value); return i; };
+  const url = field('url', { placeholder: 'Address, e.g. https://caldav.icloud.com', spellcheck: 'false', autocomplete: 'off' });
+  const user = field('username', { placeholder: 'User name (usually your e-mail address)', autocomplete: 'off' });
+  const pw = field('password', { type: 'password', autocomplete: 'new-password',
+    placeholder: s.has_password ? '•••••• saved (type to replace)' : 'Password or app password' });
+  const name = field('name', { placeholder: 'Name' });
+  const cals = el('div');
+  (d.calendars || []).forEach((c) => cals.append(el('label', { class: 'check' }, el('input', { type: 'checkbox', checked: c.enabled,
+    onchange: (ev) => (c.enabled = ev.target.checked) }), el('span', { class: 'cal-dot', style: `--c:${c.color || d.color}` }), el('span', { 'data-no-i18n': '' }, c.name))));
+  const preset = el('select', { 'aria-label': 'Provider', onchange: (ev) => {
+    const p = cal.info.presets[ev.target.value];
+    if (p) { d.url = url.value = p.url; if (!d.name) d.name = name.value = p.title; }
+    sync();
+  } }, el('option', { value: '' }, 'Provider…'), Object.entries(cal.info.presets).map(([k, p]) => el('option', { value: k }, p.title)));
+  const fromMail = el('select', { 'aria-label': 'Use the login of a mail account', onchange: (ev) => {
+    const m = cal.info.mail_accounts.find((x) => x.id === ev.target.value);
+    d.mail_account = m ? m.id : '';
+    if (m) {
+      d.username = user.value = m.email;
+      if (cal.info.presets[m.preset]) { preset.value = m.preset; d.url = url.value = cal.info.presets[m.preset].url; }
+      if (!d.name) d.name = name.value = m.email;
+    }
+    sync();
+  } }, el('option', { value: '' }, 'Own login'), cal.info.mail_accounts.map((m) => el('option', { value: m.id }, tr('Login of {email}', { email: m.email }))));
+  fromMail.value = d.mail_account || '';
+  const kind = el('select', { 'aria-label': 'Type', onchange: (ev) => { d.type = ev.target.value; sync(); } },
+    el('option', { value: 'caldav' }, 'CalDAV account (read and write)'), el('option', { value: 'ics' }, 'ICS address (subscription, read-only)'));
+  kind.value = d.type;
+  if (s.id) kind.disabled = true;
+  const caldavOnly = [preset, fromMail, user, pw];
+  function sync() {
+    caldavOnly.forEach((x) => x.classList.toggle('hidden', d.type !== 'caldav'));
+    pw.placeholder = d.mail_account && !s.has_password ? 'Empty = the mail account’s password' : s.has_password ? '•••••• saved (type to replace)' : 'Password or app password';
+    url.placeholder = d.type === 'ics' ? 'Calendar address (https:// or webcal://)' : 'Address, e.g. https://caldav.icloud.com';
+    help.innerHTML = '';
+    const mailPreset = cal.info.mail_accounts.find((m) => m.id === d.mail_account)?.preset;
+    const p = cal.info.presets[preset.value];
+    if (d.type === 'ics') help.append('Paste the calendar’s address, e.g. Google Calendar → Settings → your calendar → “Secret address in iCal format”.');
+    else if (mailPreset && cal.info.ics_only[mailPreset]) help.append(cal.info.ics_only[mailPreset]);
+    else if (p) help.append(p.help);
+  }
+  sync();
+  const result = el('p', { class: 'small' });
+  box.append(el('div', { class: 'card' },
+    el('h3', {}, s.id ? tr('Edit {name}', { name: s.name }) : 'Add calendar'),
+    el('div', { class: 'row' }, kind, fromMail, preset), help,
+    el('div', { class: 'row' }, url), el('div', { class: 'row' }, user, pw), el('div', { class: 'row' }, name),
+    cals, result,
+    el('div', { class: 'row' },
+      el('button', { class: 'btn primary', type: 'button', onclick: async (ev) => {
+        ev.target.disabled = true;
+        result.textContent = tr('Connecting…');
+        try {
+          const saved = await api('/api/calendar/sources', { method: 'POST', body: { source: d } });
+          result.textContent = '';
+          toast(saved.type === 'caldav' ? tr('{name}: {n} calendars found', { name: saved.name, n: saved.calendars.length }) : 'Saved');
+          editCalSource(null); renderCalSources();
+        } catch (e) { result.textContent = `⚠️ ${e.message}`; ev.target.disabled = false; }
+      } }, 'Save'),
+      el('button', { class: 'btn', type: 'button', onclick: () => editCalSource(null) }, 'Cancel'))));
+  url.focus();
+}
+$('#addCalSource').onclick = () => editCalSource({ type: 'caldav' });
+
 /* ---------------- Notes ---------------- */
 async function loadNotes() {
   const notes = await api('/api/notes');
@@ -1957,6 +2302,7 @@ function renderSettings() {
   renderVoices();
   renderLook();
   renderMailAccounts();
+  renderCalSources();
   $('#logoutBtn').classList.toggle('hidden', !s.password_set);
   renderLan();
   $('#aboutLine').textContent = `Sunak ${state.status?.version || ''} · ${state.status?.ram_gb ? state.status.ram_gb + ' GB RAM' : ''}`;

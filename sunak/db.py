@@ -55,6 +55,11 @@ CREATE TABLE IF NOT EXISTS kb_chunks (
     text TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_kb_chunks_file ON kb_chunks(file_id, idx);
+CREATE TABLE IF NOT EXISTS calendar_events (
+    uid TEXT PRIMARY KEY,
+    ics TEXT NOT NULL,
+    updated REAL NOT NULL
+);
 """
 
 # Columns added after the first release; created on start when an older database lacks them.
@@ -209,7 +214,23 @@ class DB:
         sessions = [self.get_session(s["id"]) for s in self._q("SELECT id FROM sessions ORDER BY created")]
         kb = [self.kb_file(f["id"]) for f in self._q("SELECT id FROM kb_files ORDER BY created")]
         return {"sessions": sessions, "documents": self._q("SELECT * FROM documents ORDER BY updated"),
-                "notes": self._q("SELECT * FROM notes ORDER BY created"), "knowledge": kb}
+                "notes": self._q("SELECT * FROM notes ORDER BY created"), "knowledge": kb,
+                "calendar": self._q("SELECT * FROM calendar_events ORDER BY updated")}
+
+    # Sunak's own calendar: one iCalendar text per event ----------------------
+    def cal_events(self):
+        return self._q("SELECT uid, ics FROM calendar_events")
+
+    def cal_get(self, uid):
+        row = self._q("SELECT ics FROM calendar_events WHERE uid = ?", (uid,), one=True)
+        return row["ics"] if row else None
+
+    def cal_put(self, uid, ics):
+        self._q("INSERT INTO calendar_events(uid, ics, updated) VALUES(?, ?, ?) "
+                "ON CONFLICT(uid) DO UPDATE SET ics = excluded.ics, updated = excluded.updated", (uid, ics, time.time()))
+
+    def cal_delete(self, uid):
+        self._q("DELETE FROM calendar_events WHERE uid = ?", (uid,))
 
     def delete_session(self, sid):
         """Delete a chat and its messages."""

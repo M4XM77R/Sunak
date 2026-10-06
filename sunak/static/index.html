@@ -34,6 +34,7 @@
       <button data-view="documents">📝 Documents</button>
       <button data-view="knowledge">📚 Knowledge</button>
       <button data-view="mail">✉️ Mail</button>
+      <button data-view="calendar">📅 Calendar</button>
       <button data-view="notes">🧠 Notes &amp; Memory</button>
       <button data-view="models">🧩 Models</button>
       <button data-view="settings">⚙️ Settings</button>
@@ -210,6 +211,36 @@
       </div>
     </section>
 
+    <!-- CALENDAR -->
+    <section class="view" id="view-calendar">
+      <div class="pad cal-wrap">
+        <div class="row cal-head">
+          <button class="icon-btn" id="calPrev" type="button" title="Previous month">‹</button>
+          <h3 id="calTitle"></h3>
+          <button class="icon-btn" id="calNext" type="button" title="Next month">›</button>
+          <button class="btn" id="calToday" type="button">Today</button>
+          <span class="spacer"></span>
+          <button class="btn primary" id="calNew" type="button">＋ New event</button>
+        </div>
+        <form class="row cal-quick" id="calQuick">
+          <input id="calQuickText" placeholder="Describe an event, e.g. “Dentist next Tuesday 10am”" aria-label="Describe an event" autocomplete="off">
+          <button class="btn" type="submit" title="The model fills in the form, you check it and save">✨ Add</button>
+        </form>
+        <div id="calErrors"></div>
+        <div class="cal-main">
+          <div class="cal-grid" id="calGrid"></div>
+          <div class="cal-side">
+            <div id="calForm" class="hidden"></div>
+            <div id="calDayBox">
+              <h3 id="calDayTitle"></h3>
+              <div id="calDay"></div>
+            </div>
+            <div id="calLegend" class="cal-legend"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <!-- NOTES -->
     <section class="view" id="view-notes">
       <div class="pad narrow">
@@ -294,6 +325,12 @@
         <div id="mailAccountList"></div>
         <div id="mailAccountForm"></div>
         <button class="btn" id="addMailAccount" type="button">＋ Add mail account</button>
+
+        <h2>Calendars</h2>
+        <p class="muted small">Sunak has its own calendar. Add your calendars from iCloud, GMX, WEB.DE, Nextcloud, mailbox.org and others (CalDAV), often with the login of a linked mail account, or subscribe to any calendar address (ICS, read-only), e.g. from Google or Outlook. Passwords stay on this computer.</p>
+        <div id="calSourceList"></div>
+        <div id="calSourceForm"></div>
+        <button class="btn" id="addCalSource" type="button">＋ Add calendar</button>
 
         <h2>Agent</h2>
         <p class="muted small">In agent mode (🛠 next to the message box) the model works in a project folder you choose: it lists, reads and searches files on its own, and asks you before it writes a file or runs a command. It cannot reach files outside that folder.</p>

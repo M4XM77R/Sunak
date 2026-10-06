@@ -2,6 +2,7 @@
 
 import base64
 import binascii
+import datetime
 import hashlib
 import hmac
 import ipaddress
@@ -24,7 +25,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlparse
 
-from . import __version__, agent, extract, gpu, images, knowledge, mail, mcp, ollama, providers, qr, research, speech, updates
+from . import __version__, agent, cal, extract, gpu, images, knowledge, mail, mcp, ollama, providers, qr, research, speech, updates
 from .db import DB, new_id
 
 STATIC = Path(__file__).parent / "static"
@@ -468,6 +469,12 @@ class App:
         """Linked e-mail accounts, including their passwords (server side only)."""
         return self.db.get_setting("mail_accounts") or []
 
+    LOCAL_CALENDAR = {"id": "local", "type": "local", "name": "Sunak", "color": "", "enabled": True}
+
+    def calendars(self):
+        """Calendar accounts (CalDAV and ICS addresses), including passwords (server side only)."""
+        return self.db.get_setting("calendars") or []
+
     def mail_account(self, aid):
         """One account by id; raises ValueError when it does not exist."""
         acc = next((a for a in self.mail_accounts() if a["id"] == aid), None)
@@ -897,7 +904,8 @@ class Handler(BaseHTTPRequestHandler):
         s = self.app.settings()
         s["providers"] = [{k: v for k, v in p.items() if k != "api_key"} for p in s["providers"]]
         data.update(sunak_version=__version__, exported=time.strftime("%Y-%m-%dT%H:%M:%S"), settings=s,
-                    mail_accounts=[{k: v for k, v in a.items() if k != "password"} for a in self.app.mail_accounts()])
+                    mail_accounts=[{k: v for k, v in a.items() if k != "password"} for a in self.app.mail_accounts()],
+                    calendars=[cal.public(c) for c in self.app.calendars()])
         self.send_download(json.dumps(data, indent=2, ensure_ascii=False),
                            f"sunak-backup-{time.strftime('%Y-%m-%d')}.json", "application/json; charset=utf-8")
 
@@ -1464,6 +1472,200 @@ class Handler(BaseHTTPRequestHandler):
         """One query-string parameter."""
         return parse_qs(urlparse(self.path).query).get(key, [default])[0]
 
+    # calendar -------------------------------------------------------
+    def calendar_info(self):
+        """GET /api/calendar: the calendars (Sunak's own first, no passwords), CalDAV presets and the linked
+        mail accounts with the matching CalDAV preset."""
+        def preset(a):  # by address, else by mail server (own domain at GMX, iCloud…)
+            return mail.preset_for(a["email"]) or next((k for k, p in mail.PRESETS.items() if p["imap_host"] == a.get("imap_host")), "")
+        mails = [{"id": a["id"], "email": a["email"], "preset": preset(a)} for a in self.app.mail_accounts()]
+        self.send_json({"sources": [self.app.LOCAL_CALENDAR] + [cal.public(c) for c in self.app.calendars()],
+                        "presets": cal.PRESETS, "ics_only": cal.ICS_ONLY, "mail_accounts": mails})
+
+    def calendar_save_source(self):
+        """POST /api/calendar/sources {source}: add or change a calendar account. CalDAV calendars are looked
+        up on the server (which ones are shown is kept); an ICS address is read once to check it."""
+        sources = self.app.calendars()
+        mails = self.app.mail_accounts()
+        src = cal.clean_source(self.body().get("source"), sources, mails)
+        sent = {c["href"]: c for c in src.get("calendars", [])}
+        try:
+            if src["type"] == "caldav":
+                user, pw = cal.login(src, mails)
+                if not pw:
+                    raise ValueError("Enter the password (or an app password)")
+                src["calendars"] = [dict(c, enabled=sent.get(c["href"], {}).get("enabled", True))
+                                    for c in cal.discover(src["url"], user, pw)]
+            else:
+                cal.forget_ics(src["url"])
+                cal.fetch_ics(src["url"])
+        except cal.CalendarError as e:
+            raise ValueError(str(e)) from None
+        sources = [src if c["id"] == src["id"] else c for c in sources]
+        if not any(c["id"] == src["id"] for c in sources):
+            sources.append(src)
+        self.app.db.set_setting("calendars", sources)
+        self.send_json(cal.public(src))
+
+    def calendar_delete_source(self, sid):
+        """DELETE /api/calendar/sources/<id>: remove a calendar account (nothing on its server changes)."""
+        self.app.db.set_setting("calendars", [c for c in self.app.calendars() if c["id"] != sid])
+        self.send_json({"ok": True})
+
+    def calendar_range(self):
+        start, end = (self.query(k) for k in ("start", "end"))
+        try:
+            start, end = (datetime.datetime.fromisoformat(v.replace("Z", "+00:00")) for v in (start, end))
+        except ValueError:
+            raise ValueError("start and end must be ISO date-times with a time zone") from None
+        if start.tzinfo is None or end.tzinfo is None or not start < end:
+            raise ValueError("start and end must be ISO date-times with a time zone, start before end")
+        if end - start > datetime.timedelta(days=cal.MAX_RANGE_DAYS):
+            raise ValueError("At most about a year at once")
+        return start, end
+
+    def calendar_events(self):
+        """GET /api/calendar/events?start=…&end=… (ISO with the device's offset): the events of all shown
+        calendars in that span, recurring ones expanded. A calendar that fails is listed in `errors`."""
+        start, end = self.calendar_range()
+        mails = self.app.mail_accounts()
+        jobs = [("local", None, None)]
+        for src in self.app.calendars():
+            if not src.get("enabled", True):
+                continue
+            if src["type"] == "ics":
+                jobs.append((src["id"], src, None))
+            else:
+                jobs += [(src["id"], src, c) for c in src.get("calendars", []) if c.get("enabled", True)]
+        results, errors = [None] * len(jobs), []
+
+        def load(i, sid, src, c):
+            try:
+                if sid == "local":
+                    out = []
+                    for row in self.app.db.cal_events():
+                        try:
+                            out += [dict(e, writable=True, color="") for e in cal.events_in(row["ics"], start, end, "local")]
+                        except cal.CalendarError:
+                            pass
+                elif src["type"] == "ics":
+                    out = [dict(e, writable=False, color=src["color"]) for e in cal.events_in(cal.fetch_ics(src["url"]), start, end, sid)]
+                else:
+                    user, pw = cal.login(src, mails)
+                    out = []
+                    for href, etag, text in cal.caldav_events(c["href"], user, pw, start, end):
+                        try:
+                            out += [dict(e, href=href, etag=etag, calendar=c["href"], writable=True, color=c.get("color") or src["color"])
+                                    for e in cal.events_in(text, start, end, sid)]
+                        except cal.CalendarError:
+                            pass
+                results[i] = out
+            except (cal.CalendarError, ValueError) as e:
+                errors.append({"source": sid, "name": (c or {}).get("name") or (src or {}).get("name", ""), "error": str(e)})
+
+        threads = [threading.Thread(target=load, args=(i, *job), daemon=True) for i, job in enumerate(jobs)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(cal.TIMEOUT * 3)
+        events = [e for r in results if r for e in r]
+        events.sort(key=lambda e: (e["start"][:10], not e["all_day"], e["start"]))
+        self.send_json({"events": events, "errors": errors})
+
+    def calendar_target(self, d):
+        """(source, user, password) of the calendar an event belongs to ("local": (None, None, None))."""
+        sid = d.get("source") or "local"
+        if sid == "local":
+            return None, None, None
+        src = next((c for c in self.app.calendars() if c["id"] == sid), None)
+        if not src:
+            raise ValueError("That calendar no longer exists. Reload the page.")
+        if src["type"] != "caldav":
+            raise ValueError("Subscribed calendars (ICS) are read-only")
+        user, pw = cal.login(src, self.app.mail_accounts())
+        return src, user, pw
+
+    def calendar_create(self):
+        """POST /api/calendar/events {source, calendar (CalDAV collection), event}: create an event."""
+        d = self.body()
+        ev = cal.clean_event(d.get("event"))
+        src, user, pw = self.calendar_target(d)
+        uid = cal.new_uid()
+        text = cal.build_event(uid, ev["summary"], ev["start"], ev["end"], ev["all_day"], ev["location"], ev["description"], ev["repeat"])
+        if src is None:
+            self.app.db.cal_put(uid, text)
+        else:
+            coll = d.get("calendar")
+            if not any(c["href"] == coll for c in src.get("calendars", [])):
+                raise ValueError("Pick one of the calendars of this account")
+            try:
+                cal.caldav_put(coll.rstrip("/") + "/" + uid.replace("@", "-") + ".ics", user, pw, text)
+            except cal.CalendarError as e:
+                raise ValueError(str(e)) from None
+        self.send_json({"ok": True, "uid": uid})
+
+    def calendar_update(self):
+        """PUT /api/calendar/events {source, uid, href, etag, recurring, event}: change an event. For a
+        repeating one only title, place and notes change (the times belong to the whole series)."""
+        d = self.body()
+        ev = cal.clean_event(d.get("event"))
+        uid = d.get("uid")
+        if not isinstance(uid, str) or not uid:
+            raise ValueError("uid is missing")
+        src, user, pw = self.calendar_target(d)
+        times = not d.get("recurring")
+        try:
+            if src is None:
+                text = self.app.db.cal_get(uid)
+                if text is None:
+                    raise ValueError("The event was not found any more. Reload the calendar.")
+                self.app.db.cal_put(uid, cal.update_event(text, uid, ev, times))
+            else:
+                href = self.calendar_href(src, d.get("href"))
+                _, text = cal.caldav_get(href, user, pw)
+                cal.caldav_put(href, user, pw, cal.update_event(text, uid, ev, times), d.get("etag") or None)
+        except cal.CalendarError as e:
+            raise ValueError(str(e)) from None
+        self.send_json({"ok": True})
+
+    def calendar_href(self, src, href):
+        """An event address must lie inside one of the account's calendars (never another server)."""
+        if not isinstance(href, str) or "/.." in href or "\\" in href or \
+                not any(href.startswith(c["href"]) and href != c["href"] for c in src.get("calendars", [])):
+            raise ValueError("Unknown event address. Reload the calendar.")
+        return href
+
+    def calendar_delete(self):
+        """POST /api/calendar/events/delete {source, uid, href, etag}: delete an event (a repeating one
+        with all its dates)."""
+        d = self.body()
+        src, user, pw = self.calendar_target(d)
+        if src is None:
+            self.app.db.cal_delete(str(d.get("uid") or ""))
+        else:
+            try:
+                cal.caldav_delete(self.calendar_href(src, d.get("href")), user, pw, d.get("etag") or None)
+            except cal.CalendarError as e:
+                raise ValueError(str(e)) from None
+        self.send_json({"ok": True})
+
+    def calendar_parse(self):
+        """POST /api/calendar/parse {text, now (device time with offset), model}: the model reads an event
+        out of a sentence or an e-mail; the answer fills the event form (nothing is saved)."""
+        d = self.body()
+        text = d.get("text")
+        if not isinstance(text, str) or not text.strip():
+            raise ValueError("Type what the event is, e.g. “Dentist next Tuesday 10am”")
+        try:
+            now = datetime.datetime.fromisoformat(str(d.get("now") or "").replace("Z", "+00:00"))
+        except ValueError:
+            raise ValueError("now must be an ISO date-time") from None
+        if now.tzinfo is None:
+            raise ValueError("now needs a time zone")
+        prov, model = self.app.resolve(d.get("model"))
+        answer = providers.chat_once(prov, model, cal.parse_messages(text.strip()[:20000], now), {"temperature": 0})
+        self.send_json(cal.parse_answer(answer, now))
+
     def mail_list_accounts(self):
         """GET /api/mail/accounts: linked accounts without passwords, and the provider presets."""
         self.send_json({"accounts": [mail.public(a) for a in self.app.mail_accounts()], "presets": mail.PRESETS})
@@ -1664,6 +1866,14 @@ ROUTES = [
     (rf"/api/knowledge/{ID}", "DELETE", Handler.kb_delete),
     (r"/api/extract", "POST", Handler.extract_file),
     (r"/api/transcribe", "POST", Handler.transcribe),
+    (r"/api/calendar", "GET", Handler.calendar_info),
+    (r"/api/calendar/sources", "POST", Handler.calendar_save_source),
+    (r"/api/calendar/sources/([a-f0-9]{12})", "DELETE", Handler.calendar_delete_source),
+    (r"/api/calendar/events", "GET", Handler.calendar_events),
+    (r"/api/calendar/events", "POST", Handler.calendar_create),
+    (r"/api/calendar/events", "PUT", Handler.calendar_update),
+    (r"/api/calendar/events/delete", "POST", Handler.calendar_delete),
+    (r"/api/calendar/parse", "POST", Handler.calendar_parse),
     (r"/api/mail/accounts", "GET", Handler.mail_list_accounts),
     (r"/api/mail/accounts", "POST", Handler.mail_save_account),
     (rf"/api/mail/accounts/{ID}", "DELETE", Handler.mail_delete_account),
