@@ -79,17 +79,19 @@ function el(tag, attrs = {}, ...kids) {
 const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
 function inline(s) {
-  const codes = [];
-  s = esc(s).replace(/`([^`\n]+)`/g, (_, c) => { codes.push(c); return `\u0000${codes.length - 1}\u0000`; });
-  s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
-    .replace(/(^|[\s(])(https?:\/\/[^\s<)]+)/g, '$1<a href="$2" target="_blank" rel="noopener">$2</a>')
+  const codes = [], links = [];
+  // code spans and links are swapped out, so emphasis and [1] citations never touch a URL
+  const keep = (html) => { links.push(html); return `\u0001${links.length - 1}\u0001`; };
+  s = esc(s.replace(/[\u0000\u0001]/g, '')).replace(/`([^`\n]+)`/g, (_, c) => { codes.push(c); return `\u0000${codes.length - 1}\u0000`; });
+  s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, (_, t, u) => keep(`<a href="${u}" target="_blank" rel="noopener">${t}</a>`))
+    .replace(/(^|[\s(])(https?:\/\/[^\s<)\u0001]+)/g, (_, p, u) => p + keep(`<a href="${u}" target="_blank" rel="noopener">${u}</a>`))
     .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
     .replace(/__([^_]+)__/g, '<strong>$1</strong>')
     .replace(/(^|[^*\w])\*([^*\s][^*]*?)\*(?!\w)/g, '$1<em>$2</em>')
     .replace(/(^|[^_\w])_([^_\s][^_]*?)_(?!\w)/g, '$1<em>$2</em>')
     .replace(/~~([^~]+)~~/g, '<del>$1</del>')
     .replace(/\[(\d{1,2})\](?!\()/g, '<sup class="cite">[$1]</sup>');
-  return s.replace(/\u0000(\d+)\u0000/g, (_, i) => `<code>${codes[+i]}</code>`);
+  return s.replace(/\u0001(\d+)\u0001/g, (_, i) => links[+i]).replace(/\u0000(\d+)\u0000/g, (_, i) => `<code>${codes[+i]}</code>`);
 }
 
 function blocks(text) {
@@ -185,6 +187,7 @@ $('#themeBtn').onclick = () => {
 const TITLES = { chat: 'Chat', compare: 'Compare models', research: 'Deep Research', documents: 'Documents', knowledge: 'Knowledge', notes: 'Notes & Memory', models: 'Models', settings: 'Settings' };
 function show(view) {
   state.view = view;
+  document.body.dataset.view = view;
   $$('.nav button').forEach((b) => b.classList.toggle('active', b.dataset.view === view));
   $$('.view').forEach((v) => v.classList.toggle('active', v.id === `view-${view}`));
   $('#viewTitle').textContent = view === 'chat' && state.session ? state.session.title : TITLES[view];
@@ -288,6 +291,7 @@ async function searchChats() {
 }
 
 async function openSession(id, messageId) {
+  if (state.busy) state.busy.abort(); // the partial answer is saved by the server
   state.session = await api(`/api/sessions/${id}`);
   syncModelSelect();
   renderKbToggle();
@@ -301,6 +305,7 @@ async function openSession(id, messageId) {
   }
 }
 function newChat() {
+  if (state.busy) state.busy.abort();
   state.session = null;
   state.attachments = [];
   renderAttachments();
@@ -412,12 +417,14 @@ async function send() {
   if (state.attachments.length) {
     text = state.attachments.map((a) => `File \`${a.name}\`:\n\`\`\`\n${a.text}\n\`\`\``).join('\n\n') + (text ? `\n\n${text}` : '');
   }
-  promptEl.value = ''; autosize();
-  state.attachments = []; renderAttachments();
   if (!state.session) {
-    state.session = await api('/api/sessions', { method: 'POST', body: { model: currentModel(), use_kb: kbOn(), persona: currentPersona() } });
+    try {
+      state.session = await api('/api/sessions', { method: 'POST', body: { model: currentModel(), use_kb: kbOn(), persona: currentPersona() } });
+    } catch (e) { toast(e.message); return; } // keep the typed text and the files
     state.session.messages = [];
   }
+  promptEl.value = ''; autosize();
+  state.attachments = []; renderAttachments();
   await runChat({ content: text }, { role: 'user', content: text });
 }
 
@@ -454,11 +461,13 @@ async function runChat(payload, localUserMsg) {
   }
   state.busy = null;
   $('#sendBtn').textContent = 'Send';
+  loadSessions();
+  if (state.session !== s) return; // the user opened another chat meanwhile
   try { state.session = await api(`/api/sessions/${s.id}`); } catch (e) { /* keep local copy */ }
+  if (state.session?.id !== s.id) return;
   renderMessages();
   if (error) $('#messages').append(el('div', { class: 'msg' }, el('div', { class: 'avatar' }, '⚠️'), el('div', { class: 'body err' }, error)));
   $('#messages').scrollTop = $('#messages').scrollHeight;
-  loadSessions();
 }
 
 function regenerate(m) {
@@ -483,6 +492,10 @@ function fileData(f) {
     r.readAsDataURL(f);
   });
 }
+function dropAttachment(a) {
+  const k = state.attachments.indexOf(a);
+  if (k >= 0) state.attachments.splice(k, 1); // it may already be removed by its ✕
+}
 async function attachFiles(files) {
   for (const f of files) {
     if (f.size > MAX_UPLOAD) { toast(`${f.name} is too big (max 15 MB)`); continue; }
@@ -492,12 +505,12 @@ async function attachFiles(files) {
     try {
       const r = await api('/api/extract', { method: 'POST', body: { name: f.name, data: await fileData(f) } });
       if (r.text.length > MAX_ATTACH_CHARS) {
-        state.attachments.splice(state.attachments.indexOf(a), 1);
+        dropAttachment(a);
         toast(`${f.name} is long (${Math.round(r.text.length / 1000)}k characters). Add it to your knowledge base instead?`,
           { label: 'Add to knowledge', fn: () => uploadKb([f]).then(() => setKb(true)) });
       } else { a.text = r.text; a.loading = false; }
     } catch (e) {
-      state.attachments.splice(state.attachments.indexOf(a), 1);
+      dropAttachment(a);
       toast(e.message);
     }
     renderAttachments();
@@ -641,18 +654,19 @@ function ollamaBanner() {
   box.classList.add('warn-banner');
   if (!o.local) {
     box.append(el('p', {}, `Can’t reach Ollama at ${o.base_url}. Make sure it runs on that computer.`),
-      el('button', { class: 'btn primary', onclick: refreshAll }, 'Check again'));
+      el('button', { class: 'btn primary', onclick: () => refreshAll() }, 'Check again'));
   } else if (o.installed) {
     const btn = el('button', { class: 'btn primary', onclick: async () => {
-      btn.disabled = true; btn.textContent = 'Starting…';
-      try { await api('/api/ollama/start', { method: 'POST', body: {} }); toast('Ollama started'); await refreshAll(); }
-      catch (e) { toast(e.message); btn.disabled = false; btn.textContent = 'Start Ollama'; }
+      btn.disabled = true; btn.textContent = 'Starting…'; state.ollamaBusy = true;
+      try { await api('/api/ollama/start', { method: 'POST', body: {} }); state.ollamaBusy = false; toast('Ollama started'); await refreshAll(); }
+      catch (e) { state.ollamaBusy = false; toast(e.message); btn.disabled = false; btn.textContent = 'Start Ollama'; }
     } }, 'Start Ollama');
     box.append(el('p', {}, 'Ollama is installed but not running.'), btn);
   } else if (o.install.automatic) {
     const log = el('pre', { class: 'install-log hidden' });
     const btn = el('button', { class: 'btn primary', onclick: async () => {
       btn.disabled = true; btn.textContent = 'Installing…'; log.classList.remove('hidden');
+      state.ollamaBusy = true;
       let failed = null;
       try {
         await stream('/api/ollama/install', {}, (ev) => {
@@ -660,9 +674,10 @@ function ollamaBanner() {
           if (ev.type === 'error') failed = ev.error;
         });
       } catch (e) { failed = e.message; }
-      if (failed) { toast(failed); btn.disabled = false; btn.textContent = 'Install Ollama'; return; }
+      if (failed) { state.ollamaBusy = false; toast(failed); btn.disabled = false; btn.textContent = 'Install Ollama'; return; }
       toast('Ollama installed');
       await api('/api/ollama/start', { method: 'POST', body: {} }).catch(() => {});
+      state.ollamaBusy = false;
       await refreshAll();
     } }, 'Install Ollama');
     box.append(el('p', {}, 'Ollama runs AI models on your computer. It is free and installs in a minute.'), btn,
@@ -671,11 +686,11 @@ function ollamaBanner() {
     box.append(el('p', {}, 'Ollama runs AI models on your computer. Install it with this command in a terminal, then click “Check again”:'),
       el('div', { class: 'cmd' }, el('code', {}, o.install.command),
         el('button', { class: 'btn', onclick: () => navigator.clipboard.writeText(o.install.command).then(() => toast('Copied')) }, 'Copy')),
-      el('button', { class: 'btn primary', onclick: refreshAll }, 'Check again'));
+      el('button', { class: 'btn primary', onclick: () => refreshAll() }, 'Check again'));
   } else {
     box.append(el('p', {}, 'Ollama runs AI models on your computer. Download and open it, then click “Check again”.'),
       el('a', { class: 'btn primary', href: o.install.command, target: '_blank', rel: 'noopener' }, 'Download Ollama'), ' ',
-      el('button', { class: 'btn', onclick: refreshAll }, 'Check again'));
+      el('button', { class: 'btn', onclick: () => refreshAll() }, 'Check again'));
   }
   return box;
 }
@@ -883,6 +898,7 @@ async function loadDocs() {
   docs.forEach((d) => list.append(el('div', { class: `doc-item${state.doc?.id === d.id ? ' active' : ''}`, onclick: () => openDoc(d.id) }, d.title)));
 }
 async function openDoc(id) {
+  if (state.docBusy) { toast('Wait until the AI edit is finished'); return; }
   await saveDocNow();
   state.doc = await api(`/api/documents/${id}`);
   state.docUndo = null;
@@ -895,6 +911,7 @@ async function openDoc(id) {
   loadDocs();
 }
 $('#newDoc').onclick = async () => {
+  if (state.docBusy) { toast('Wait until the AI edit is finished'); return; }
   const d = await api('/api/documents', { method: 'POST', body: { title: 'Untitled', content: '' } });
   await openDoc(d.id);
   $('#docTitle').select();
@@ -924,6 +941,7 @@ $('#docExport').onclick = () => {
   a.click(); URL.revokeObjectURL(a.href);
 };
 $('#docDelete').onclick = async () => {
+  if (state.docBusy) { toast('Wait until the AI edit is finished'); return; }
   if (!state.doc || !confirm(`Delete “${state.doc.title}”?`)) return;
   await api(`/api/documents/${state.doc.id}`, { method: 'DELETE' });
   state.doc = null;
@@ -933,14 +951,17 @@ $('#docDelete').onclick = async () => {
 $('#docAiForm').onsubmit = async (e) => {
   e.preventDefault();
   const instruction = $('#docAi').value.trim();
-  if (!instruction || !state.doc) return;
+  if (!instruction || !state.doc || state.docBusy) return;
   const ta = $('#docContent');
+  const docId = state.doc.id;
   setPreview(false);
   const before = ta.value;
   let start = ta.selectionStart, end = ta.selectionEnd;
   const selection = before.slice(start, end);
   if (!selection) { start = 0; end = before.length; }
   const btn = $('#docAiForm button'); btn.disabled = true; btn.textContent = 'Working…';
+  // the document stays locked while the AI writes into it (no typing, no switching documents)
+  state.docBusy = true; ta.readOnly = true;
   let out = '', failed = null;
   try {
     await stream('/api/documents/ai', { instruction, content: before, selection, model: currentModel() }, (ev) => {
@@ -948,12 +969,14 @@ $('#docAiForm').onsubmit = async (e) => {
       else if (ev.type === 'error') failed = ev.error;
     });
   } catch (err) { failed = err.message; }
+  state.docBusy = false; ta.readOnly = false;
   btn.disabled = false; btn.textContent = 'Apply';
+  if (state.doc?.id !== docId) return;
   if (failed) { ta.value = before; toast(`AI error: ${failed}`); return; }
   ta.value = before.slice(0, start) + out.replace(/^```\w*\n([\s\S]*?)\n```\s*$/, '$1') + before.slice(end);
   $('#docAi').value = '';
   docChanged();
-  toast('AI edit applied', { label: 'Undo', fn: () => { ta.value = before; docChanged(); } });
+  toast('AI edit applied', { label: 'Undo', fn: () => { if (state.doc?.id === docId) { ta.value = before; docChanged(); } } });
 };
 
 /* ---------------- Notes ---------------- */
@@ -1103,10 +1126,11 @@ document.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); newChat(); }
   if (e.key === 'Escape') closeSidebar();
 });
-async function refreshAll() {
-  await Promise.all([loadModels().catch((e) => toast(e.message)), loadOllama()]);
+async function refreshAll(poll = false) {
+  await Promise.all([loadModels().catch((e) => { if (!poll) toast(e.message); }), loadOllama()]);
+  if (state.ollamaBusy) return; // an install or start is running: keep its progress on screen
   if (state.view === 'chat' && !state.session?.messages?.length) renderMessages();
-  if (state.view === 'settings') renderSettings();
+  if (state.view === 'settings' && !poll) renderSettings(); // a poll must not wipe unsaved settings
   if (state.view === 'models') renderModelsView();
 }
 (async function boot() {
@@ -1119,5 +1143,5 @@ async function refreshAll() {
   renderMessages();
   promptEl.focus();
   // pick up a newly started Ollama without reloading
-  setInterval(() => { if (!state.models.length && !state.busy) refreshAll(); }, 8000);
+  setInterval(() => { if (!state.models.length && !state.busy && !state.ollamaBusy) refreshAll(true); }, 8000);
 })();

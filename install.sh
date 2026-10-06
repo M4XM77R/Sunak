@@ -32,16 +32,17 @@ if [ -t 1 ]; then P=$'\033[38;5;205m'; B=$'\033[1m'; R=$'\033[0m'; else P=""; B=
 say()  { printf '%s⛵%s %s\n' "$P" "$R" "$*"; }
 warn() { printf '%s!%s %s\n' "$P" "$R" "$*" >&2; }
 die()  { warn "$*"; exit 1; }
+has_tty() { { : </dev/tty; } 2>/dev/null; }  # a terminal we can really read from (not just a /dev/tty node)
 ask() {  # ask "Question" -> 0 for yes
   [ "$YES" = 1 ] && return 0
   local ans=""
-  if [ -r /dev/tty ]; then read -r -p "$1 [Y/n] " ans </dev/tty || true; else return 0; fi
+  if has_tty; then read -r -p "$1 [Y/n] " ans </dev/tty || true; else return 0; fi
   case "$ans" in [nN]*) return 1 ;; *) return 0 ;; esac
 }
 ask_no() {  # like ask, but the default (and --yes) is no
   [ "$YES" = 1 ] && return 1
   local ans=""
-  if [ -r /dev/tty ]; then read -r -p "$1 [y/N] " ans </dev/tty || true; else return 1; fi
+  if has_tty; then read -r -p "$1 [y/N] " ans </dev/tty || true; else return 1; fi
   case "$ans" in [yY]*) return 0 ;; *) return 1 ;; esac
 }
 SUDO=""; [ "$(id -u)" -ne 0 ] && command -v sudo >/dev/null && SUDO="sudo"
@@ -140,8 +141,13 @@ chmod +x "$BIN_DIR/sunak"
 case ":$PATH:" in
   *":$BIN_DIR:"*) ;;
   *)
-    for rc in "$HOME/.bashrc" "$HOME/.zshrc"; do
-      if [ -f "$rc" ] || [ "$rc" = "$HOME/.bashrc" ]; then
+    # bash reads .bashrc (Linux) or .bash_profile (macOS login shells); zsh (macOS default) reads .zshrc
+    for rc in "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.zshrc"; do
+      want=0
+      [ -f "$rc" ] && want=1
+      [ "$rc" = "$HOME/.bashrc" ] && [ "$(uname)" != Darwin ] && want=1
+      [ "$rc" = "$HOME/.zshrc" ] && { [ "$(uname)" = Darwin ] || [ "${SHELL##*/}" = zsh ]; } && want=1
+      if [ "$want" = 1 ]; then
         grep -qs 'sunak PATH' "$rc" || printf '\nexport PATH="%s:$PATH"  # sunak PATH\n' "$BIN_DIR" >> "$rc"
       fi
     done
@@ -177,5 +183,5 @@ printf '\n  %sDone!%s Start Sunak any time with: %ssunak%s\n' "$B" "$R" "$P" "$R
 printf '  On first start it suggests a model that fits your computer.\n\n'
 
 if [ "$NO_START" = 0 ]; then
-  if [ -r /dev/tty ]; then exec "$BIN_DIR/sunak" </dev/tty; else exec "$BIN_DIR/sunak"; fi
+  if has_tty; then exec "$BIN_DIR/sunak" </dev/tty; else exec "$BIN_DIR/sunak"; fi
 fi

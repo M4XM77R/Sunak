@@ -286,3 +286,12 @@ a.btn { text-decoration: none; color: inherit; display: inline-block; }
 .card.persona .row { margin: 0 0 6px; }
 .card.persona input.emoji { width: 52px; min-width: 0; flex: none; text-align: center; }
 .card.persona textarea { width: 100%; }
+
+/* small phones: keep the top bar inside the screen */
+.main { overflow: hidden; }
+.topbar select { min-width: 0; }
+@media (max-width: 420px) {
+  .persona-select { max-width: 64px; }
+  .model-select { max-width: 96px; }
+  body[data-view="chat"] #viewTitle { display: none; } /* the chat list shows the title */
+}

@@ -75,10 +75,11 @@ $cmd = Join-Path $HomeDir "sunak.cmd"
 @"
 @echo off
 rem Sunak launcher: sunak, sunak stop, sunak status, sunak version, sunak shortcut, sunak autostart on/off, sunak update
-set "PYTHONPATH=$AppDir;%PYTHONPATH%"
+rem paths relative to this file (%~dp0), so user names with umlauts survive the ASCII file
+set "PYTHONPATH=%~dp0app;%PYTHONPATH%"
 if /I "%~1"=="update" (
   $pyCmd -m sunak stop >nul 2>&1
-  powershell -NoProfile -ExecutionPolicy Bypass -File "$HomeDir\update.ps1"
+  powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0update.ps1"
   echo Updated. Start Sunak again with the desktop icon or: sunak
   exit /b
 )
