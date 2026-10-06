@@ -10,7 +10,7 @@ $Branch = if ($env:SUNAK_BRANCH) { $env:SUNAK_BRANCH } else { "main" }
 $HomeDir = Join-Path $env:LOCALAPPDATA "sunak"
 $AppDir = Join-Path $HomeDir "app"
 
-function Say($m) { Write-Host "⛵ $m" -ForegroundColor Magenta }
+function Say($m) { Write-Host "$([char]0x26F5) $m" -ForegroundColor Magenta }
 function Ask($q) {
   if ($env:SUNAK_YES -eq "1") { return $true }
   $a = Read-Host "$q [Y/n]"
@@ -29,7 +29,7 @@ function Find-Python {
   return $null
 }
 
-Write-Host "`n  Sunak – your private AI workspace`n" -ForegroundColor Magenta
+Write-Host "`n  Sunak - your private AI workspace`n" -ForegroundColor Magenta
 
 # 1. Python
 $py = Find-Python
@@ -41,7 +41,7 @@ if (-not $py) {
   }
   if (-not $py) { throw "Python not found. Install it from https://python.org (tick 'Add to PATH') and run this again." }
 }
-Say "Python ✓"
+Say "Python: OK"
 
 # 2. App
 New-Item -ItemType Directory -Force -Path $HomeDir | Out-Null
@@ -54,10 +54,12 @@ if ($local) {
   Copy-Item -Recurse -Path (Join-Path $local "*") -Destination $tmp -Exclude ".git", "data"
   # remember the clone, so "sunak update" can pull it (also works for private repositories)
   if (Test-Path (Join-Path $local ".git")) { Set-Content -Encoding UTF8 (Join-Path $HomeDir "source.txt") $local }
+  else { Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $HomeDir "source.txt") }
   # installed commit, for the "Update available" check in the app
   try { $c = git -C $local rev-parse HEAD 2>$null; if ($LASTEXITCODE -eq 0 -and $c) { Set-Content -Encoding ASCII (Join-Path $tmp ".commit") $c } } catch {}
 } else {
-  Say "Downloading Sunak…"
+  Say "Downloading Sunak..."
+  Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $HomeDir "source.txt")  # no clone to update from
   $zip = Join-Path $env:TEMP "sunak.zip"
   try { Invoke-WebRequest -UseBasicParsing "https://codeload.github.com/$Repo/zip/refs/heads/$Branch" -OutFile $zip }
   catch { throw "Download failed. If the repository is private, clone it and run .\install.ps1 inside it." }
@@ -69,7 +71,7 @@ if ($local) {
 }
 if (Test-Path $AppDir) { Remove-Item -Recurse -Force $AppDir }
 Move-Item $tmp $AppDir
-Say "App installed in $AppDir ✓"
+Say "App installed in ${AppDir}: OK"
 
 # 3. Launcher + shortcuts
 $pyCmd = $py
@@ -95,7 +97,9 @@ $env:SUNAK_YES = "1"; $env:SUNAK_NO_START = "1"; $env:SUNAK_NO_SHORTCUT = "1"; $
 $src = Get-Content (Join-Path $PSScriptRoot "source.txt") -ErrorAction SilentlyContinue | Select-Object -First 1
 if ($src -and (Test-Path (Join-Path $src ".git"))) {
   Write-Host "Updating from $src"
-  git -C $src pull --ff-only
+  $ErrorActionPreference = "Continue"  # PowerShell 5.1 would treat git's progress on stderr as an error
+  git -C $src pull --ff-only 2>&1 | Out-Host
+  $ErrorActionPreference = "Stop"
   if ($LASTEXITCODE -ne 0) { throw "git pull failed in $src" }
   & (Join-Path $src "install.ps1")
 } else {
@@ -109,18 +113,18 @@ $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
 if (-not ($userPath -split ";" | Where-Object { $_ -eq $HomeDir })) {
   [Environment]::SetEnvironmentVariable("Path", "$userPath;$HomeDir", "User")
 }
-Say "Command sunak installed ✓"
+Say "Command sunak installed: OK"
 
 # Desktop + Start Menu icons start Sunak without a console window (or open it when it already runs).
 # Run from the app folder so the icons point at the installed copy.
 Push-Location $AppDir
 if ($env:SUNAK_NO_SHORTCUT -ne "1") {
   & $cmd shortcut | Out-Null
-  Say "Icons on Desktop and Start Menu ✓"
+  Say "Icons on Desktop and Start Menu: OK"
 }
 if ($env:SUNAK_AUTOSTART -eq "1" -or ($env:SUNAK_YES -ne "1" -and (Read-Host "Start Sunak automatically in the background when you log in? [y/N]") -match '^[yY]')) {
   & $cmd autostart on | Out-Null
-  Say "Autostart ✓ (turn off with: sunak autostart off)"
+  Say "Autostart: OK (turn off with: sunak autostart off)"
 }
 Pop-Location
 
@@ -132,7 +136,7 @@ Pop-Location
 if ($env:SUNAK_NO_OLLAMA -ne "1" -and -not (Get-Command ollama -ErrorAction SilentlyContinue)) {
   if (Ask "Install Ollama to run AI models on this computer? (recommended)") {
     try { winget install -e --id Ollama.Ollama --accept-package-agreements --accept-source-agreements }
-    catch { Write-Warning "Ollama install failed – get it from https://ollama.com/download" }
+    catch { Write-Warning "Ollama install failed - get it from https://ollama.com/download" }
   }
 }
 

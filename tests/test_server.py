@@ -434,6 +434,37 @@ class SunakTest(unittest.TestCase):
         out = self.raw_request(b"POST /api/sessions HTTP/1.0\r\nX-Requested-With: sunak\r\nContent-Length: -1\r\n\r\n")
         self.assertIn(b"400", out.split(b"\r\n")[0])
 
+    def test_wrong_types_are_400_not_500(self):
+        for method, path, body, text in [
+            ("POST", "/api/research", {"question": 5}, "question must be text"),
+            ("POST", "/api/research", {"question": "q", "model": 5}, "model must be text"),
+            ("POST", "/api/documents/ai", {"instruction": 5}, "instruction must be text"),
+            ("POST", "/api/models/pull", {"model": 5}, "model must be text"),
+            ("POST", "/api/sessions", {"system": [1]}, "system must be text"),
+            ("POST", "/api/sessions", {"use_kb": "false"}, "use_kb must be true or false"),
+            ("POST", "/api/documents", {"title": [1]}, "title must be text"),
+            ("POST", "/api/notes", {"content": "n", "is_memory": "yes"}, "is_memory must be true or false"),
+            ("POST", "/api/models/delete", {}, "Which model"),
+        ]:
+            with self.subTest(path=path, body=body):
+                self.assert_400(method, path, body, text)
+        doc = self.call("POST", "/api/documents", {"title": "T", "content": None})  # null content = empty
+        self.assertEqual(doc["content"], "")
+        deep = ("[" * 100000 + "]" * 100000).encode()
+        out = self.raw_request(b"PUT /api/settings HTTP/1.0\r\nX-Requested-With: sunak\r\nContent-Length: "
+                               + str(len(deep)).encode() + b"\r\n\r\n" + deep)
+        self.assertIn(b"400", out.split(b"\r\n")[0])
+
+    def test_shutdown_through_a_proxy_needs_login(self):
+        app = self.app.RequestHandlerClass.app
+        app.db.set_setting("password_hash", __import__("sunak.server", fromlist=["x"]).hash_password("pw12"))
+        try:
+            with self.assertRaises(urllib.error.HTTPError) as e:
+                self.call("POST", "/api/shutdown", {}, headers={"X-Forwarded-For": "203.0.113.9"})
+            self.assertEqual(e.exception.code, 401)
+        finally:
+            app.db.set_setting("password_hash", None)
+
     def test_invalid_settings_change_nothing(self):
         before = self.call("GET", "/api/settings")
         self.assert_400("PUT", "/api/settings", {"system_prompt": None}, "system_prompt must be text")

@@ -83,6 +83,7 @@ elif [ -d "$APP_DIR/.git" ]; then
   git -C "$APP_DIR" pull --ff-only -q
 elif [ -z "$SRC" ]; then
   say "Downloading Sunak…"
+  rm -f "$HOME_DIR/source"  # no clone to update from
   if command -v git >/dev/null && git clone -q --depth 1 -b "$BRANCH" "https://github.com/$REPO.git" "$APP_DIR.new" 2>/dev/null; then :
   else
     rm -rf "$APP_DIR.new" && mkdir -p "$APP_DIR.new"
@@ -104,6 +105,7 @@ APP_DIR="$APP_DIR"
 export PYTHONPATH="\$APP_DIR\${PYTHONPATH:+:\$PYTHONPATH}"
 case "\${1:-}" in
   update)
+    export SUNAK_HOME="$HOME_DIR" SUNAK_REPO="$REPO" SUNAK_BRANCH="$BRANCH"  # reinstall into the same place
     old=\$(python3 -m sunak version)
     src=\$(cat "$HOME_DIR/source" 2>/dev/null)
     if [ -d "\$APP_DIR/.git" ]; then git -C "\$APP_DIR" pull --ff-only -q || exit 1

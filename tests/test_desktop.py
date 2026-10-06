@@ -49,7 +49,11 @@ class DesktopTest(unittest.TestCase):
 
     def test_desktop_quoting(self):
         self.assertEqual(desktop._quote("/usr/bin/python3"), "/usr/bin/python3")
-        self.assertEqual(desktop._quote('/My Apps/py "3"'), '"/My Apps/py \\"3\\""')
+        # Desktop Entry spec: \" inside quotes, then every backslash doubled; %% for %
+        self.assertEqual(desktop._quote('/My Apps/py "3"'), r'"/My Apps/py \\"3\\""')
+        self.assertEqual(desktop._quote("/a b/c$d"), r'"/a b/c\\$d"')
+        self.assertEqual(desktop._quote("/100%/py"), "/100%%/py")
+        self.assertEqual(desktop._quote("C:\\x y"), r'"C:\\\\x y"')
 
     def test_running_open_and_stop(self):
         srv = make_server("127.0.0.1", 0, self.tmp.name + "/data")
@@ -76,6 +80,24 @@ class DesktopTest(unittest.TestCase):
             self.assertEqual(cli.main(["version"]), 0)
             self.assertEqual(cli.main(["autostart", "maybe"]), 2)
         self.assertTrue(out.getvalue().startswith(__version__))
+
+    def test_bad_ports_and_launcher_only_commands_give_a_message(self):
+        for argv, env in ((["stop", "--port", "abc"], {}), (["version"], {"SUNAK_PORT": "x"}), (["update"], {}),
+                          (["uninstall"], {})):
+            with mock.patch.dict(os.environ, env), self.assertRaises(SystemExit) as e:
+                cli.main(argv)
+            self.assertIsInstance(e.exception.code, str)  # a message, not a traceback
+
+    def test_mac_app_creates_log_folder(self):
+        with mock.patch("platform.system", return_value="Darwin"):
+            written = desktop.create_shortcut()
+        script = (written[0] / "Contents" / "MacOS" / "sunak").read_text()
+        self.assertLess(script.index('mkdir -p "$HOME/.sunak"'), script.index("exec "))
+
+    def test_desktop_entry_exec_is_one_argument_per_value(self):
+        with mock.patch.object(desktop, "PKG_ROOT", desktop.Path("/opt/My Apps/sunak")):
+            entry = desktop._desktop_entry(["/usr/bin/python3", "-m", "sunak"])
+        self.assertIn('Exec=env "PYTHONPATH=/opt/My Apps/sunak" /usr/bin/python3 -m sunak', entry)
 
 
 if __name__ == "__main__":

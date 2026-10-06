@@ -333,6 +333,7 @@ class PDF:
 
     def _scan(self):
         d, pos = self.data, 0
+        no_endstream = len(d) + 1  # no "endstream" at or after this position (saves rescanning the file)
         while True:
             m = _OBJ_RE.search(d, pos)
             if not m:
@@ -347,11 +348,13 @@ class PDF:
                 obj = lex.value()
                 stream_start = s.end()
                 length = obj.get("Length") if isinstance(obj, dict) else None
-                stop = d.find(b"endstream", stream_start)
+                stop = d.find(b"endstream", stream_start) if stream_start < no_endstream else -1
+                if stop < 0:
+                    no_endstream = min(no_endstream, stream_start)
                 if isinstance(length, int) and 0 <= length and d[stream_start + length:stream_start + length + 30].lstrip().startswith(b"endstream"):
                     raw = d[stream_start:stream_start + length]
-                else:
-                    raw = d[stream_start:stop if stop >= 0 else len(d)].rstrip(b"\r\n")
+                else:  # broken file: up to endstream, or without one up to this object's endobj
+                    raw = d[stream_start:stop if stop >= 0 else max(end, stream_start)].rstrip(b"\r\n")
                 self.raw[num] = ("stream", obj, raw)
                 after = stop if stop >= 0 else stream_start
                 end = d.find(b"endobj", after)
@@ -368,6 +371,7 @@ class PDF:
                     continue
                 head = re.findall(rb"\d+", data[:first])
                 pairs = [(int(head[k]), int(head[k + 1])) for k in range(0, min(len(head), 2 * n) - 1, 2)]
+                pairs.sort(key=lambda p: p[1])  # by offset: slices never overlap, so they add up to at most len(data)
                 for k, (onum, off) in enumerate(pairs):
                     stop = first + pairs[k + 1][1] if k + 1 < len(pairs) else len(data)
                     self.raw.setdefault(onum, ("bytes", data[first + off:stop]))

@@ -121,7 +121,8 @@ class ParseTest(unittest.TestCase):
         self.assertEqual((info["vendor"], info["unified"], info["usable"], info["gpus"][0]["name"]),
                          ("apple", True, True, "Apple M3 Pro"))
         with unittest.mock.patch("platform.system", return_value="Darwin"), \
-                unittest.mock.patch("platform.machine", return_value="x86_64"):
+                unittest.mock.patch("platform.machine", return_value="x86_64"), \
+                unittest.mock.patch.object(gpu, "_run", return_value="0\n"):
             self.assertEqual(gpu.detect(), [])  # Ollama does not use the GPU of Intel Macs
 
 
@@ -160,6 +161,17 @@ class UseTest(unittest.TestCase):
         self.assertEqual(recommend(8)["model"], "qwen3:4b")
         self.assertEqual(recommend(8, self.NVIDIA)["model"], "qwen3:8b")   # bigger, because it fits the VRAM
         self.assertEqual(recommend(32, gpu.summary([gpu._gpu("nvidia", "small", 4.0)]))["model"], "qwen3:14b")  # never smaller
+
+    def test_report_names_the_best_gpu(self):
+        info = gpu.summary(gpu.parse_nvidia_smi("GTX 1060 6GB, 6144\nRTX 4090, 24564"))
+        self.assertEqual(info["name"], "RTX 4090")
+        self.assertIn("RTX 4090 (24.0 GB VRAM)", gpu_report(info)[0])
+
+    def test_apple_silicon_under_rosetta(self):
+        with unittest.mock.patch("platform.system", return_value="Darwin"), \
+                unittest.mock.patch("platform.machine", return_value="x86_64"), \
+                unittest.mock.patch.object(gpu, "_run", side_effect=lambda cmd, **k: "1\n" if "hw.optional.arm64" in cmd else "Apple M1\n"):
+            self.assertEqual(gpu.detect()[0]["vendor"], "apple")
 
     def test_report(self):
         self.assertIn("RTX 4070 (12.0 GB VRAM)", gpu_report(self.NVIDIA)[0])

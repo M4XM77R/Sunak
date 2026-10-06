@@ -34,12 +34,11 @@ def gpu_report(info):
         return [info["hint"]]
     if not info["usable"]:
         return ["No GPU that Ollama can use was found. Models run on the CPU; smaller models answer faster."]
-    best = next(g for g in info["gpus"] if g["usable"] and g["vendor"] == info["vendor"])
     how = {"nvidia": "Ollama uses it automatically (CUDA, needs the NVIDIA driver).",
            "amd": "Ollama uses it automatically (ROCm, set up by the Ollama installer).",
            "apple": "Ollama uses the GPU automatically (Metal)."}[info["vendor"]]
     mem = "shares the main memory" if info["unified"] else f"{info['vram_gb']} GB VRAM"
-    return [f"GPU: {best['name']} ({mem}). {how}"]
+    return [f"GPU: {info['name']} ({mem}). {how}"]
 
 
 def run_command(cmd, rest, port):
@@ -83,11 +82,19 @@ def main(argv=None):
     """Parse the command line, find a free port, start the server and open the browser.
     If Sunak already runs, just open it."""
     argv = list(sys.argv[1:] if argv is None else argv)
-    port = int(os.environ.get("SUNAK_PORT", "7000"))
+    try:
+        port = int(os.environ.get("SUNAK_PORT") or 7000)
+    except ValueError:
+        sys.exit("SUNAK_PORT must be a number, e.g. 7000.")
+    if argv and argv[0] in ("update", "uninstall"):
+        sys.exit(f"'{argv[0]}' is part of the installed sunak command. Without installing: "
+                 + ("git pull in this folder." if argv[0] == "update" else "just delete this folder (data: ~/.sunak)."))
     if argv and argv[0] in COMMANDS:
         rest = argv[1:]
         if "--port" in rest[:-1]:  # e.g. sunak stop --port 8123
             i = rest.index("--port")
+            if not rest[i + 1].isdigit():
+                sys.exit("--port needs a number, e.g. --port 8123.")
             port = int(rest[i + 1])
             rest = rest[:i] + rest[i + 2:]
         return run_command(argv[0], rest, port)
@@ -96,7 +103,7 @@ def main(argv=None):
                                  epilog="Commands: sunak stop | status | gpu | autostart on|off | shortcut | version")
     ap.add_argument("--host", default=os.environ.get("SUNAK_HOST", "127.0.0.1"),
                     help="address to listen on (use 0.0.0.0 for your LAN / phone)")
-    ap.add_argument("--port", type=int, default=int(os.environ.get("SUNAK_PORT", "7000")))
+    ap.add_argument("--port", type=int, default=port)
     ap.add_argument("--data-dir", default=os.environ.get("SUNAK_DATA", str(Path.home() / ".sunak")))
     ap.add_argument("--no-browser", action="store_true", default=bool(os.environ.get("SUNAK_NO_BROWSER")))
     ap.add_argument("--version", action="version", version=__version__)

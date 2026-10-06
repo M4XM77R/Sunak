@@ -43,7 +43,19 @@ def strip_think(text):
     return THINK_RE.sub("", text).strip()
 
 
-_DIRECT = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+class _SafeRedirect(urllib.request.HTTPRedirectHandler):
+    """Follow redirects, but never send API keys to another host."""
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is not None and urllib.parse.urlparse(newurl).netloc != urllib.parse.urlparse(req.full_url).netloc:
+            for h in list(new.headers):
+                if h.lower() in ("authorization", "x-api-key"):
+                    del new.headers[h]
+        return new
+
+
+_DIRECT = urllib.request.build_opener(urllib.request.ProxyHandler({}), _SafeRedirect)
+_DEFAULT = urllib.request.build_opener(_SafeRedirect)
 
 
 def _is_local(url):
@@ -72,7 +84,7 @@ def _request(url, data=None, api_key="", timeout=TIMEOUT, method=None, extra_hea
     try:
         if _is_local(url):
             return _DIRECT.open(req, timeout=timeout)
-        return urllib.request.urlopen(req, timeout=timeout)
+        return _DEFAULT.open(req, timeout=timeout)
     except urllib.error.HTTPError as e:
         detail = e.read().decode("utf-8", "replace")[:500]
         try:

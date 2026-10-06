@@ -40,7 +40,7 @@ DEFAULT_SETTINGS = {
 }
 
 # Themes: [data-theme] blocks in static/app.css, THEMES in static/app.js.
-THEMES = ("dark", "light", "retro", "cyberpunk", "ocean", "forest", "sunset")
+THEMES = ("dark", "light", "retro", "cyberpunk", "ocean", "forest", "sunset", "corporate")
 
 # Built-in personas; the user can edit, add and delete them in Settings → Personas.
 DEFAULT_PERSONAS = [
@@ -154,7 +154,8 @@ class App:
         if not self.db.get_setting("secret"):
             self.db.set_setting("secret", secrets.token_hex(32))
         env_pw = os.environ.get("SUNAK_PASSWORD")
-        if env_pw:
+        stored = self.db.get_setting("password_hash")
+        if env_pw and not (stored and check_password(env_pw, stored)):  # same password: keep logins valid
             self.db.set_setting("password_hash", hash_password(env_pw))
         self.ram = total_ram_gb()
         self.gpu = None  # gpu.summary(), filled in the background (nvidia-smi can take a moment)
@@ -202,7 +203,8 @@ class App:
         """User preferences merged over DEFAULT_SETTINGS, plus the provider list."""
         s = dict(DEFAULT_SETTINGS)
         s.update(self.db.get_setting("prefs", {}))
-        s["providers"] = self.db.get_setting("providers") or providers.default_providers()
+        stored = self.db.get_setting("providers")
+        s["providers"] = providers.default_providers() if stored is None else stored  # [] = all removed
         personas = self.db.get_setting("personas")
         s["personas"] = DEFAULT_PERSONAS if personas is None else personas
         return s
@@ -296,6 +298,8 @@ class App:
 
     def resolve(self, model_id):
         """Turn a model id 'provider::model' (or the default) into (provider, model name)."""
+        if model_id is not None and not isinstance(model_id, str):
+            raise ValueError("model must be text")
         if not model_id:
             model_id = self.settings()["default_model"]
         if not model_id:
@@ -415,6 +419,7 @@ class Handler(BaseHTTPRequestHandler):
     Streaming endpoints answer with NDJSON: one JSON object per line, e.g. {"type": "text", "t": "Hello"}."""
     app: App = None
     server_version = "Sunak/" + __version__
+    timeout = 120  # a client that stops sending in the middle of a request must not hold a thread forever
 
     def log_message(self, fmt, *args):
         if os.environ.get("SUNAK_DEBUG"):
@@ -457,10 +462,31 @@ class Handler(BaseHTTPRequestHandler):
         if n < 0 or n > MAX_BODY:
             raise ValueError("Request too large" if n > 0 else "Invalid Content-Length")
         raw = self.rfile.read(n) if n else b""
-        data = json.loads(raw) if raw else {}
+        try:
+            data = json.loads(raw) if raw else {}
+        except RecursionError:
+            raise ValueError("Invalid JSON: nested too deeply") from None
         if not isinstance(data, dict):
             raise ValueError("Request body must be a JSON object")
         return data
+
+    @staticmethod
+    def text(d, key, default=""):
+        """A text field of a request body; ValueError when it has another type."""
+        v = d.get(key, default)
+        if v is None:
+            return default
+        if not isinstance(v, str):
+            raise ValueError(f"{key} must be text")
+        return v
+
+    @staticmethod
+    def flag(d, key, default=False):
+        """A true/false field of a request body; ValueError when it has another type."""
+        v = d.get(key, default)
+        if not isinstance(v, bool):
+            raise ValueError(f"{key} must be true or false")
+        return v
 
     streaming = False
 
@@ -520,7 +546,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.login()
             if path == "/api/status" and method == "GET":
                 return self.status()
-            if path == "/api/shutdown" and method == "POST" and (self.is_loopback() or self.authed()):
+            if path == "/api/shutdown" and method == "POST" and (self.is_direct_local() or self.authed()):
                 return self.shutdown()
             if not self.authed():
                 return self.error("Login required", 401)
@@ -564,6 +590,10 @@ class Handler(BaseHTTPRequestHandler):
             return True
         except ValueError:
             return False
+
+    def is_direct_local(self):
+        """From this computer and not forwarded by a reverse proxy (then anyone could be behind it)."""
+        return self.is_loopback() and not (self.headers.get("X-Forwarded-For") or self.headers.get("Forwarded"))
 
     def is_loopback(self):
         """True when the request comes from this computer."""
@@ -622,7 +652,7 @@ class Handler(BaseHTTPRequestHandler):
         """POST /api/login: check the password and set the login cookie."""
         data = self.body()
         stored = self.app.db.get_setting("password_hash")
-        if stored and not check_password(data.get("password", ""), stored):
+        if stored and not check_password(self.text(data, "password"), stored):
             time.sleep(1)
             return self.error("Wrong password", 401)
         body = b'{"ok": true}'
@@ -666,8 +696,8 @@ class Handler(BaseHTTPRequestHandler):
     def create_session(self):
         """POST /api/sessions"""
         d = self.body()
-        self.send_json(self.app.db.create_session(model=d.get("model", ""), system=d.get("system", ""),
-                                                  use_kb=d.get("use_kb", False), persona=d.get("persona", "")))
+        self.send_json(self.app.db.create_session(model=self.text(d, "model"), system=self.text(d, "system"),
+                                                  use_kb=self.flag(d, "use_kb"), persona=self.text(d, "persona")))
 
     def get_session(self, sid):
         """GET /api/sessions/<id>: session with all messages."""
@@ -686,7 +716,7 @@ class Handler(BaseHTTPRequestHandler):
         if fields.get("title") == "":
             raise ValueError("Title must not be empty")
         if "use_kb" in d:
-            fields["use_kb"] = bool(d["use_kb"])
+            fields["use_kb"] = self.flag(d, "use_kb")
         self.app.db.update_session(sid, **fields)
         self.get_session(sid)
 
@@ -756,7 +786,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.error("Nothing to answer")
         updates = {"model": model_id}
         if "use_kb" in d:
-            updates["use_kb"] = session["use_kb"] = bool(d["use_kb"])
+            updates["use_kb"] = session["use_kb"] = self.flag(d, "use_kb")
         if "persona" in d:
             updates["persona"] = session["persona"] = str(d["persona"] or "")
         if session["title"] == "New chat":
@@ -851,7 +881,7 @@ class Handler(BaseHTTPRequestHandler):
 
         Events: status, sources, think, text, done | error."""
         d = self.body()
-        question = (d.get("question") or "").strip()
+        question = self.text(d, "question").strip()
         if not question:
             raise ValueError("Enter a question")
         prov, model = self.app.resolve(d.get("model"))
@@ -906,7 +936,7 @@ class Handler(BaseHTTPRequestHandler):
     def create_document(self):
         """POST /api/documents"""
         d = self.body()
-        self.send_json(self.app.db.save_document(None, d.get("title") or "Untitled", d.get("content", "")))
+        self.send_json(self.app.db.save_document(None, self.text(d, "title") or "Untitled", self.text(d, "content")))
 
     def get_document(self, did):
         """GET /api/documents/<id>"""
@@ -916,7 +946,7 @@ class Handler(BaseHTTPRequestHandler):
     def put_document(self, did):
         """PUT /api/documents/<id>"""
         d = self.body()
-        self.send_json(self.app.db.save_document(did, d.get("title") or "Untitled", d.get("content", "")))
+        self.send_json(self.app.db.save_document(did, self.text(d, "title") or "Untitled", self.text(d, "content")))
 
     def delete_document(self, did):
         """DELETE /api/documents/<id>"""
@@ -926,12 +956,12 @@ class Handler(BaseHTTPRequestHandler):
     def document_ai(self):
         """POST /api/documents/ai: stream a rewrite of the document or of `selection` following `instruction`."""
         d = self.body()
-        instruction = (d.get("instruction") or "").strip()
+        instruction = self.text(d, "instruction").strip()
         if not instruction:
             raise ValueError("Tell the AI what to do")
         prov, model = self.app.resolve(d.get("model"))
-        selection = d.get("selection") or ""
-        content = d.get("content") or ""
+        selection = self.text(d, "selection")
+        content = self.text(d, "content")
         if selection:
             user = (f"Full document for context:\n\n{content}\n\n---\nRewrite ONLY this selected part:\n\n{selection}"
                     f"\n\n---\nInstruction: {instruction}")
@@ -962,14 +992,14 @@ class Handler(BaseHTTPRequestHandler):
         content = content.strip()
         if not content:
             raise ValueError("Note is empty")
-        self.send_json(self.app.db.add_note(content, d.get("is_memory", False)))
+        self.send_json(self.app.db.add_note(content, self.flag(d, "is_memory")))
 
     def patch_note(self, nid):
         """PATCH /api/notes/<id>: change text or memory flag."""
         d = self.body()
         if d.get("content") is not None and (not isinstance(d["content"], str) or not d["content"].strip()):
             raise ValueError("Note must be non-empty text")
-        self.app.db.update_note(nid, d.get("content"), d.get("is_memory"))
+        self.app.db.update_note(nid, d.get("content"), self.flag(d, "is_memory") if "is_memory" in d else None)
         self.send_json({"ok": True})
 
     def delete_note(self, nid):
@@ -1037,7 +1067,7 @@ class Handler(BaseHTTPRequestHandler):
         prov = self.app.provider(d["provider"]) if d.get("provider") else self.app.ollama_provider()
         if prov["type"] != "ollama":
             raise ValueError("Downloading models only works with Ollama")
-        name = (d.get("model") or "").strip()
+        name = self.text(d, "model").strip()
         if not re.fullmatch(r"[A-Za-z0-9._:/-]+", name):
             raise ValueError("Invalid model name")
         self.start_stream()
@@ -1077,9 +1107,13 @@ class Handler(BaseHTTPRequestHandler):
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace")
         except OSError as e:
             return self.emit({"type": "error", "error": str(e)})
-        for line in proc.stdout:
-            if line.strip():
-                self.emit({"type": "status", "t": line.rstrip()[-300:]})
+        try:
+            for line in proc.stdout:
+                if line.strip():
+                    self.emit({"type": "status", "t": line.rstrip()[-300:]})
+        except OSError:  # the browser went away: let the installer finish on its own, don't block it
+            threading.Thread(target=lambda: (proc.stdout.read(), proc.wait()), daemon=True).start()
+            raise
         if proc.wait() != 0:
             return self.emit({"type": "error", "error": f"Installer exited with code {proc.returncode}"})
         self.emit({"type": "done"})
@@ -1087,7 +1121,9 @@ class Handler(BaseHTTPRequestHandler):
     def delete_model(self):
         """POST /api/models/delete: remove an Ollama model from disk."""
         d = self.body()
-        prov, model = self.app.resolve(d.get("model"))
+        if not self.text(d, "model"):
+            raise ValueError("Which model? Send {\"model\": \"ollama::name\"}")
+        prov, model = self.app.resolve(d["model"])
         if prov["type"] != "ollama":
             raise ValueError("Deleting models only works with Ollama")
         providers.ollama_delete(prov, model)

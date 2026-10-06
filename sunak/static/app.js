@@ -13,6 +13,7 @@ const THEMES = [
   { id: 'ocean', name: 'Ocean', sub: 'Deep blue' },
   { id: 'forest', name: 'Forest', sub: 'Calm green' },
   { id: 'sunset', name: 'Sunset', sub: 'Warm and light' },
+  { id: 'corporate', name: '80s Corporate', sub: 'Beige office, navy, burgundy' },
 ];
 const store = {
   get(k, d = null) { try { const v = localStorage.getItem(k); return v === null ? d : v; } catch (e) { return d; } },
@@ -73,6 +74,9 @@ function toast(msg, action) {
   toast._t = setTimeout(() => t.classList.remove('show'), action ? 7000 : 2600);
 }
 
+// a clickable div that also works with the keyboard (Tab, then Enter or Space)
+const KEY_BUTTON = { tabindex: '0', role: 'button',
+  onkeydown: (e) => { if ((e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget) { e.preventDefault(); e.currentTarget.click(); } } };
 function el(tag, attrs = {}, ...kids) {
   const e = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs)) {
@@ -310,7 +314,7 @@ function renderSessions() {
   const box = $('#sessions');
   box.innerHTML = '';
   for (const s of state.sessions) {
-    box.append(el('div', { class: `session${state.session?.id === s.id ? ' active' : ''}`, onclick: () => openSession(s.id) },
+    box.append(el('div', { class: `session${state.session?.id === s.id ? ' active' : ''}`, onclick: () => openSession(s.id), ...KEY_BUTTON },
       el('span', { class: 't', title: s.title }, s.title),
       el('button', { class: 'x', title: 'Delete', onclick: async (e) => {
         e.stopPropagation();
@@ -332,14 +336,18 @@ async function searchChats() {
   box.innerHTML = '';
   if (!hits.length) box.append(el('p', { class: 'muted small', style: 'padding:4px 10px' }, 'No chats found.'));
   for (const h of hits) {
-    box.append(el('div', { class: `session hit${state.session?.id === h.session_id ? ' active' : ''}`, onclick: () => openSession(h.session_id, h.message_id) },
+    box.append(el('div', { class: `session hit${state.session?.id === h.session_id ? ' active' : ''}`, onclick: () => openSession(h.session_id, h.message_id), ...KEY_BUTTON },
       el('span', { class: 't', title: h.title }, h.title), h.snippet && h.snippet !== h.title ? el('span', { class: 'snip' }, h.snippet) : null));
   }
 }
 
+let openSeq = 0;
 async function openSession(id, messageId) {
   if (state.busy) state.busy.abort(); // the partial answer is saved by the server
-  state.session = await api(`/api/sessions/${id}`);
+  const seq = ++openSeq;
+  const session = await api(`/api/sessions/${id}`);
+  if (seq !== openSeq) return; // another chat was clicked meanwhile
+  state.session = session;
   syncModelSelect();
   renderKbToggle();
   renderPersonaSelect();
@@ -353,6 +361,7 @@ async function openSession(id, messageId) {
 }
 function newChat() {
   if (state.busy) state.busy.abort();
+  openSeq++;
   state.session = null;
   state.attachments = [];
   renderAttachments();
@@ -455,8 +464,13 @@ promptEl.addEventListener('keydown', (e) => {
 });
 $('#composer').onsubmit = (e) => { e.preventDefault(); state.busy ? state.busy.abort() : send(); };
 
+let sending = false;
 async function send() {
-  if (state.busy) return;
+  if (state.busy || sending) return;
+  sending = true;
+  try { await sendNow(); } finally { sending = false; }
+}
+async function sendNow() {
   let text = promptEl.value.trim();
   if (!text && !state.attachments.length) return;
   if (!currentModel()) { toast('Install or connect a model first'); show('settings'); return; }
@@ -472,6 +486,7 @@ async function send() {
   }
   promptEl.value = ''; autosize();
   state.attachments = []; renderAttachments();
+  sending = false; // from here on state.busy guards against a second send
   await runChat({ content: text }, { role: 'user', content: text });
 }
 
@@ -487,11 +502,15 @@ async function runChat(payload, localUserMsg) {
   const box = $('#messages');
   const target = box.lastElementChild.querySelector('.md');
   target.classList.add('typing');
-  let raw = '', thinking = false, pending = false, error = null;
+  let raw = '', thinking = false, pending = false, error = null, stopped = false, thinkOpen = null;
+  // the user may fold the thinking block while it streams: keep their choice across repaints
+  target.addEventListener('click', (e) => { const d = e.target.closest('summary') && e.target.closest('details.think'); if (d) thinkOpen = !d.open; });
   const paint = () => {
     pending = false;
     const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 120;
     target.innerHTML = md(raw);
+    const d = target.querySelector('details.think');
+    if (d && thinkOpen !== null) d.open = thinkOpen;
     if (nearBottom) box.scrollTop = box.scrollHeight;
   };
   try {
@@ -504,14 +523,25 @@ async function runChat(payload, localUserMsg) {
       if (!pending) { pending = true; requestAnimationFrame(paint); }
     }, ctrl.signal);
   } catch (e) {
-    if (e.name !== 'AbortError') error = e.message;
+    if (e.name === 'AbortError') stopped = true;
+    else error = e.message;
   }
   state.busy = null;
   $('#sendBtn').textContent = 'Send';
   loadSessions();
   if (state.session !== s) return; // the user opened another chat meanwhile
-  try { state.session = await api(`/api/sessions/${s.id}`); } catch (e) { /* keep local copy */ }
-  if (state.session?.id !== s.id) return;
+  // after Stop the server saves the partial answer a moment later: wait for it, else keep the local one
+  let fresh = null;
+  for (let i = 0; i < (stopped ? 4 : 1); i++) {
+    try { fresh = await api(`/api/sessions/${s.id}`); } catch (e) { break; }
+    if (!stopped || !raw || fresh.messages.at(-1)?.role === 'assistant') break;
+    await new Promise((r) => setTimeout(r, 400));
+  }
+  if (state.session !== s || state.busy) return; // switched chats or sent again while loading
+  if (fresh) {
+    if (stopped && raw && fresh.messages.at(-1)?.role !== 'assistant') fresh.messages.push({ ...ans, content: raw + (thinking ? '</think>' : '') });
+    state.session = fresh;
+  }
   renderMessages();
   if (error) $('#messages').append(el('div', { class: 'msg' }, el('div', { class: 'avatar' }, '⚠️'), el('div', { class: 'body err' }, error)));
   $('#messages').scrollTop = $('#messages').scrollHeight;
@@ -825,8 +855,7 @@ function gpuBanners(o) {
   const g = o.gpu;
   const box = el('div', { class: 'banner' });
   if (g?.usable) {
-    const best = g.gpus.find((x) => x.usable && x.vendor === g.vendor) || {};
-    box.append(el('span', {}, `⚡ GPU: ${best.name || g.vendor}`), el('span', { class: 'muted small' },
+    box.append(el('span', {}, `⚡ GPU: ${g.name || g.vendor}`), el('span', { class: 'muted small' },
       g.unified ? ` · Metal, shares the ${o.ram_gb || '?'} GB memory` : ` · ${g.vram_gb} GB VRAM · models marked ⚡ run fully on it`));
   } else if (g) {
     box.append(el('span', {}, '🖥 No GPU that Ollama can use was found.'), el('span', { class: 'muted small' }, ' Models run on the CPU, smaller models answer faster.'));
@@ -975,7 +1004,7 @@ async function loadDocs() {
   const docs = await api('/api/documents');
   const list = $('#docList');
   list.innerHTML = '';
-  docs.forEach((d) => list.append(el('div', { class: `doc-item${state.doc?.id === d.id ? ' active' : ''}`, onclick: () => openDoc(d.id) }, d.title)));
+  docs.forEach((d) => list.append(el('div', { class: `doc-item${state.doc?.id === d.id ? ' active' : ''}`, onclick: () => openDoc(d.id), ...KEY_BUTTON }, d.title)));
 }
 async function openDoc(id) {
   if (state.docBusy) { toast('Wait until the AI edit is finished'); return; }
@@ -1003,7 +1032,9 @@ async function saveDocNow() {
   if (!state.doc) return;
   const title = $('#docTitle').value.trim() || 'Untitled', content = $('#docContent').value;
   if (title === state.doc.title && content === state.doc.content) return;
-  state.doc = await api(`/api/documents/${state.doc.id}`, { method: 'PUT', body: { title, content } });
+  const id = state.doc.id;
+  const saved = await api(`/api/documents/${id}`, { method: 'PUT', body: { title, content } });
+  if (state.doc?.id === id) state.doc = saved; // another document may be open by now
   $('#docSaved').textContent = 'Saved ✓';
   if (state.view === 'documents') loadDocs();
 }
@@ -1066,8 +1097,8 @@ async function loadNotes() {
   box.innerHTML = '';
   if (!notes.length) box.append(el('p', { class: 'muted' }, 'No notes yet.'));
   for (const n of notes) {
-    const c = el('div', { class: 'c', contenteditable: 'true', spellcheck: 'false' }, n.content);
-    c.onblur = () => { const v = c.textContent.trim(); if (v && v !== n.content) { n.content = v; api(`/api/notes/${n.id}`, { method: 'PATCH', body: { content: v } }).then(() => toast('Saved')); } };
+    const c = el('div', { class: 'c', contenteditable: 'true', spellcheck: 'false', style: 'white-space:pre-wrap' }, n.content);
+    c.onblur = () => { const v = c.innerText.trim(); if (v && v !== n.content) { n.content = v; api(`/api/notes/${n.id}`, { method: 'PATCH', body: { content: v } }).then(() => toast('Saved')); } };
     box.append(el('div', { class: `note${n.is_memory ? ' memory' : ''}` }, c, el('div', { class: 'tools' },
       el('label', { class: 'check', title: 'Remember in chats' }, el('input', { type: 'checkbox', checked: !!n.is_memory,
         onchange: async (e) => { await api(`/api/notes/${n.id}`, { method: 'PATCH', body: { is_memory: e.target.checked } }); loadNotes(); } }), 'memory'),
@@ -1086,11 +1117,14 @@ $('#noteInput').addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e
 
 /* ---------------- Settings ---------------- */
 let draftProviders = [];
-function renderSettings() {
-  const s = state.settings;
+function renderDefaultModel(value = $('#defaultModel').value || state.settings.default_model) {
   const dm = $('#defaultModel');
   dm.innerHTML = '';
-  dm.append(el('option', { value: '' }, 'Last used model'), state.models.map((m) => el('option', { value: m.id, selected: s.default_model === m.id }, `${m.name} (${m.provider_name})`)));
+  dm.append(el('option', { value: '' }, 'Last used model'), ...state.models.map((m) => el('option', { value: m.id, selected: value === m.id }, `${m.name} (${m.provider_name})`)));
+}
+function renderSettings() {
+  const s = state.settings;
+  renderDefaultModel(s.default_model);
   draftProviders = s.providers.map((p) => ({ ...p }));
   renderProviders();
   draftPersonas = s.personas.map((p) => ({ ...p }));
@@ -1187,12 +1221,14 @@ $('#saveSettings').onclick = async () => {
 $('#savePassword').onclick = async () => {
   const pw = $('#password').value;
   if (pw && pw.length < 4) return toast('Use at least 4 characters');
+  if (!pw && !state.settings.password_set) return toast('Type a password first');
   if (!pw && !confirm('Remove the password?')) return;
-  state.settings = await api('/api/settings', { method: 'PUT', body: { password: pw } });
+  try { state.settings = await api('/api/settings', { method: 'PUT', body: { password: pw } }); }
+  catch (e) { toast(e.message); return; }
   $('#password').value = '';
   toast(pw ? 'Password set. Log in again on other devices.' : 'Password removed');
   if (pw) location.reload();
-  else renderSettings();
+  else $('#logoutBtn').classList.add('hidden'); // other unsaved settings stay as they are
 };
 $('#stopBtn').onclick = async () => {
   if (!confirm('Stop Sunak? Open it again with the Sunak icon or the “sunak” command.')) return;
@@ -1236,13 +1272,13 @@ $('#logoutBtn').onclick = async () => { await api('/api/logout', { method: 'POST
 /* ---------------- Boot ---------------- */
 document.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); newChat(); }
-  if (e.key === 'Escape') closeSidebar();
+  if (e.key === 'Escape') { closeSidebar(); $('#themeMenu').classList.add('hidden'); $('#exportMenu').classList.add('hidden'); }
 });
 async function refreshAll(poll = false) {
   await Promise.all([loadModels().catch((e) => { if (!poll) toast(e.message); }), loadOllama()]);
   if (state.ollamaBusy) return; // an install or start is running: keep its progress on screen
   if (state.view === 'chat' && !state.session?.messages?.length) renderMessages();
-  if (state.view === 'settings' && !poll) renderSettings(); // a poll must not wipe unsaved settings
+  if (state.view === 'settings') renderDefaultModel(); // only the model list: never wipe unsaved settings
   if (state.view === 'models') renderModelsView();
 }
 (async function boot() {

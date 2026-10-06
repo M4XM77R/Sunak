@@ -126,7 +126,10 @@ def windows_registry():
 
 def apple():
     """Apple Silicon: the GPU shares the main memory and Ollama uses it through Metal."""
-    if platform.system() != "Darwin" or platform.machine() != "arm64":
+    if platform.system() != "Darwin":
+        return []
+    # Python running under Rosetta reports x86_64, the hardware still is Apple Silicon
+    if platform.machine() != "arm64" and (_run(["sysctl", "-n", "hw.optional.arm64"]) or "").strip() != "1":
         return []
     name = (_run(["sysctl", "-n", "machdep.cpu.brand_string"]) or "").strip() or "Apple Silicon"
     return [_gpu("apple", name, unified=True)]
@@ -158,6 +161,7 @@ def summary(gpus):
         hint = ("An NVIDIA GPU was found, but its driver is missing. Install the NVIDIA driver "
                 "(nvidia-smi must work), then restart Ollama, so it can use the GPU.")
     return {"gpus": gpus, "usable": bool(best), "vendor": best["vendor"] if best else None,
+            "name": best["name"] if best else None,
             "vram_gb": best["vram_gb"] if best else None, "unified": bool(best and best["unified"]), "hint": hint}
 
 

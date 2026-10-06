@@ -77,7 +77,7 @@ def _vbs(cmd):
 
 def _desktop_entry(cmd, name="Sunak", autostart=False):
     """Linux .desktop file content."""
-    exec_line = "env PYTHONPATH=" + _quote(_env_pythonpath()) + " " + " ".join(_quote(c) for c in cmd)
+    exec_line = "env " + _quote("PYTHONPATH=" + _env_pythonpath()) + " " + " ".join(_quote(c) for c in cmd)
     lines = ["[Desktop Entry]", "Type=Application", f"Name={name}", "Comment=Private AI workspace",
              f"Exec={exec_line}", f"Icon={PKG_ROOT / 'sunak' / 'static' / 'icon.svg'}", "Terminal=false",
              "Categories=Utility;"]
@@ -87,11 +87,13 @@ def _desktop_entry(cmd, name="Sunak", autostart=False):
 
 
 def _quote(s):
-    """Quote an argument for a .desktop Exec line."""
+    """Quote an argument for a .desktop Exec line (Desktop Entry spec: quoting rules, then the
+    string escape that doubles every backslash, and %% for a literal %)."""
     s = str(s)
-    if not any(c in s for c in ' "\'\\$`'):
-        return s
-    return '"' + s.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$").replace("`", "\\`") + '"'
+    if any(c in s for c in ' \t\n"\'\\><~|&;$*?#()`'):
+        s = '"' + "".join("\\" + c if c in '"`$\\' else c for c in s) + '"'
+        s = s.replace("\\", "\\\\")
+    return s.replace("%", "%%")
 
 
 def autostart_enabled():
@@ -155,7 +157,9 @@ def create_shortcut():
             "CFBundlePackageType": "APPL", "CFBundleVersion": "1"}))
         script = macos / "sunak"
         cmd = " ".join("'" + c.replace("'", "'\\''") + "'" for c in command())
-        script.write_text(f"#!/bin/sh\nexport PYTHONPATH='{_env_pythonpath()}'\nexec {cmd} >> \"$HOME/.sunak/sunak.log\" 2>&1\n",
+        pp = "'" + _env_pythonpath().replace("'", "'\\''") + "'"
+        script.write_text(f"#!/bin/sh\nexport PYTHONPATH={pp}\nmkdir -p \"$HOME/.sunak\"\n"
+                          f"exec {cmd} >> \"$HOME/.sunak/sunak.log\" 2>&1\n",
                           encoding="utf-8")
         script.chmod(0o755)
         written.append(app)
