@@ -425,15 +425,24 @@ function messageEl(m, i, msgs) {
     if (m.meta?.sources) body.append(sourcesEl(m.meta.sources));
     if (m.meta?.web) body.append(webSourcesEl(m.meta.web));
     if (m.meta?.agent) body.append(agentEl(m.meta.agent));
+    else if (m.meta?.imagegen || m.meta?.pending) body.append(genFigure(m));
     else body.append(el('div', { class: 'md', html: md(m.content) }));
   }
   const meta = el('div', { class: 'meta' });
-  meta.append(el('button', { onclick: () => navigator.clipboard.writeText(m.content.replace(/<think>[\s\S]*?(<\/think>|$)/g, '').trim()).then(() => toast('Copied')) }, 'Copy'));
-  if (!state.busy && m.id) {
+  const gen = m.meta?.imagegen;
+  const copyText = gen ? gen.prompt : m.content.replace(/<think>[\s\S]*?(<\/think>|$)/g, '').trim();
+  meta.append(el('button', { onclick: () => navigator.clipboard.writeText(copyText).then(() => toast('Copied')) }, gen ? 'Copy description' : 'Copy'));
+  if (gen) {
+    meta.append(el('a', { href: `/api/images/${m.meta.images[0]}`, download: `sunak-${gen.seed}.${m.meta.images[0].split('.')[1]}` }, '⬇ Download'));
+    if (!state.busy) meta.append(el('button', { title: 'Same description, new picture', onclick: () => {
+      const asked = msgs.slice(0, i).reverse().find((x) => x.role === 'user');
+      runImagine({ prompt: gen.prompt, negative: gen.negative || '', aspect: asked?.meta?.imagine?.aspect || 'square' });
+    } }, '🔁 Again'));
+  } else if (!state.busy && m.id && !m.meta?.imagine) {
     if (isUser) meta.append(el('button', { onclick: () => editMessage(m) }, 'Edit'));
     if (!isUser && i === msgs.length - 1) meta.append(el('button', { onclick: () => regenerate(m) }, 'Regenerate'));
   }
-  if (!isUser && tts && m.content) meta.append(speakButton(m));
+  if (!isUser && tts && m.content && !gen && !m.meta?.pending) meta.append(speakButton(m));
   if (!isUser && m.model) meta.append(el('span', {}, m.model.split('::')[1] || m.model));
   body.append(meta);
   return el('div', { class: `msg ${m.role}`, 'data-id': m.id }, el('div', { class: 'avatar' }, isUser ? '🙂' : '⛵'), body);
@@ -496,6 +505,7 @@ async function send() {
   try { await sendNow(); } finally { sending = false; }
 }
 async function sendNow() {
+  if (imagineOn()) return sendImagine();
   let text = promptEl.value.trim();
   if (!text && !state.attachments.length) return;
   if (!currentModel()) { toast('Install or connect a model first'); show('settings'); return; }
@@ -591,6 +601,78 @@ async function runChat(payload, localUserMsg) {
   return refused ? 'refused' : 'ok';
 }
 
+/* ---------------- Image generation ----------------
+   🎨 sends the message as a picture description to Automatic1111 or ComfyUI (see sunak/imagegen.py). */
+const imagineReady = () => (state.settings?.image_gen || 'off') !== 'off';
+const imagineOn = () => imagineReady() && store.get('sunak-imagine') === '1';
+function renderImagineToggle() {
+  const b = $('#imagineToggle');
+  b.classList.toggle('hidden', !imagineReady());
+  b.setAttribute('aria-pressed', String(imagineOn()));
+  b.title = imagineOn() ? 'Picture mode on: your message describes a picture' : 'Make a picture with your image generator';
+  $('#imagineBar').classList.toggle('hidden', !imagineOn());
+  if (imagineOn()) {
+    $('#agentBar').classList.add('hidden');
+    promptEl.placeholder = tr('Describe the picture, e.g. “a lighthouse at dusk, oil painting”');
+  }
+}
+$('#imagineToggle').onclick = () => { store.set('sunak-imagine', imagineOn() ? '0' : '1'); renderAgentToggle(); promptEl.focus(); };
+$('#imagineAspect').value = store.get('sunak-imagine-aspect', 'square');
+$('#imagineAspect').onchange = (e) => store.set('sunak-imagine-aspect', e.target.value);
+function genFigure(m) {
+  if (m.meta.pending) {
+    return el('div', { class: 'gen-wait', role: 'status' }, el('progress', { max: 1 }), el('span', { class: 'muted small' }, 'Painting the picture…'));
+  }
+  const g = m.meta.imagegen, src = `/api/images/${m.meta.images[0]}`;
+  return el('figure', { class: 'gen-figure' },
+    el('a', { href: src, target: '_blank', rel: 'noopener' }, el('img', { src, alt: g.prompt, loading: 'lazy', width: g.width, height: g.height, 'data-no-i18n': '' })),
+    el('figcaption', { class: 'muted small', 'data-no-i18n': '' }, `${g.width}×${g.height} · ${tr('seed')} ${g.seed} · ${g.steps} ${tr('steps')}${g.model ? ` · ${g.model}` : ''}`));
+}
+async function sendImagine() {
+  const text = promptEl.value.trim();
+  if (!text) { toast('Describe the picture first'); return; }
+  if (state.attachments.length) { toast('Pictures are made from your description only. Remove the attachments or switch 🎨 off.'); return; }
+  if (!state.session) {
+    try {
+      state.session = await api('/api/sessions', { method: 'POST', body: { model: currentModel() || '', use_kb: kbOn(), use_web: webOn(), persona: currentPersona() } });
+    } catch (e) { toast(e.message); return; }
+    state.session.messages = [];
+  }
+  promptEl.value = ''; autosize();
+  sending = false; // from here on state.busy guards against a second send
+  await runImagine({ prompt: text, aspect: $('#imagineAspect').value, negative: $('#imagineNegative').value.trim() });
+}
+async function runImagine(body) {
+  const s = state.session;
+  s.messages.push({ role: 'user', content: body.prompt, meta: { imagine: { aspect: body.aspect } } });
+  s.messages.push({ role: 'assistant', content: '', meta: { pending: true } });
+  const ctrl = new AbortController();
+  state.busy = ctrl;
+  $('#sendBtn').textContent = 'Stop';
+  renderMessages();
+  const bar = $('#messages').lastElementChild.querySelector('.gen-wait progress');
+  let error = null, stopped = false;
+  try {
+    await stream('/api/imagine', { session_id: s.id, ...body }, (ev) => {
+      if (ev.type === 'start') { s.title = ev.title; $('#viewTitle').textContent = ev.title; }
+      else if (ev.type === 'progress') { if (ev.p == null) bar.removeAttribute('value'); else bar.value = ev.p; }
+      else if (ev.type === 'error') error = ev.error;
+    }, ctrl.signal);
+  } catch (e) {
+    if (e.name === 'AbortError') stopped = true;
+    else error = e.message;
+  }
+  state.busy = null;
+  $('#sendBtn').textContent = 'Send';
+  loadSessions();
+  if (state.session !== s) return;
+  try { state.session = await api(`/api/sessions/${s.id}`); } catch (e) { s.messages = s.messages.filter((x) => !x.meta?.pending); }
+  if (state.session !== s && state.session.id !== s.id) return;
+  renderMessages();
+  if (error && !stopped) $('#messages').append(el('div', { class: 'msg' }, el('div', { class: 'avatar' }, '⚠️'), el('div', { class: 'body err' }, error)));
+  $('#messages').scrollTop = $('#messages').scrollHeight;
+}
+
 /* ---------------- Agent mode ----------------
    The model works in a project folder: steps (tool calls) appear between its text, writes and
    commands wait for a click. See sunak/agent.py. */
@@ -613,6 +695,7 @@ function renderAgentToggle() {
   $('#agentLabel').classList.toggle('hidden', !agentOn());
   $('#agentFolder').classList.toggle('hidden', !agentOn());
   promptEl.placeholder = agentOn() ? 'Tell the agent what to do…' : 'Message Sunak…';
+  renderImagineToggle();
 }
 $('#agentToggle').onclick = () => {
   store.set('sunak-agent', agentOn() ? '0' : '1');
@@ -2301,6 +2384,13 @@ function renderSettings() {
   $('#speechInput').value = s.speech_input;
   $('#whisperUrl').value = s.whisper_url;
   $('#whisperModel').value = s.whisper_model;
+  $('#imageGen').value = s.image_gen;
+  $('#imageGenUrl').value = s.image_gen_url;
+  $('#imageGenModel').value = s.image_gen_model;
+  $('#imageGenSize').value = String(s.image_gen_size);
+  $('#imageGenSteps').value = s.image_gen_steps;
+  $('#imageGenResult').textContent = '';
+  renderImageGenUrl();
   renderVoices();
   renderLook();
   renderMailAccounts();
@@ -2450,6 +2540,8 @@ $('#saveSettings').onclick = async () => {
       agent_enabled: $('#agentEnabled').checked, agent_timeout: Number($('#agentTimeout').value),
       agent_max_steps: Number($('#agentSteps').value),
       speech_input: $('#speechInput').value, whisper_url: $('#whisperUrl').value, whisper_model: $('#whisperModel').value,
+      image_gen: $('#imageGen').value, image_gen_url: $('#imageGenUrl').value, image_gen_model: $('#imageGenModel').value,
+      image_gen_size: Number($('#imageGenSize').value), image_gen_steps: Number($('#imageGenSteps').value),
     };
     state.settings = await api('/api/settings', { method: 'PUT', body: { ...install,
       system_prompt: $('#sysPrompt').value, temperature: parseFloat($('#temperature').value), use_memory: $('#useMemory').checked,
@@ -2465,6 +2557,24 @@ $('#saveSettings').onclick = async () => {
     $('#settingsMsg').textContent = 'Saved ✓';
     setTimeout(() => ($('#settingsMsg').textContent = ''), 2000);
   } catch (e) { toast(e.message); }
+};
+const IMAGE_GEN_URLS = { automatic1111: 'http://127.0.0.1:7860', comfyui: 'http://127.0.0.1:8188' };
+function renderImageGenUrl() {
+  const kind = $('#imageGen').value;
+  $('#imageGenUrl').placeholder = IMAGE_GEN_URLS[kind] ? tr('empty = {url}', { url: IMAGE_GEN_URLS[kind] }) : '';
+  $$('#imageGenUrl, #imageGenModel, #imageGenTest, #imageGenSize, #imageGenSteps').forEach((x) => (x.disabled = kind === 'off'));
+}
+$('#imageGen').onchange = () => { renderImageGenUrl(); $('#imageGenResult').textContent = ''; };
+$('#imageGenTest').onclick = async () => {
+  const btn = $('#imageGenTest'), out = $('#imageGenResult');
+  btn.disabled = true;
+  out.textContent = tr('Connecting…');
+  try {
+    const r = await api('/api/imagegen/test', { method: 'POST', body: { type: $('#imageGen').value, url: $('#imageGenUrl').value } });
+    $('#imageGenModels').replaceChildren(...r.models.map((m) => el('option', { value: m })));
+    out.textContent = r.models.length ? `✓ ${trn(r.models.length, '{n} model', '{n} models')}: ${r.models.join(', ')}` : tr('Connected, but the program has no model yet.');
+  } catch (e) { out.textContent = `⚠️ ${e.message}`; }
+  btn.disabled = false;
 };
 $('#agentEnabled').onchange = (e) => {
   if (e.target.checked && !confirm('Enable agent mode?\n\nThe model can then change files in the folder you choose and run '

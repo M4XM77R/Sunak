@@ -66,6 +66,18 @@ def save(data_dir, items):
     return names
 
 
+def store(data_dir, data):
+    """Store one picture (e.g. a generated one, any size) and return its file name. Raises ValueError."""
+    kind = sniff(data)
+    if not kind:
+        raise ValueError("Not a PNG, JPEG, GIF or WebP picture")
+    target = folder(data_dir)
+    target.mkdir(parents=True, exist_ok=True)
+    name = f"{new_id()}.{kind}"
+    (target / name).write_bytes(data)
+    return name
+
+
 def existing(data_dir, refs):
     """The names in `refs` that are stored images (for re-sending an edited message with its images)."""
     if not isinstance(refs, list):
@@ -86,9 +98,10 @@ def load(data_dir, name):
 def attach(data_dir, history, messages, vision=True):
     """Add the images of `history` (stored messages) to `messages` (the model's copy of them, same
     order at the end) as message["images"] = [{"type", "data" (base64)}]. Only the last RECENT user
-    messages with images carry them; older ones and models without vision get a short note instead."""
+    messages with images carry them; older ones and models without vision get a short note instead.
+    Generated pictures (on assistant messages) are not sent: their text says what they show."""
     offset = len(messages) - len(history)
-    with_images = [i for i, m in enumerate(history) if (m.get("meta") or {}).get("images")]
+    with_images = [i for i, m in enumerate(history) if m.get("role") == "user" and (m.get("meta") or {}).get("images")]
     recent = set(with_images[-RECENT:])
     for i in with_images:
         msg = messages[offset + i]

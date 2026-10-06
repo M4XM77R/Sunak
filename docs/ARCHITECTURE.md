@@ -32,6 +32,7 @@ Browser (sunak/static)  ──HTTP/JSON, NDJSON-Streams──▶  sunak/server.p
 | `sunak/qr.py` | QR-Code-Erzeuger ohne Abhängigkeiten, für den Handy-Zugriff |
 | `sunak/cal.py` | Kalender: iCalendar lesen und schreiben, Wiederholungen (RRULE, EXDATE, verschobene Termine), Zeitzonen, CalDAV-Client (Kalender finden, Termine lesen, anlegen, ändern, löschen), ICS-Abos, Termin aus Text per Modell |
 | `sunak/mcp.py` | MCP-Client: Server als Programm (stdio) oder über HTTP (Streamable HTTP) starten, Werkzeuge auflisten und aufrufen, Einstellungen prüfen (Geheimnisse bleiben auf dem Server) |
+| `sunak/imagegen.py` | Bildgenerierung: Automatic1111 (`/sdapi/v1/txt2img`, Fortschritt, Abbruch) und ComfyUI (Standard-Workflow über `/prompt`, `/history`, `/view`), Bildgrößen, Modellliste |
 | `sunak/speech.py` | Spracheingabe: Aufnahme an einen lokalen Whisper-Server weiterreichen (whisper.cpp oder OpenAI-kompatibel) |
 | `sunak/knowledge.py` | Wissensbasis: Abschnitte bilden, suchen, passende Abschnitte für den Chat auswählen |
 | `sunak/static/` | Oberfläche: `index.html`, `app.js` (gesamte Logik), `app.css` (inklusive Themes), `theme.js` (setzt das Theme vor dem ersten Zeichnen), `i18n.js` und `lang-de.js` (Sprachen), `login.html`, Icon, PWA-Manifest |
@@ -117,6 +118,8 @@ Alle Endpunkte liegen unter `/api/`. Schreibende Anfragen brauchen den Header `X
 | `GET`/`POST /api/lan` | Handy-Zugriff: Zustand, Adresse und QR-Code; `{enabled}` schaltet um (nur mit Passwort) | JSON |
 | `GET /api/images/<name>` | Ein an eine Nachricht angehängtes Bild | Bild |
 | `POST /api/extract` | Text einer Datei für einen Chat-Anhang (📎), gleiches Format wie oben | JSON |
+| `POST /api/imagine` | `{session_id, prompt, negative, aspect (square\|portrait\|landscape), seed}`: Bild mit dem eingestellten Programm erzeugen; Beschreibung und Bild werden als Nachrichten gespeichert. Verbindung schließen bricht im Programm ab | NDJSON `start`, `progress` (`p` 0 bis 1 oder `null`), `done` (`image`, `info`)/`error` |
+| `POST /api/imagegen/test` | `{type, url}` aus dem Formular: Modelle des Programms (nur Admin-Profile) | JSON |
 | `POST /api/transcribe` | Spracheingabe: `{audio}` (WAV als Base64, optional `language`) an den Whisper-Server, Antwort `{text}` | JSON |
 
 Fehler kommen immer als `{"error": "…"}` mit HTTP-Status 4xx. Fehler, die erst während eines Streams auftreten, kommen als Event `{"type": "error"}`.
@@ -277,7 +280,7 @@ Alle Daten liegen in einer SQLite-Datei: `~/.sunak/sunak.db`, der Ordner lässt 
 | `kb_files`, `kb_chunks`, `kb_fts` | Wissensbasis: Dateien, ihre Textabschnitte und der Volltextindex |
 | `documents` | Markdown-Dokumente |
 | `notes` | Notizen; `is_memory = 1` bedeutet „im Gedächtnis“ |
-| `settings` | Schlüssel-Wert-Paare als JSON: `prefs` (u. a. Theme, Sprache), `providers`, `personas` (fehlt der Eintrag, gelten `DEFAULT_PERSONAS`), `mail_accounts`, `calendars`, `mcp_servers`, `password_hash`, `secret` |
+| `settings` | Schlüssel-Wert-Paare als JSON: `prefs` (u. a. Theme, Sprache, Bildgenerierung), `providers`, `personas` (fehlt der Eintrag, gelten `DEFAULT_PERSONAS`), `mail_accounts`, `calendars`, `mcp_servers`, `password_hash`, `secret` |
 | `calendar_events` | Sunaks eigener Kalender: `uid`, iCalendar-Text, Änderungszeit |
 
 Jedes weitere Profil hat eine eigene Datei mit denselben Tabellen unter `profiles/<id>/` (siehe Profile).
@@ -295,6 +298,15 @@ Ein Profil ist eine eigene Datenbank: das Hauptprofil (`default`) nutzt `~/.suna
 - Einstellungen: `GLOBAL_PREFS` (Update-Prüfung, Agent, Spracheingabe) sowie `providers`, `mcp_servers` und das Passwort gelten für die Installation und liegen in der Hauptdatenbank; Theme, Sprache, Systemprompt, Personas, Mail-Konten und Kalender je Profil.
 - Admin-Rechte: `ADMIN_ONLY` listet die Endpunkte, die nur Admin-Profile aufrufen dürfen (Profile anlegen und löschen, Modelle laden und löschen, Ollama, Updates, Handy-Zugriff, Agent und MCP), `put_settings` weist globale Einstellungen von anderen Profilen mit 403 ab. Die Seite blendet diese Bereiche für sie aus (`body.not-admin .admin-only`).
 - Grenzen: Die PIN trennt die Profile in der App. Wer am Computer angemeldet ist, kann die Dateien aller Profile lesen; ein Admin-Profil mit Agent-Modus oder MCP-Werkzeugen ebenfalls. Das Passwort (Login) gilt für die ganze Installation.
+
+## Bildgenerierung
+
+`imagegen.py` spricht mit einem Stable-Diffusion-Programm, das der Nutzer selbst betreibt; Sunak lädt keine Modelle und braucht keine Pakete. Einstellungen (nur Admin-Profile): `image_gen` (`off`, `automatic1111`, `comfyui`), `image_gen_url` (leer = `DEFAULT_URLS`), `image_gen_model`, `image_gen_size` (512, 768 oder 1024 als Seite eines quadratischen Bildes; Hoch- und Querformat 2:3 bzw. 3:2 mit etwa gleicher Fläche, Vielfache von 64) und `image_gen_steps`.
+
+- **Automatic1111** (auch Forge, SD.Next; Start mit `--api`): `POST /sdapi/v1/txt2img` in einem eigenen Thread, währenddessen `GET /sdapi/v1/progress` für den Balken; ein gewähltes Modell geht als `override_settings.sd_model_checkpoint` mit. Abbruch: `POST /sdapi/v1/interrupt`.
+- **ComfyUI:** der Standard-Workflow (Checkpoint laden, zwei Text-Encoder, leeres Latent, KSampler mit euler/normal, VAE-Decode, SaveImage) im API-Format an `POST /prompt`, dann `GET /history/<id>` bis zum Ergebnis und das Bild über `GET /view`. Ohne gewähltes Modell nimmt Sunak den ersten Checkpoint aus `/object_info/CheckpointLoaderSimple`. Abbruch: Auftrag aus der Warteschlange löschen und `POST /interrupt`.
+- Der Seed wird immer von Sunak gewählt (oder mitgegeben), damit er beim Bild steht. Das Bild wird wie ein angehängtes in `images/` gespeichert (`images.store`, Dateisignatur geprüft); die Antwortnachricht hat `meta.images` und `meta.imagegen` (Programm, Modell, Seed, Größe, Schritte, Beschreibung) und als Text eine kurze Beschreibung, damit Folgefragen im Chat Sinn ergeben. Erzeugte Bilder werden dem Modell nicht als Bild geschickt (`images.attach` nimmt nur Bilder von Nutzernachrichten).
+- Bricht der Browser ab (Stop), schlägt das nächste `progress`-Event fehl; `generate` merkt das über `cancelled()` und bricht im Programm ab.
 
 ## Handy-Zugriff
 

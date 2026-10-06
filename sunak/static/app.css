@@ -524,3 +524,12 @@ body.not-admin .admin-only { display: none !important; }
 .profile-row .profile-emoji { font-size: 1.4em; }
 .profile-row .row { align-items: center; margin: 0; }
 #profileBox { margin-bottom: 28px; }
+
+/* image generation */
+#imagineBar select { width: auto; padding: 4px 8px; font-size: 13px; }
+#imagineBar input { font-family: inherit; }
+.gen-figure { margin: 0; }
+.gen-figure img { display: block; max-width: min(100%, 512px); max-height: 70vh; border-radius: 10px; border: 1px solid var(--border); cursor: zoom-in; }
+.gen-figure figcaption { margin-top: 6px; }
+.gen-wait { display: flex; align-items: center; gap: 10px; }
+.gen-wait progress { width: 200px; }

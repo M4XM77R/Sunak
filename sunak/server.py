@@ -26,7 +26,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlparse
 
-from . import __version__, agent, cal, extract, gpu, images, knowledge, mail, mcp, ollama, providers, qr, research, speech, updates
+from . import __version__, agent, cal, extract, gpu, imagegen, images, knowledge, mail, mcp, ollama, providers, qr, research, speech, updates
 from .db import DB, new_id
 
 STATIC = Path(__file__).parent / "static"
@@ -48,10 +48,17 @@ DEFAULT_SETTINGS = {
     "speech_input": "local", # 🎤: "local" (Whisper server or the browser's on-device recognition), "browser", "off"
     "whisper_url": "",       # local Whisper server for speech input, see speech.py
     "whisper_model": "",     # model name for OpenAI-compatible Whisper servers ("" = whisper-1)
+    "image_gen": "off",      # 🎨 image generation: "off", "automatic1111" or "comfyui" (see imagegen.py)
+    "image_gen_url": "",     # address of that program ("" = its usual local address)
+    "image_gen_model": "",   # checkpoint ("" = the program's current one / ComfyUI's first)
+    "image_gen_size": 512,   # side of a square picture: 512 (SD 1.5), 768, 1024 (SDXL, Flux)
+    "image_gen_steps": 25,
 }
-INT_PREFS = {"agent_timeout": (5, 3600), "agent_max_steps": (1, 200)}  # allowed ranges
+INT_PREFS = {"agent_timeout": (5, 3600), "agent_max_steps": (1, 200), "image_gen_size": (512, 1024),
+             "image_gen_steps": (1, imagegen.MAX_STEPS)}  # allowed ranges
 # Settings of the whole installation (only admin profiles change them); all other prefs are per profile.
-GLOBAL_PREFS = {"check_updates", "agent_enabled", "agent_timeout", "agent_max_steps", "speech_input", "whisper_url", "whisper_model"}
+GLOBAL_PREFS = {"check_updates", "agent_enabled", "agent_timeout", "agent_max_steps", "speech_input", "whisper_url", "whisper_model",
+                "image_gen", "image_gen_url", "image_gen_model", "image_gen_size", "image_gen_steps"}
 GLOBAL_KEYS = GLOBAL_PREFS | {"providers", "mcp_servers", "password"}
 MAX_PROFILES = 20
 
@@ -141,6 +148,8 @@ def _check_pref(key, value, default):
         lo, hi = INT_PREFS[key]
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not lo <= value <= hi or value != int(value):
             raise ValueError(f"{key} must be a whole number between {lo} and {hi}")
+        if key == "image_gen_size" and value not in imagegen.SIZES:
+            raise ValueError("image_gen_size must be one of: " + ", ".join(map(str, imagegen.SIZES)))
         return int(value)
     if isinstance(default, float):
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= 2:
@@ -154,6 +163,12 @@ def _check_pref(key, value, default):
         value = value.strip()
     if key == "whisper_url" and value:
         speech.endpoint(value)
+    if key == "image_gen" and value not in ("off", *imagegen.BACKENDS):
+        raise ValueError("image_gen must be one of: off, " + ", ".join(imagegen.BACKENDS))
+    if key in ("image_gen_url", "image_gen_model"):
+        value = value.strip()[:300]
+    if key == "image_gen_url" and value and not re.match(r"https?://[^\s/]+", value):
+        raise ValueError("The image generator address must start with http:// or https://")
     if key == "whisper_model" and len(value) > 200:
         raise ValueError("whisper_model is too long")
     if key == "language" and value and value not in LANGUAGES:
@@ -633,7 +648,9 @@ def session_markdown(session):
             out += ["## You", "", *pics, m["content"].strip(), ""]
         else:
             model = m["model"].split("::", 1)[-1] if m["model"] else ""
-            out += ["## Sunak" + (f" ({model})" if model else ""), "", providers.strip_think(m["content"]), ""]
+            out += ["## Sunak" + (f" ({model})" if model else ""), ""]
+            out += [f"*[Image: {n}]*" for n in (m.get("meta") or {}).get("images", [])]
+            out += [providers.strip_think(m["content"]), ""]
             files = (m.get("meta") or {}).get("sources")
             if files:
                 out += ["Sources: " + ", ".join(f["name"] for f in files), ""]
@@ -1665,6 +1682,83 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json([{"file_id": h["file_id"], "name": h["name"], "idx": h["idx"],
                          "snippet": knowledge.snippet(h["text"], words)} for h in hits])
 
+    # image generation ---------------------------------------------------
+    def imagegen_test(self):
+        """POST /api/imagegen/test {type, url, model} (the settings form, not saved yet): the backend's models."""
+        cfg = imagegen.config(self.app.settings(), self.body())
+        if cfg["type"] == "off":
+            raise ValueError("Choose Automatic1111 or ComfyUI first")
+        try:
+            self.send_json({"models": imagegen.models(cfg)})
+        except imagegen.ImageGenError as e:
+            raise ValueError(str(e)) from None
+
+    def imagine(self):
+        """POST /api/imagine {session_id, prompt, negative, aspect, seed}: make a picture with the local image
+        generator and store it in the chat (user message = prompt, assistant message = picture).
+        Events: start, progress {p (0..1 or null)}, done | error. Closing the connection stops the backend."""
+        d = self.body()
+        db = self.app.db
+        s = self.app.settings()
+        cfg = imagegen.config(s)
+        if cfg["type"] == "off":
+            raise ValueError("No image generator is set up. Choose one in Settings → Image generation.")
+        session = db.get_session(str(d.get("session_id") or ""))
+        if not session:
+            return self.error("Session not found", 404)
+        prompt = self.text(d, "prompt").strip()
+        if not prompt:
+            raise ValueError("Describe the picture first")
+        if len(prompt) > 4000:
+            raise ValueError("The description is too long")
+        negative = self.text(d, "negative").strip()[:2000]
+        aspect = self.text(d, "aspect", "square")
+        if aspect not in imagegen.ASPECTS:
+            raise ValueError("aspect must be one of: " + ", ".join(imagegen.ASPECTS))
+        seed = d.get("seed")
+        if seed is not None and (isinstance(seed, bool) or not isinstance(seed, int) or not 0 <= seed < 2 ** 32):
+            raise ValueError("seed must be a whole number from 0 to 4294967295")
+        width, height = imagegen.dimensions(aspect, s["image_gen_size"])
+        sid = session["id"]
+        db.add_message(sid, "user", prompt, meta={"imagine": {"aspect": aspect, **({"negative": negative} if negative else {})}})
+        title = session["title"]
+        if title == "New chat":
+            title = "🎨 " + ((prompt[:55] + "…") if len(prompt) > 56 else prompt)
+            db.update_session(sid, title=title)
+        self.start_stream()
+        self.emit({"type": "start", "title": title})
+        gone = threading.Event()
+
+        def progress(p):
+            if gone.is_set():
+                return
+            try:
+                self.emit({"type": "progress", "p": p})
+            except OSError:  # the browser went away (Stop button)
+                gone.set()
+
+        try:
+            data, info = imagegen.generate(cfg, prompt, negative, width, height, s["image_gen_steps"], seed,
+                                           progress=progress, cancelled=gone.is_set)
+            name = images.store(self.app.user_dir, data)
+        except (imagegen.ImageGenError, ValueError) as e:
+            if gone.is_set():
+                return
+            return self.emit({"type": "error", "error": str(e)})
+        info["prompt"] = prompt
+        if negative:
+            info["negative"] = negative
+        text = f"[Picture made with {imagegen.BACKENDS[cfg['type']]}{' (' + info['model'] + ')' if info['model'] else ''}: {prompt}]"
+        try:
+            db.add_message(sid, "assistant", text, "", {"images": [name], "imagegen": info})
+        except sqlite3.IntegrityError:  # the chat was deleted meanwhile
+            return
+        if not gone.is_set():
+            try:
+                self.emit({"type": "done", "image": name, "info": info})
+            except OSError:
+                pass
+
     def transcribe(self):
         """POST /api/transcribe {audio (base64 WAV)}: speech to text with the local Whisper server."""
         url = self.app.settings()["whisper_url"]
@@ -2085,6 +2179,8 @@ ROUTES = [
     (rf"/api/knowledge/{ID}", "DELETE", Handler.kb_delete),
     (r"/api/extract", "POST", Handler.extract_file),
     (r"/api/transcribe", "POST", Handler.transcribe),
+    (r"/api/imagine", "POST", Handler.imagine),
+    (r"/api/imagegen/test", "POST", Handler.imagegen_test),
     (r"/api/calendar", "GET", Handler.calendar_info),
     (r"/api/calendar/sources", "POST", Handler.calendar_save_source),
     (r"/api/calendar/sources/([a-f0-9]{12})", "DELETE", Handler.calendar_delete_source),
@@ -2116,7 +2212,7 @@ ADMIN_ONLY = {(m, p) for p, m, _ in ROUTES if (m, p) in {
     ("POST", r"/api/profiles"), ("DELETE", r"/api/profiles/([a-z0-9]{1,16})"), ("POST", r"/api/update"),
     ("POST", r"/api/models/pull"), ("POST", r"/api/models/delete"), ("POST", r"/api/ollama/start"),
     ("POST", r"/api/ollama/install"), ("POST", r"/api/lan"), ("POST", r"/api/agent"), ("POST", r"/api/agent/confirm"),
-    ("POST", r"/api/mcp/test")}}
+    ("POST", r"/api/mcp/test"), ("POST", r"/api/imagegen/test")}}
 
 
 def make_server(host, port, data_dir):

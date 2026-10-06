@@ -79,12 +79,22 @@
           <input id="agentFolder" placeholder="Project folder, e.g. /home/me/project or C:\Users\me\project" aria-label="Project folder for the agent" spellcheck="false" autocomplete="off">
           <button class="btn small-btn" id="agentRevoke" type="button" title="Forget “Allow for this chat”: ask again before every change, command and tool">Ask again</button>
         </div>
+        <div class="agent-bar hidden" id="imagineBar">
+          <span title="Your message is the description of the picture">🎨 Make a picture</span>
+          <select id="imagineAspect" aria-label="Format">
+            <option value="square">Square</option>
+            <option value="portrait">Portrait</option>
+            <option value="landscape">Landscape</option>
+          </select>
+          <input id="imagineNegative" placeholder="Leave out (optional), e.g. blurry, text" aria-label="What the picture should not show" autocomplete="off">
+        </div>
         <div class="composer-row">
           <label class="icon-btn" title="Attach files or images (text, PDF, Word, PowerPoint, PNG, JPEG…). You can also paste a screenshot.">📎<input type="file" id="fileInput" multiple hidden></label>
           <button class="icon-btn kb-toggle" id="kbToggle" type="button" aria-pressed="false" title="Answer with my knowledge base">📚</button>
           <button class="icon-btn kb-toggle" id="webToggle" type="button" aria-pressed="false" title="Search the web for answers">🌐</button>
           <button class="icon-btn kb-toggle hidden admin-only" id="agentToggle" type="button" aria-pressed="false" title="Agent mode: let the model work in a project folder">🛠</button>
           <button class="icon-btn kb-toggle hidden admin-only" id="mcpToggle" type="button" aria-pressed="false" title="Tools (MCP): let the model use your MCP servers">🔌</button>
+          <button class="icon-btn kb-toggle hidden" id="imagineToggle" type="button" aria-pressed="false" title="Make a picture with your image generator">🎨</button>
           <button class="icon-btn mic-btn hidden" id="micBtn" type="button" aria-pressed="false" title="Speak instead of typing">🎤</button>
           <textarea id="prompt" rows="1" placeholder="Message Sunak…" title="Enter to send, Shift+Enter for a new line"></textarea>
           <button class="btn primary" id="sendBtn" type="submit">Send</button>
@@ -363,6 +373,33 @@
             <option value="Time|uvx mcp-server-time">Time and time zones (uv)</option>
             <option value="Memory|npx -y @modelcontextprotocol/server-memory">Memory as a knowledge graph (Node.js)</option>
           </select>
+        </div>
+        </div>
+
+        <div class="admin-only">
+        <h2>Image generation</h2>
+        <p class="muted small">Make pictures with 🎨 next to the message box. Sunak uses a Stable Diffusion program running on this computer or in your network: <b>Automatic1111</b> (also Forge or SD.Next, started with <code>--api</code>) or <b>ComfyUI</b>. Install one of them and a model first; Sunak only sends the description and keeps the picture in the chat.</p>
+        <div class="row">
+          <label>Program<select id="imageGen">
+            <option value="off">Off</option>
+            <option value="automatic1111">Automatic1111 / Forge / SD.Next</option>
+            <option value="comfyui">ComfyUI</option>
+          </select></label>
+          <label>Address<input id="imageGenUrl" spellcheck="false" autocomplete="off"></label>
+        </div>
+        <div class="row">
+          <label>Model<input id="imageGenModel" list="imageGenModels" spellcheck="false" autocomplete="off" placeholder="empty = the program’s current model"></label>
+          <datalist id="imageGenModels"></datalist>
+          <button class="btn" id="imageGenTest" type="button">Test</button>
+        </div>
+        <p class="muted small" id="imageGenResult"></p>
+        <div class="row">
+          <label>Picture size<select id="imageGenSize">
+            <option value="512">512 px (Stable Diffusion 1.5, fast)</option>
+            <option value="768">768 px</option>
+            <option value="1024">1024 px (SDXL, Flux)</option>
+          </select></label>
+          <label>Steps<input type="number" id="imageGenSteps" min="1" max="100" step="1"></label>
         </div>
         </div>
 
