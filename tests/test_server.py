@@ -6,6 +6,7 @@ import json
 import tempfile
 import threading
 import unittest
+import unittest.mock
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -57,6 +58,9 @@ class FakeBackend(BaseHTTPRequestHandler):
         if self.path == "/api/chat":
             if body["model"] == "think:1b":
                 self.wfile.write(json.dumps({"message": {"thinking": "hmm"}}).encode() + b"\n")
+            if body["model"] == "broken":  # half an answer, then garbage
+                self.wfile.write(json.dumps({"message": {"content": "Half"}}).encode() + b"\n{oops\n")
+                return
             for w in ["Hello", " from", " Ollama"]:
                 self.wfile.write(json.dumps({"message": {"content": w}, "done": False}).encode() + b"\n")
             self.wfile.write(json.dumps({"message": {"content": ""}, "done": True}).encode() + b"\n")
@@ -374,6 +378,81 @@ class SunakTest(unittest.TestCase):
             with self.assertRaises(urllib.error.HTTPError) as cm:
                 self.call("POST", "/api/knowledge", body)
             self.assertIn(msg, json.loads(cm.exception.read())["error"])
+
+    def raw_request(self, data):
+        """Send raw bytes, return the response bytes."""
+        import socket
+        with socket.create_connection(("127.0.0.1", self.app.server_address[1]), timeout=5) as s:
+            s.sendall(data)
+            out = b""
+            while chunk := s.recv(65536):
+                out += chunk
+        return out
+
+    def assert_400(self, method, path, body, text):
+        with self.assertRaises(urllib.error.HTTPError) as cm:
+            self.call(method, path, body)
+        self.assertEqual(cm.exception.code, 400)
+        self.assertIn(text, json.loads(cm.exception.read())["error"])
+
+    def test_malformed_requests_get_an_answer(self):
+        s = self.call("POST", "/api/sessions", {})
+        self.assert_400("POST", "/api/sessions", [1], "JSON object")
+        self.assert_400("PATCH", f"/api/sessions/{s['id']}", {"title": None}, "title must be text")
+        self.assertEqual(self.call("PATCH", f"/api/sessions/{s['id']}", {"sid": "x", "title": "T"})["title"], "T")
+        self.assert_400("POST", "/api/compare", {"prompt": "x", "models": {"a": 1}}, "two models")
+        self.assert_400("POST", "/api/notes", {"content": {"x": 1}}, "empty")
+        out = self.raw_request(b"POST /api/sessions HTTP/1.0\r\nX-Requested-With: sunak\r\nContent-Length: -1\r\n\r\n")
+        self.assertIn(b"400", out.split(b"\r\n")[0])
+
+    def test_invalid_settings_change_nothing(self):
+        before = self.call("GET", "/api/settings")
+        self.assert_400("PUT", "/api/settings", {"system_prompt": None}, "system_prompt must be text")
+        self.assert_400("PUT", "/api/settings", {"theme": "light", "providers": [1]}, "providers")
+        self.assert_400("PUT", "/api/settings", {"temperature": "hot"}, "temperature")
+        self.assert_400("PUT", "/api/settings", {"providers": [{"type": "ollama", "base_url": "file:///etc"}]}, "http")
+        after = self.call("GET", "/api/settings")
+        self.assertEqual((after["theme"], after["system_prompt"]), (before["theme"], before["system_prompt"]))
+
+    def test_saved_key_is_not_sent_to_a_new_address(self):
+        provs = self.call("GET", "/api/settings")["providers"]
+        moved = [dict(p, base_url="http://127.0.0.1:9/evil") if p["id"] == "claude" else p for p in provs]
+        r = self.call("PUT", "/api/settings", {"providers": moved})
+        self.assertFalse(next(p for p in r["providers"] if p["id"] == "claude")["has_key"])
+        self.call("PUT", "/api/settings", {"providers": [dict(p, api_key="sk-test") if p["id"] == "claude" else p for p in provs]})
+        same = self.call("PUT", "/api/settings", {"providers": provs})  # unchanged address keeps the key
+        self.assertTrue(next(p for p in same["providers"] if p["id"] == "claude")["has_key"])
+
+    def test_dns_rebinding_is_blocked(self):
+        for host, ok in (("localhost:1", True), ("127.0.0.1:7000", True), ("[::1]:7000", True), ("192.168.1.5:7000", True),
+                         ("mypc", True), ("mypc.local:7000", True), ("evil.example:7000", False), ("evil.example", False)):
+            out = self.raw_request(f"GET /api/sessions HTTP/1.0\r\nHost: {host}\r\n\r\n".encode())
+            self.assertEqual(b" 403 " in out.split(b"\r\n")[0], not ok, host)
+        with unittest.mock.patch.dict("os.environ", {"SUNAK_ALLOWED_HOSTS": "ai.example.org"}):
+            out = self.raw_request(b"GET /api/sessions HTTP/1.0\r\nHost: ai.example.org\r\n\r\n")
+            self.assertIn(b" 200 ", out.split(b"\r\n")[0])
+
+    def test_truncate_only_inside_the_chat(self):
+        a = self.call("POST", "/api/sessions", {})
+        b = self.call("POST", "/api/sessions", {})
+        self.call("POST", "/api/chat", {"session_id": a["id"], "model": "ollama::tiny:1b", "content": "a"})
+        self.call("POST", "/api/chat", {"session_id": b["id"], "model": "ollama::tiny:1b", "content": "b"})
+        a_msg = self.call("GET", f"/api/sessions/{a['id']}")["messages"][0]["id"]
+        self.assert_400("POST", "/api/chat", {"session_id": b["id"], "model": "ollama::tiny:1b", "truncate_from": a_msg}, "not part")
+        self.assertEqual(len(self.call("GET", f"/api/sessions/{b['id']}")["messages"]), 2)
+
+    def test_broken_stream_keeps_partial_answer(self):
+        self.call("PUT", "/api/settings", {"default_model": ""})
+        s = self.call("POST", "/api/sessions", {})
+        events = self.call("POST", "/api/chat", {"session_id": s["id"], "model": "ollama::broken", "content": "q"})
+        self.assertEqual(events[-1]["type"], "error")
+        self.assertIn("broke off", events[-1]["error"])
+        self.assertEqual(self.call("GET", f"/api/sessions/{s['id']}")["messages"][1]["content"], "Half")
+
+    def test_empty_persona_list_is_kept(self):
+        old = self.call("GET", "/api/settings")["personas"]
+        self.assertEqual(self.call("PUT", "/api/settings", {"personas": []})["personas"], [])
+        self.call("PUT", "/api/settings", {"personas": old})
 
     def test_csrf_header_required(self):
         with self.assertRaises(urllib.error.HTTPError) as cm:

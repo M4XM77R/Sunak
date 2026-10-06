@@ -4,6 +4,7 @@ import base64
 import binascii
 import hashlib
 import hmac
+import ipaddress
 import json
 import mimetypes
 import os
@@ -11,9 +12,11 @@ import platform
 import queue
 import re
 import secrets
+import sqlite3
 import subprocess
 import threading
 import time
+import traceback
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -101,6 +104,21 @@ def recommend(ram):
     return {"model": RECOMMENDATIONS[-1][1], "size": RECOMMENDATIONS[-1][2]}
 
 
+def _check_pref(key, value, default):
+    """Validate one preference against the type of its default. Raises ValueError."""
+    if isinstance(default, bool):
+        if not isinstance(value, bool):
+            raise ValueError(f"{key} must be true or false")
+        return value
+    if isinstance(default, float):
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= 2:
+            raise ValueError(f"{key} must be a number between 0 and 2")
+        return float(value)
+    if not isinstance(value, str):
+        raise ValueError(f"{key} must be text")
+    return value
+
+
 def hash_password(pw, salt=None):
     """PBKDF2-SHA256 hash, stored as 'salt$hex'."""
     salt = salt or secrets.token_hex(16)
@@ -133,46 +151,75 @@ class App:
         s = dict(DEFAULT_SETTINGS)
         s.update(self.db.get_setting("prefs", {}))
         s["providers"] = self.db.get_setting("providers") or providers.default_providers()
-        s["personas"] = self.db.get_setting("personas") or DEFAULT_PERSONAS
+        personas = self.db.get_setting("personas")
+        s["personas"] = DEFAULT_PERSONAS if personas is None else personas
         return s
 
     def save_settings(self, data):
-        """Validate and store the keys present in `data` (prefs, providers, password)."""
+        """Validate everything in `data` (prefs, providers, personas, password), then store it.
+        Nothing is saved when any part is invalid."""
+        if not isinstance(data, dict):
+            raise ValueError("Settings must be a JSON object")
         prefs = self.db.get_setting("prefs", {})
-        for k in DEFAULT_SETTINGS:
+        for k, default in DEFAULT_SETTINGS.items():
             if k in data:
-                prefs[k] = data[k]
+                prefs[k] = _check_pref(k, data[k], default)
+        new_providers = self._clean_providers(data["providers"]) if "providers" in data else None
+        new_personas = self._clean_personas(data["personas"]) if "personas" in data else None
+        if "password" in data and not isinstance(data["password"], (str, type(None))):
+            raise ValueError("Password must be text")
         self.db.set_setting("prefs", prefs)
-        if "providers" in data:
-            old_keys = {p["id"]: p.get("api_key", "") for p in self.settings()["providers"]}
-            clean = []
-            for p in data["providers"]:
-                if p.get("type") not in ("ollama", "openai", "anthropic") or not p.get("base_url"):
-                    raise ValueError("Each provider needs a type (ollama/openai/anthropic) and a base URL")
-                pid = re.sub(r"[^a-z0-9_-]", "", (p.get("id") or p.get("name") or "p").lower())[:24] or "p"
-                while any(c["id"] == pid for c in clean):
-                    pid += "x"
-                # The browser never sees saved keys; an empty field means "keep the saved key".
-                key = (p.get("api_key") or "").strip() or (old_keys.get(p.get("id"), "") if p.get("id") else "")
-                clean.append({"id": pid, "name": p.get("name") or pid, "type": p["type"],
-                              "base_url": p["base_url"].strip(), "api_key": key})
-            self.db.set_setting("providers", clean)
-        if "personas" in data:
-            clean = []
-            for p in data["personas"]:
-                name = str(p.get("name") or "").strip()[:40]
-                if not name:
-                    raise ValueError("Each persona needs a name")
-                pid = re.sub(r"[^a-z0-9_-]", "", str(p.get("id") or "").lower())[:24] or re.sub(r"[^a-z0-9]", "", name.lower())[:24] or "persona"
-                while any(c["id"] == pid for c in clean):
-                    pid += "x"
-                clean.append({"id": pid, "icon": str(p.get("icon") or "").strip()[:8], "name": name,
-                              "prompt": str(p.get("prompt") or "").strip()})
-            self.db.set_setting("personas", clean)
+        if new_providers is not None:
+            self.db.set_setting("providers", new_providers)
+        if new_personas is not None:
+            self.db.set_setting("personas", new_personas)
         if "password" in data:
             pw = data["password"] or ""
             self.db.set_setting("password_hash", hash_password(pw) if pw else "")
         return self.settings()
+
+    def _clean_providers(self, items):
+        if not isinstance(items, list) or not all(isinstance(p, dict) for p in items):
+            raise ValueError("providers must be a list of objects")
+        old = {p["id"]: p for p in self.settings()["providers"]}
+        clean = []
+        for p in items:
+            ptype, url = p.get("type"), p.get("base_url")
+            if ptype not in ("ollama", "openai", "anthropic") or not isinstance(url, str) or not url.strip():
+                raise ValueError("Each provider needs a type (ollama/openai/anthropic) and a base URL")
+            url = url.strip()
+            if not re.match(r"https?://", url, re.I):
+                raise ValueError(f"Base URL must start with http:// or https:// ({url})")
+            name = p.get("name") if isinstance(p.get("name"), str) else ""
+            raw_id = p.get("id") if isinstance(p.get("id"), str) else ""
+            pid = re.sub(r"[^a-z0-9_-]", "", (raw_id or name or "p").lower())[:24] or "p"
+            while any(c["id"] == pid for c in clean):
+                pid += "x"
+            # The browser never sees saved keys; an empty field means "keep the saved key", but only
+            # for the same provider type and address, so a saved key is never sent to a new server.
+            key = p.get("api_key") if isinstance(p.get("api_key"), str) else ""
+            prev = old.get(raw_id)
+            if not key.strip() and prev and prev["type"] == ptype and prev["base_url"].rstrip("/") == url.rstrip("/"):
+                key = prev.get("api_key", "")
+            clean.append({"id": pid, "name": name.strip() or pid, "type": ptype, "base_url": url, "api_key": key.strip()})
+        return clean
+
+    @staticmethod
+    def _clean_personas(items):
+        if not isinstance(items, list) or not all(isinstance(p, dict) for p in items):
+            raise ValueError("personas must be a list of objects")
+        clean = []
+        for p in items:
+            name = str(p.get("name") or "").strip()[:40]
+            if not name:
+                raise ValueError("Each persona needs a name")
+            pid = (re.sub(r"[^a-z0-9_-]", "", str(p.get("id") or "").lower())[:24]
+                   or re.sub(r"[^a-z0-9]", "", name.lower())[:24] or "persona")
+            while any(c["id"] == pid for c in clean):
+                pid += "x"
+            clean.append({"id": pid, "icon": str(p.get("icon") or "").strip()[:8], "name": name,
+                          "prompt": str(p.get("prompt") or "").strip()})
+        return clean
 
     def provider(self, pid):
         """Look up a configured provider by id."""
@@ -343,15 +390,24 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json({"error": msg}, status)
 
     def body(self):
-        """Parse the JSON request body (max MAX_BODY bytes)."""
-        n = int(self.headers.get("Content-Length") or 0)
-        if n > MAX_BODY:
-            raise ValueError("Request too large")
+        """Parse the JSON request body (a JSON object of at most MAX_BODY bytes)."""
+        try:
+            n = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            raise ValueError("Invalid Content-Length") from None
+        if n < 0 or n > MAX_BODY:
+            raise ValueError("Request too large" if n > 0 else "Invalid Content-Length")
         raw = self.rfile.read(n) if n else b""
-        return json.loads(raw) if raw else {}
+        data = json.loads(raw) if raw else {}
+        if not isinstance(data, dict):
+            raise ValueError("Request body must be a JSON object")
+        return data
+
+    streaming = False
 
     def start_stream(self):
         """Send headers for an NDJSON stream; the connection closes when it ends."""
+        self.streaming = True
         self.send_response(200)
         self.send_header("Content-Type", "application/x-ndjson")
         self.send_header("Cache-Control", "no-store")
@@ -392,6 +448,9 @@ class Handler(BaseHTTPRequestHandler):
         """Dispatch a request: static files, CSRF header check, login, auth check, then ROUTES."""
         path = urlparse(self.path).path
         try:
+            if not self.host_allowed():
+                return self.error("This address is not allowed. Open Sunak via localhost or its IP address, "
+                                  "or add the host name to SUNAK_ALLOWED_HOSTS.", 403)
             if not path.startswith("/api/"):
                 if method != "GET":
                     return self.error("Not found", 404)
@@ -414,7 +473,38 @@ class Handler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError):
             pass
         except (ValueError, providers.ProviderError) as e:
-            self.error(str(e))
+            self.fail(str(e), 400)
+        except Exception as e:  # noqa: BLE001 - never leave the browser without an answer
+            traceback.print_exc()
+            self.fail(f"Internal error: {type(e).__name__}: {e}", 500)
+
+    def fail(self, msg, status):
+        """Report an error: as JSON, or as an NDJSON error event when a stream has already started."""
+        try:
+            if self.streaming:
+                self.emit({"type": "error", "error": msg})
+            else:
+                self.error(msg, status)
+        except OSError:
+            pass
+
+    def host_allowed(self):
+        """Protection against DNS rebinding: a web page on another domain must not reach the API.
+        Allowed are localhost, IP addresses, single-label and .local names, and SUNAK_ALLOWED_HOSTS."""
+        host = (self.headers.get("Host") or "").strip().lower()
+        if not host:
+            return True
+        host = host[1:].split("]")[0] if host.startswith("[") else host.rsplit(":", 1)[0] if host.count(":") == 1 else host
+        extra = [h.strip().lower() for h in os.environ.get("SUNAK_ALLOWED_HOSTS", "").split(",") if h.strip()]
+        if "*" in extra or host in extra:
+            return True
+        if host == "localhost" or host.endswith((".localhost", ".local")) or "." not in host:
+            return True
+        try:
+            ipaddress.ip_address(host)
+            return True
+        except ValueError:
+            return False
 
     def is_loopback(self):
         """True when the request comes from this computer."""
@@ -512,8 +602,19 @@ class Handler(BaseHTTPRequestHandler):
         return self.send_json(s) if s else self.error("Not found", 404)
 
     def patch_session(self, sid):
-        """PATCH /api/sessions/<id>: change title, model or system prompt."""
-        self.app.db.update_session(sid, **self.body())
+        """PATCH /api/sessions/<id>: change title, model, system prompt, persona or use_kb."""
+        d = self.body()
+        fields = {}
+        for k in ("title", "model", "system", "persona"):
+            if k in d:
+                if not isinstance(d[k], str):
+                    raise ValueError(f"{k} must be text")
+                fields[k] = d[k].strip() if k == "title" else d[k]
+        if fields.get("title") == "":
+            raise ValueError("Title must not be empty")
+        if "use_kb" in d:
+            fields["use_kb"] = bool(d["use_kb"])
+        self.app.db.update_session(sid, **fields)
         self.get_session(sid)
 
     def search(self):
@@ -556,16 +657,25 @@ class Handler(BaseHTTPRequestHandler):
         A partial answer is kept if the stream breaks."""
         d = self.body()
         db = self.app.db
-        session = db.get_session(d.get("session_id", ""))
+        session = db.get_session(str(d.get("session_id") or ""))
         if not session:
             return self.error("Session not found", 404)
         model_id = d.get("model") or session["model"]
+        if not isinstance(model_id, str):
+            raise ValueError("model must be text")
+        content = d.get("content") or ""
+        if not isinstance(content, str):
+            raise ValueError("content must be text")
+        content = content.strip()
         prov, model = self.app.resolve(model_id)
         model_id = f"{prov['id']}::{model}"
         sid = session["id"]
         if d.get("truncate_from"):
-            db.truncate_messages(sid, int(d["truncate_from"]))
-        content = (d.get("content") or "").strip()
+            from_id = d["truncate_from"]
+            # only a message of this chat; anything else would silently wipe the chat
+            if isinstance(from_id, bool) or not isinstance(from_id, int) or from_id not in {m["id"] for m in session["messages"]}:
+                raise ValueError("That message is not part of this chat (reload the page)")
+            db.truncate_messages(sid, from_id)
         if content:
             db.add_message(sid, "user", content)
         session = db.get_session(sid)
@@ -597,28 +707,37 @@ class Handler(BaseHTTPRequestHandler):
         if meta is not None:
             self.emit({"type": "sources", "sources": meta["sources"]})
         chunks = []
+
+        def save():
+            """Store the (possibly partial) answer; the chat may have been deleted meanwhile."""
+            text = stream_to_text(chunks)
+            if text:
+                try:
+                    db.add_message(sid, "assistant", text, model_id, meta)
+                except sqlite3.IntegrityError:
+                    pass
+
         try:
             for kind, c in providers.chat_stream(prov, model, messages, self.app.options()):
                 chunks.append((kind, c))
                 self.emit({"type": kind, "t": c})
-        except providers.ProviderError as e:
-            text = stream_to_text(chunks)
-            if text:
-                db.add_message(sid, "assistant", text, model_id, meta)
+        except (BrokenPipeError, ConnectionResetError):  # the browser went away (Stop button)
+            return save()
+        except Exception as e:  # noqa: BLE001 - keep the partial answer and tell the browser
+            save()
+            if not isinstance(e, providers.ProviderError):
+                traceback.print_exc()
             return self.emit({"type": "error", "error": str(e)})
-        except (BrokenPipeError, ConnectionResetError):
-            text = stream_to_text(chunks)
-            if text:
-                db.add_message(sid, "assistant", text, model_id, meta)
-            return
-        db.add_message(sid, "assistant", stream_to_text(chunks), model_id, meta)
+        save()
         self.emit({"type": "done"})
 
     def compare(self):
         """POST /api/compare: stream one prompt to 2-4 models in parallel. Events carry `i`, the model index."""
         d = self.body()
-        prompt = (d.get("prompt") or "").strip()
-        model_ids = d.get("models") or []
+        prompt = d.get("prompt") if isinstance(d.get("prompt"), str) else ""
+        prompt = prompt.strip()
+        model_ids = d.get("models") if isinstance(d.get("models"), list) else []
+        model_ids = [m for m in model_ids if isinstance(m, str)]
         if not prompt or len(model_ids) < 2:
             raise ValueError("Pick at least two models and enter a prompt")
         targets = [self.app.resolve(mid) for mid in model_ids[:4]]
@@ -766,7 +885,8 @@ class Handler(BaseHTTPRequestHandler):
     def create_note(self):
         """POST /api/notes"""
         d = self.body()
-        content = (d.get("content") or "").strip()
+        content = d.get("content") if isinstance(d.get("content"), str) else ""
+        content = content.strip()
         if not content:
             raise ValueError("Note is empty")
         self.send_json(self.app.db.add_note(content, d.get("is_memory", False)))
@@ -774,6 +894,8 @@ class Handler(BaseHTTPRequestHandler):
     def patch_note(self, nid):
         """PATCH /api/notes/<id>: change text or memory flag."""
         d = self.body()
+        if d.get("content") is not None and (not isinstance(d["content"], str) or not d["content"].strip()):
+            raise ValueError("Note must be non-empty text")
         self.app.db.update_note(nid, d.get("content"), d.get("is_memory"))
         self.send_json({"ok": True})
 
@@ -786,12 +908,13 @@ class Handler(BaseHTTPRequestHandler):
     def file_upload(self):
         """Decode an upload {name, data (base64)} and return (name, bytes, text). Raises ValueError."""
         d = self.body()
-        name = re.sub(r"[\\/\x00-\x1f]", "_", (d.get("name") or "").strip())[-200:]
+        name = d.get("name") if isinstance(d.get("name"), str) else ""
+        name = re.sub(r"[\\/\x00-\x1f]", "_", name.strip())[-200:]
         if not name:
             raise ValueError("File name missing")
         try:
             data = base64.b64decode(d.get("data") or "", validate=True)
-        except (binascii.Error, ValueError):
+        except (binascii.Error, ValueError, TypeError):
             raise ValueError("Upload is damaged, please try again") from None
         text = extract.extract_text(name, data).strip()
         if not text:

@@ -1,6 +1,7 @@
 """Model backends: Ollama, Claude (Anthropic API) and any OpenAI-compatible API
 (OpenAI, OpenRouter, LM Studio, llama.cpp server, vLLM, Groq, ...). Pure stdlib, streaming."""
 
+import http.client
 import ipaddress
 import json
 import os
@@ -104,7 +105,17 @@ def list_models(p, timeout=4):
 
 
 def chat_stream(p, model, messages, options=None):
-    """Yield ("text"|"think", chunk) tuples."""
+    """Yield ("text"|"think", chunk) tuples. Broken connections and malformed data from the
+    backend raise ProviderError."""
+    try:
+        yield from _chat_stream(p, model, messages, options)
+    except ProviderError:
+        raise
+    except (http.client.HTTPException, OSError, ValueError) as e:
+        raise ProviderError(f"The connection to the model broke off ({type(e).__name__}: {e})") from None
+
+
+def _chat_stream(p, model, messages, options=None):
     options = options or {}
     if p["type"] == "anthropic":
         yield from anthropic_stream(p, model, messages)

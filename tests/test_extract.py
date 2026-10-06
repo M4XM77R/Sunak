@@ -112,6 +112,35 @@ class ExtractTest(unittest.TestCase):
         with self.assertRaises(ExtractError):
             extract_text("a.docx", b"not a zip")
 
+    def test_hostile_files_fail_cleanly(self):
+        """Damaged or malicious files raise ExtractError quickly, never anything else."""
+        deep_kids = "".join(f"{i} 0 obj\n<< /Type /Pages /Kids [{i + 1} 0 R] >>\nendobj\n" for i in range(2, 1500))
+        cases = {
+            "deep.pdf": b"%PDF-1.4\n1 0 obj\n" + b"[" * 5000 + b"\nendobj\n",
+            "kids.pdf": ("%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n" + deep_kids).encode(),
+            "key.pdf": b"%PDF-1.4\n1 0 obj\n<< [1] 2 /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Kids 5 >>\nendobj\n",
+            "missing.docx": make_zip({"other.xml": "<x/>"}),
+            "badxml.docx": make_zip({"word/document.xml": "<w:document"}),
+            "trunc.pptx": make_zip({"ppt/slides/slide1.xml": "x" * 100})[:60],
+        }
+        for name, data in cases.items():
+            with self.assertRaises(ExtractError, msg=name):
+                extract_text(name, data)
+
+    def test_decompression_bombs_are_bounded(self):
+        import time
+        bomb = zlib.compress(b"\x00" * (200 * 1024 * 1024), 9)  # ~200 KB that unpack to 200 MB
+        pdf = (b"%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [3 0 R] >>\nendobj\n"
+               b"3 0 obj\n<< /Type /Page /Contents 4 0 R >>\nendobj\n" + stream_obj(4, b"", compress=False).replace(b"<< /Length 0", b"<< /Length %d /Filter /FlateDecode" % len(bomb)).replace(b"stream\n\n", b"stream\n" + bomb + b"\n"))
+        t = time.time()
+        with self.assertRaises(ExtractError):
+            extract_text("bomb.pdf", pdf)
+        self.assertLess(time.time() - t, 20)
+        ranges = " ".join("<0000> <FFFF> <0041>" for _ in range(50))
+        t = time.time()
+        parse_cmap(f"1 begincodespacerange <0000> <FFFF> endcodespacerange 50 beginbfrange {ranges} endbfrange".encode())
+        self.assertLess(time.time() - t, 2)
+
     def test_parse_cmap(self):
         mapping, n = parse_cmap(b"1 begincodespacerange <00> <FF> endcodespacerange "
                                 b"1 beginbfrange <41> <43> <0061> endbfrange")
@@ -188,6 +217,19 @@ class KnowledgeTest(unittest.TestCase):
         db = DB(path)
         s = db.get_session("abc")
         self.assertEqual((s["use_kb"], s["messages"][0]["meta"]), (False, {}))
+        db.conn.close()
+
+    def test_fts_index_is_rebuilt_when_it_was_missing(self):
+        path = self.tmp.name + "/moved.db"
+        db = DB(path)
+        db.fts = False  # as if this Python had no FTS5
+        db.kb_add("z.txt", 5, ["zebra crossing"])
+        db.conn.execute("DELETE FROM kb_fts")
+        db.conn.commit()
+        db.conn.close()
+        db = DB(path)
+        if db.fts:
+            self.assertEqual(knowledge.search(db, "zebra")[0]["name"], "z.txt")
         db.conn.close()
 
     def test_snippet(self):

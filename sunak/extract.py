@@ -21,7 +21,11 @@ TEXT_EXTENSIONS = {
     "kt", "sh", "bat", "ps1", "sql", "css", "scss", "tex", "srt", "vtt",
 }
 SUPPORTED = sorted(TEXT_EXTENSIONS | {"pdf", "docx", "odt", "pptx", "html", "htm"})
-MAX_UNZIPPED = 60 * 1024 * 1024
+MAX_UNZIPPED = 60 * 1024 * 1024    # total text XML read from an Office file
+MAX_STREAM = 32 * 1024 * 1024      # one decompressed PDF stream
+MAX_DECODED = 256 * 1024 * 1024    # all decompressed PDF streams together
+MAX_NESTING = 64                   # nested PDF arrays / dictionaries / page-tree levels
+MAX_CMAP = 200_000                 # entries of one ToUnicode map
 
 
 class ExtractError(ValueError):
@@ -29,7 +33,17 @@ class ExtractError(ValueError):
 
 
 def extract_text(name, data):
-    """Plain text of a file. Raises ExtractError with a message for the user."""
+    """Plain text of a file. Raises ExtractError with a message for the user.
+    Damaged or hostile files never raise anything else."""
+    try:
+        return _extract(name, data)
+    except ExtractError:
+        raise
+    except (Exception, RecursionError) as e:  # noqa: BLE001 - zipfile, XML and PDF errors of all kinds
+        raise ExtractError(f"{name}: the file could not be read (damaged or unsupported: {type(e).__name__})") from None
+
+
+def _extract(name, data):
     ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
     if ext == "pdf" or data[:5] == b"%PDF-":
         text = pdf_text(data)
@@ -61,11 +75,19 @@ A = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
 TEXT_NS = "{urn:oasis:names:tc:opendocument:xmlns:text:1.0}"
 
 
-def _zip_read(z, member):
-    info = z.getinfo(member)
-    if info.file_size > MAX_UNZIPPED:
-        raise ExtractError("File is too large")
-    return z.read(member)
+def _zip_read(z, member, budget):
+    """Read one member; `budget` (a one-item list) limits the total unpacked size (zip bombs)."""
+    try:
+        info = z.getinfo(member)
+    except KeyError:
+        raise ExtractError(f"The document is incomplete ({member} is missing)") from None
+    budget[0] -= info.file_size
+    if budget[0] < 0:
+        raise ExtractError("The document is too large when unpacked")
+    data = z.read(member)
+    if len(data) > info.file_size:  # the size in the archive header lied
+        raise ExtractError("The document is damaged")
+    return data
 
 
 def office_text(data, ext):
@@ -74,9 +96,10 @@ def office_text(data, ext):
         z = zipfile.ZipFile(io.BytesIO(data))
     except zipfile.BadZipFile:
         raise ExtractError("The file is damaged or not a real Office document") from None
+    budget = [MAX_UNZIPPED]
     with z:
         if ext == "docx":
-            root = ElementTree.fromstring(_zip_read(z, "word/document.xml"))
+            root = ElementTree.fromstring(_zip_read(z, "word/document.xml", budget))
             paras = []
             for p in root.iter(W + "p"):
                 parts = []
@@ -90,14 +113,14 @@ def office_text(data, ext):
                 paras.append("".join(parts))
             return "\n".join(paras).strip()
         if ext == "odt":
-            root = ElementTree.fromstring(_zip_read(z, "content.xml"))
+            root = ElementTree.fromstring(_zip_read(z, "content.xml", budget))
             paras = ["".join(el.itertext()) for el in root.iter() if el.tag in (TEXT_NS + "p", TEXT_NS + "h")]
             return "\n".join(paras).strip()
         slides = sorted((n for n in z.namelist() if re.fullmatch(r"ppt/slides/slide\d+\.xml", n)),
                         key=lambda n: int(re.search(r"\d+", n.rsplit("/", 1)[1]).group()))
         out = []
         for i, n in enumerate(slides, 1):
-            root = ElementTree.fromstring(_zip_read(z, n))
+            root = ElementTree.fromstring(_zip_read(z, n, budget))
             paras = ["".join(t.text or "" for t in p.iter(A + "t")) for p in root.iter(A + "p")]
             out.append(f"Slide {i}\n" + "\n".join(x for x in paras if x.strip()))
         return "\n\n".join(out).strip()
@@ -125,6 +148,7 @@ WS = b" \t\r\n\f\x00"
 _NUM_RE = re.compile(rb"[+-]?(\d+\.?\d*|\.\d+)")
 _OBJ_RE = re.compile(rb"(\d+)\s+(\d+)\s+obj\b")
 _STREAM_RE = re.compile(rb"stream(\r\n|\n|\r)")
+_SKIP_RE = re.compile(rb"(?:[ \t\r\n\f\x00]+|%[^\r\n]*)+")
 
 
 class Lexer:
@@ -132,18 +156,17 @@ class Lexer:
 
     def __init__(self, data, pos=0):
         self.d, self.i = data, pos
+        self.depth = 0
+
+    def _nest(self):
+        self.depth += 1
+        if self.depth > MAX_NESTING:
+            raise ExtractError("The PDF is damaged (nested too deeply)")
 
     def skip_ws(self):
-        d, n = self.d, len(self.d)
-        while self.i < n:
-            c = d[self.i]
-            if c in WS:
-                self.i += 1
-            elif c == 0x25:  # % comment
-                while self.i < n and d[self.i] not in b"\r\n":
-                    self.i += 1
-            else:
-                break
+        m = _SKIP_RE.match(self.d, self.i)  # whitespace and % comments
+        if m:
+            self.i = m.end()
 
     def value(self):
         """Next value; returns Op for bare keywords. None at the end."""
@@ -164,11 +187,15 @@ class Lexer:
         if d[i:i + 2] == b"<<":
             self.i += 2
             out = {}
+            self._nest()
             while True:
                 k = self.value()
                 if k is None or k == Op(">>"):
+                    self.depth -= 1
                     return out
-                out[k] = self.value()
+                v = self.value()
+                if isinstance(k, str):  # keys are names; anything else is junk
+                    out[k] = v
         if d[i:i + 2] == b">>":
             self.i += 2
             return Op(">>")
@@ -183,9 +210,11 @@ class Lexer:
         if c == b"[":
             self.i += 1
             arr = []
+            self._nest()
             while True:
                 v = self.value()
                 if v is None or v == Op("]"):
+                    self.depth -= 1
                     return arr
                 arr.append(v)
         if c in (b"]", b"{", b"}"):
@@ -254,12 +283,13 @@ class Lexer:
 
 
 def _decode_stream(sdict, raw):
+    """Decoded stream bytes (at most MAX_STREAM); b"" for filters without text (images)."""
     filters = sdict.get("Filter")
     filters = filters if isinstance(filters, list) else [filters] if filters else []
     for f in filters:
         if f in ("FlateDecode", "Fl"):
             try:
-                raw = zlib.decompressobj().decompress(raw)
+                raw = zlib.decompressobj().decompress(raw, MAX_STREAM)
             except zlib.error:
                 return b""
         elif f in ("ASCII85Decode", "A85"):
@@ -280,9 +310,26 @@ def _decode_stream(sdict, raw):
 class PDF:
     def __init__(self, data):
         self.data = data
-        self.raw = {}       # num -> (dict bytes position info) parsed lazily
+        self.raw = {}       # num -> ("stream", dict, bytes) or ("bytes", bytes), parsed lazily
         self.cache = {}
+        self.fonts = {}     # font object number -> Font, shared by all pages
+        self.decoded = 0    # bytes decompressed so far (limit: MAX_DECODED)
         self._scan()
+
+    def decode(self, sdict, raw):
+        """_decode_stream with a limit on the total output (decompression bombs)."""
+        out = _decode_stream(sdict, raw)
+        self.decoded += len(out)
+        if self.decoded > MAX_DECODED:
+            raise ExtractError("The PDF is too large when unpacked")
+        return out
+
+    def font(self, ref):
+        """Font for a reference, parsed once per document."""
+        key = ref.num if isinstance(ref, Ref) else id(ref)
+        if key not in self.fonts:
+            self.fonts[key] = Font(self, ref)
+        return self.fonts[key]
 
     def _scan(self):
         d, pos = self.data, 0
@@ -315,7 +362,7 @@ class PDF:
         # objects packed inside object streams (PDF 1.5+)
         for num, entry in list(self.raw.items()):
             if entry[0] == "stream" and isinstance(entry[1], dict) and entry[1].get("Type") == "ObjStm":
-                sd, data = entry[1], _decode_stream(entry[1], entry[2])
+                sd, data = entry[1], self.decode(entry[1], entry[2])
                 first, n = sd.get("First", 0), sd.get("N", 0)
                 if not isinstance(first, int) or not isinstance(n, int):
                     continue
@@ -350,7 +397,7 @@ class PDF:
             _, sd, raw = self.raw[v.num]
             if isinstance(sd.get("Length"), Ref):  # indirect length: trust the endstream scan
                 pass
-            return _decode_stream({k: self.resolve(x) for k, x in sd.items()}, raw)
+            return self.decode({k: self.resolve(x) for k, x in sd.items()}, raw)
         return b""
 
     def pages(self):
@@ -361,20 +408,21 @@ class PDF:
                 root = o
         out, seen = [], set()
 
-        def walk(node_ref, inherited):
+        def walk(node_ref, inherited, depth):
             node = self.resolve(node_ref)
-            if not isinstance(node, dict) or id(node) in seen:
+            if not isinstance(node, dict) or id(node) in seen or depth > MAX_NESTING:
                 return
             seen.add(id(node))
             res = node.get("Resources", inherited)
             if node.get("Type") == "Pages" or "Kids" in node:
-                for kid in self.resolve(node.get("Kids")) or []:
-                    walk(kid, res)
+                kids = self.resolve(node.get("Kids"))
+                for kid in kids if isinstance(kids, list) else []:
+                    walk(kid, res, depth + 1)
             else:
                 out.append((node, res))
 
         if root:
-            walk(root.get("Pages"), None)
+            walk(root.get("Pages"), None, 0)
         if not out:  # broken page tree: take every page object
             out = [(o, o.get("Resources")) for o in (self.get(n) for n in sorted(self.raw))
                    if isinstance(o, dict) and o.get("Type") == "Page"]
@@ -383,7 +431,7 @@ class PDF:
 
 def parse_cmap(data):
     """ToUnicode CMap -> (code -> text, code length in bytes)."""
-    mapping, nbytes = {}, 1
+    mapping, nbytes, work = {}, 1, 0
     text = data.decode("latin-1")
     cs = re.search(r"begincodespacerange\s*<([0-9A-Fa-f]+)>", text)
     if cs:
@@ -403,8 +451,11 @@ def parse_cmap(data):
     for block in re.findall(r"beginbfrange(.*?)endbfrange", text, re.S):
         for lo, hi, rest in re.findall(r"<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*(\[[^\]]*\]|<[0-9A-Fa-f]+>)", block):
             lo_i, hi_i = int(lo, 16), int(hi, 16)
-            if hi_i - lo_i > 65535:
+            if hi_i - lo_i > 65535 or hi_i < lo_i:
                 continue
+            work += hi_i - lo_i + 1
+            if work > MAX_CMAP:  # hostile map: stop instead of burning CPU
+                break
             if rest.startswith("["):
                 for k, h in enumerate(re.findall(r"<([0-9A-Fa-f]*)>", rest)):
                     mapping[lo_i + k] = u(h)
@@ -489,7 +540,7 @@ def _content_text(pdf, data, resources, depth=0):
         if op == "Tf" and len(stack) >= 2 and isinstance(stack[-2], str):
             name = stack[-2]
             if name not in fonts:
-                fonts[name] = Font(pdf, font_refs.get(name))
+                fonts[name] = pdf.font(font_refs.get(name))
             font = fonts[name]
             if isinstance(stack[-1], (int, float)) and stack[-1]:
                 pos["size"] = abs(stack[-1])

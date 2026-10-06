@@ -89,6 +89,11 @@ class DB:
         try:
             self.conn.execute("CREATE VIRTUAL TABLE IF NOT EXISTS kb_fts USING fts5(text, tokenize='unicode61 remove_diacritics 2')")
             self.fts = True
+            # chunks added while FTS5 was unavailable (database copied from another Python) get indexed now
+            indexed = self.conn.execute("SELECT COUNT(*) FROM kb_fts").fetchone()[0]
+            if indexed < self.conn.execute("SELECT COUNT(*) FROM kb_chunks").fetchone()[0]:
+                self.conn.execute("DELETE FROM kb_fts")
+                self.conn.execute("INSERT INTO kb_fts(rowid, text) SELECT id, text FROM kb_chunks")
         except sqlite3.OperationalError:
             self.fts = False
         self.conn.commit()

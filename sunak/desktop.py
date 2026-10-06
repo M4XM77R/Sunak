@@ -111,7 +111,7 @@ def enable_autostart():
                  "StandardOutPath": str(log), "StandardErrorPath": str(log)}
         path.write_bytes(plistlib.dumps(plist))
     elif system == "Windows":
-        path.write_text(_vbs(command("--no-browser", gui=True)), encoding="utf-8")
+        path.write_text(_vbs(command("--no-browser", gui=True)), encoding="utf-16")  # WSH reads UTF-16 with BOM, so non-ASCII paths survive
     else:
         path.write_text(_desktop_entry(command("--no-browser"), autostart=True), encoding="utf-8")
     return path
@@ -167,7 +167,7 @@ def create_shortcut():
         # the .vbs starts Sunak without a console window; the shortcut points at it
         vbs = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "sunak" / "Sunak.vbs"
         vbs.parent.mkdir(parents=True, exist_ok=True)
-        vbs.write_text(_vbs(command(gui=True)), encoding="utf-8")
+        vbs.write_text(_vbs(command(gui=True)), encoding="utf-16")
         # shortcuts on the desktop (also when OneDrive moved it) and in the Start menu
         ps = ("$ws = New-Object -ComObject WScript.Shell; "
               "foreach ($d in @([Environment]::GetFolderPath('Desktop'), [Environment]::GetFolderPath('Programs'))) { "
@@ -183,7 +183,7 @@ def create_shortcut():
             written += [Path(x.strip()) for x in res.stdout.splitlines() if x.strip()]
             return written
         lnk = desktop_dir() / "Sunak.vbs"  # no PowerShell: put the script itself on the desktop
-        lnk.write_text(vbs.read_text(encoding="utf-8"), encoding="utf-8")
+        lnk.write_text(vbs.read_text(encoding="utf-16"), encoding="utf-16")
         written += [vbs, lnk]
     else:
         content = _desktop_entry(command())
