@@ -3,14 +3,14 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Odysseus · Login</title>
+  <title>Sunak · Login</title>
   <link rel="icon" href="/icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/app.css">
 </head>
 <body class="login-body">
   <form class="login" id="login">
     <img src="/icon.svg" alt="" width="56" height="56">
-    <h1>Odysseus</h1>
+    <h1>Sunak</h1>
     <input type="password" id="pw" placeholder="Password" autofocus autocomplete="current-password">
     <button class="btn primary wide" type="submit">Log in</button>
     <p class="error" id="err"></p>
@@ -20,7 +20,7 @@ try { const t = localStorage.getItem('ody-theme'); if (t) document.documentEleme
       const a = localStorage.getItem('ody-accent'); if (a) document.documentElement.style.setProperty('--accent', a); } catch (e) {}
 document.getElementById('login').addEventListener('submit', async (e) => {
   e.preventDefault();
-  const r = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'odysseus' },
+  const r = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'sunak' },
     body: JSON.stringify({ password: document.getElementById('pw').value }) });
   if (r.ok) location.href = '/'; else document.getElementById('err').textContent = 'Wrong password';
 });

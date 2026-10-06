@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
-# Odysseus Clone installer for Linux and macOS.
+# Sunak installer for Linux and macOS.
 #
-#   curl -fsSL https://raw.githubusercontent.com/M4XM77R/odysseus-clone/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/M4XM77R/sunak/main/install.sh | bash
 #
 # Options (append after "bash -s --" when piping, or pass directly):
 #   --yes          answer yes to every question (unattended)
 #   --no-ollama    do not install Ollama
-#   --no-start     do not start Odysseus after installing
+#   --no-start     do not start Sunak after installing
 set -euo pipefail
 
-REPO="${ODYSSEUS_REPO:-M4XM77R/odysseus-clone}"
-BRANCH="${ODYSSEUS_BRANCH:-main}"
-HOME_DIR="${ODYSSEUS_HOME:-$HOME/.odysseus-clone}"
+REPO="${SUNAK_REPO:-M4XM77R/sunak}"
+BRANCH="${SUNAK_BRANCH:-main}"
+HOME_DIR="${SUNAK_HOME:-$HOME/.sunak}"
 APP_DIR="$HOME_DIR/app"
 BIN_DIR="$HOME/.local/bin"
 YES=0; NO_OLLAMA=0; NO_START=0
@@ -36,7 +36,7 @@ ask() {  # ask "Question" -> 0 for yes
 }
 SUDO=""; [ "$(id -u)" -ne 0 ] && command -v sudo >/dev/null && SUDO="sudo"
 
-printf '\n  %s%sOdysseus Clone%s – your private AI workspace\n\n' "$B" "$P" "$R"
+printf '\n  %s%sSunak%s – your private AI workspace\n\n' "$B" "$P" "$R"
 
 # 1. Python 3.9+ ---------------------------------------------------------
 py_ok() { command -v python3 >/dev/null && python3 -c 'import sys; sys.exit(sys.version_info < (3, 9))' 2>/dev/null; }
@@ -55,7 +55,7 @@ say "Python $(python3 -c 'import platform; print(platform.python_version())') �
 
 # 2. Get the app -----------------------------------------------------------
 SRC=""
-if [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "$(dirname "${BASH_SOURCE[0]}")/odysseus/server.py" ]; then
+if [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "$(dirname "${BASH_SOURCE[0]}")/sunak/server.py" ]; then
   SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 fi
 mkdir -p "$HOME_DIR"
@@ -68,7 +68,7 @@ elif [ -d "$APP_DIR/.git" ]; then
   say "Updating existing install…"
   git -C "$APP_DIR" pull --ff-only -q
 elif [ -z "$SRC" ]; then
-  say "Downloading Odysseus…"
+  say "Downloading Sunak…"
   if command -v git >/dev/null && git clone -q --depth 1 -b "$BRANCH" "https://github.com/$REPO.git" "$APP_DIR.new" 2>/dev/null; then :
   else
     rm -rf "$APP_DIR.new" && mkdir -p "$APP_DIR.new"
@@ -81,9 +81,9 @@ say "App installed in $APP_DIR ✓"
 
 # 3. Launcher command ------------------------------------------------------
 mkdir -p "$BIN_DIR"
-cat > "$BIN_DIR/odysseus" <<EOF
+cat > "$BIN_DIR/sunak" <<EOF
 #!/usr/bin/env bash
-# Odysseus launcher. Usage: odysseus [--port N] [--host 0.0.0.0] [--no-browser] | update | uninstall
+# Sunak launcher. Usage: sunak [--port N] [--host 0.0.0.0] [--no-browser] | update | uninstall
 APP_DIR="$APP_DIR"
 case "\${1:-}" in
   update)
@@ -91,37 +91,37 @@ case "\${1:-}" in
     else curl -fsSL https://raw.githubusercontent.com/$REPO/$BRANCH/install.sh | bash -s -- --no-ollama --no-start; fi
     exit ;;
   uninstall)
-    read -r -p "Remove Odysseus and ALL its data in $HOME_DIR? [y/N] " a
-    case "\$a" in [yY]*) rm -rf "$HOME_DIR" "$BIN_DIR/odysseus" "\$HOME/.local/share/applications/odysseus.desktop"; echo "Removed.";; esac
+    read -r -p "Remove Sunak and ALL its data in $HOME_DIR? [y/N] " a
+    case "\$a" in [yY]*) rm -rf "$HOME_DIR" "$BIN_DIR/sunak" "\$HOME/.local/share/applications/sunak.desktop"; echo "Removed.";; esac
     exit ;;
 esac
 export PYTHONPATH="\$APP_DIR\${PYTHONPATH:+:\$PYTHONPATH}"
-exec python3 -m odysseus "\$@"
+exec python3 -m sunak "\$@"
 EOF
-chmod +x "$BIN_DIR/odysseus"
+chmod +x "$BIN_DIR/sunak"
 
 case ":$PATH:" in
   *":$BIN_DIR:"*) ;;
   *)
     for rc in "$HOME/.bashrc" "$HOME/.zshrc"; do
       if [ -f "$rc" ] || [ "$rc" = "$HOME/.bashrc" ]; then
-        grep -qs 'odysseus-clone PATH' "$rc" || printf '\nexport PATH="%s:$PATH"  # odysseus-clone PATH\n' "$BIN_DIR" >> "$rc"
+        grep -qs 'sunak PATH' "$rc" || printf '\nexport PATH="%s:$PATH"  # sunak PATH\n' "$BIN_DIR" >> "$rc"
       fi
     done
     export PATH="$BIN_DIR:$PATH"
     ;;
 esac
-say "Command ${B}odysseus${R} installed ✓"
+say "Command ${B}sunak${R} installed ✓"
 
 # Linux app-menu entry
 if [ "$(uname)" = Linux ] && [ -d "$HOME/.local/share" ]; then
   mkdir -p "$HOME/.local/share/applications"
-  cat > "$HOME/.local/share/applications/odysseus.desktop" <<EOF
+  cat > "$HOME/.local/share/applications/sunak.desktop" <<EOF
 [Desktop Entry]
-Name=Odysseus
+Name=Sunak
 Comment=Private AI workspace
-Exec=$BIN_DIR/odysseus
-Icon=$APP_DIR/odysseus/static/icon.svg
+Exec=$BIN_DIR/sunak
+Icon=$APP_DIR/sunak/static/icon.svg
 Terminal=true
 Type=Application
 Categories=Utility;
@@ -143,9 +143,9 @@ if [ "$NO_OLLAMA" = 0 ] && ! command -v ollama >/dev/null; then
 fi
 command -v ollama >/dev/null && say "Ollama ✓"
 
-printf '\n  %sDone!%s Start Odysseus any time with: %sodysseus%s\n' "$B" "$R" "$P" "$R"
+printf '\n  %sDone!%s Start Sunak any time with: %ssunak%s\n' "$B" "$R" "$P" "$R"
 printf '  On first start it suggests a model that fits your computer.\n\n'
 
 if [ "$NO_START" = 0 ]; then
-  if [ -r /dev/tty ]; then exec "$BIN_DIR/odysseus" </dev/tty; else exec "$BIN_DIR/odysseus"; fi
+  if [ -r /dev/tty ]; then exec "$BIN_DIR/sunak" </dev/tty; else exec "$BIN_DIR/sunak"; fi
 fi

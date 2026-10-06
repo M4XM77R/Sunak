@@ -9,8 +9,8 @@ import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from odysseus import research
-from odysseus.server import make_server, recommend, stream_to_text
+from sunak import research
+from sunak.server import make_server, recommend, stream_to_text
 
 
 class FakeBackend(BaseHTTPRequestHandler):
@@ -62,7 +62,7 @@ def serve(server):
     return server
 
 
-class OdysseusTest(unittest.TestCase):
+class SunakTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.backend = serve(ThreadingHTTPServer(("127.0.0.1", 0), FakeBackend))
@@ -84,7 +84,7 @@ class OdysseusTest(unittest.TestCase):
 
     @classmethod
     def call(cls, method, path, body=None, headers=None, raw=False):
-        h = {"Content-Type": "application/json", "X-Requested-With": "odysseus"}
+        h = {"Content-Type": "application/json", "X-Requested-With": "sunak"}
         h.update(headers or {})
         data = json.dumps(body).encode() if body is not None else None
         req = urllib.request.Request(cls.base + path, data=data, method=method, headers=h)
@@ -182,7 +182,7 @@ class OdysseusTest(unittest.TestCase):
         self.assertEqual(cm.exception.code, 403)
 
     def test_static_and_traversal(self):
-        self.assertIn("<title>Odysseus</title>", self.call("GET", "/", raw=True))
+        self.assertIn("<title>Sunak</title>", self.call("GET", "/", raw=True))
         self.assertIn("function md(", self.call("GET", "/app.js", raw=True))
         with self.assertRaises(urllib.error.HTTPError) as cm:
             self.call("GET", "/../server.py", raw=True)
@@ -202,7 +202,7 @@ class AuthTest(unittest.TestCase):
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             srv = serve(make_server("127.0.0.1", 0, tmp))
             base = f"http://127.0.0.1:{srv.server_address[1]}"
-            h = {"Content-Type": "application/json", "X-Requested-With": "odysseus"}
+            h = {"Content-Type": "application/json", "X-Requested-With": "sunak"}
 
             def req(method, path, body=None, cookie=None):
                 hh = dict(h, **({"Cookie": cookie} if cookie else {}))

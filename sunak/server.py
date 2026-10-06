@@ -25,7 +25,7 @@ MAX_BODY = 20 * 1024 * 1024
 
 DEFAULT_SETTINGS = {
     "default_model": "",
-    "system_prompt": "You are Odysseus, a helpful, honest and concise assistant. Use Markdown when it helps.",
+    "system_prompt": "You are Sunak, a helpful, honest and concise assistant. Use Markdown when it helps.",
     "temperature": 0.7,
     "use_memory": True,
     "accent": "#ff4fa3",
@@ -93,10 +93,10 @@ class App:
     def __init__(self, data_dir):
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(parents=True, exist_ok=True)
-        self.db = DB(str(self.data_dir / "odysseus.db"))
+        self.db = DB(str(self.data_dir / "sunak.db"))
         if not self.db.get_setting("secret"):
             self.db.set_setting("secret", secrets.token_hex(32))
-        env_pw = os.environ.get("ODYSSEUS_PASSWORD")
+        env_pw = os.environ.get("SUNAK_PASSWORD")
         if env_pw:
             self.db.set_setting("password_hash", hash_password(env_pw))
         self.ram = total_ram_gb()
@@ -214,10 +214,10 @@ def stream_to_text(chunks):
 
 class Handler(BaseHTTPRequestHandler):
     app: App = None
-    server_version = "Odysseus/" + __version__
+    server_version = "Sunak/" + __version__
 
     def log_message(self, fmt, *args):
-        if os.environ.get("ODYSSEUS_DEBUG"):
+        if os.environ.get("SUNAK_DEBUG"):
             super().log_message(fmt, *args)
 
     # helpers ----------------------------------------------------------
@@ -282,7 +282,7 @@ class Handler(BaseHTTPRequestHandler):
                 if method != "GET":
                     return self.error("Not found", 404)
                 return self.static(path)
-            if method != "GET" and self.headers.get("X-Requested-With") != "odysseus":
+            if method != "GET" and self.headers.get("X-Requested-With") != "sunak":
                 return self.error("Missing X-Requested-With header", 403)
             if path == "/api/login" and method == "POST":
                 return self.login()

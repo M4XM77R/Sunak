@@ -50,7 +50,7 @@ def _is_local(url):
 
 
 def _request(url, data=None, api_key="", timeout=TIMEOUT, method=None):
-    headers = {"Content-Type": "application/json", "User-Agent": "odysseus-clone"}
+    headers = {"Content-Type": "application/json", "User-Agent": "sunak"}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
     body = json.dumps(data).encode() if data is not None else None

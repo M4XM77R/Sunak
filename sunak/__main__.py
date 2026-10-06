@@ -1,4 +1,4 @@
-"""Start Odysseus:  python -m odysseus  [--port 7000] [--host 127.0.0.1] [--no-browser]"""
+"""Start Sunak:  python -m sunak  [--port 7000] [--host 127.0.0.1] [--no-browser]"""
 
 import argparse
 import os
@@ -15,12 +15,12 @@ RESET = "\033[0m" if sys.stdout.isatty() else ""
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(prog="odysseus", description="Self-hosted AI workspace")
-    ap.add_argument("--host", default=os.environ.get("ODYSSEUS_HOST", "127.0.0.1"),
+    ap = argparse.ArgumentParser(prog="sunak", description="Self-hosted AI workspace")
+    ap.add_argument("--host", default=os.environ.get("SUNAK_HOST", "127.0.0.1"),
                     help="address to listen on (use 0.0.0.0 for your LAN / phone)")
-    ap.add_argument("--port", type=int, default=int(os.environ.get("ODYSSEUS_PORT", "7000")))
-    ap.add_argument("--data-dir", default=os.environ.get("ODYSSEUS_DATA", str(Path.home() / ".odysseus-clone")))
-    ap.add_argument("--no-browser", action="store_true", default=bool(os.environ.get("ODYSSEUS_NO_BROWSER")))
+    ap.add_argument("--port", type=int, default=int(os.environ.get("SUNAK_PORT", "7000")))
+    ap.add_argument("--data-dir", default=os.environ.get("SUNAK_DATA", str(Path.home() / ".sunak")))
+    ap.add_argument("--no-browser", action="store_true", default=bool(os.environ.get("SUNAK_NO_BROWSER")))
     ap.add_argument("--version", action="version", version=__version__)
     args = ap.parse_args(argv)
 
@@ -36,7 +36,7 @@ def main(argv=None):
 
     shown = "localhost" if args.host in ("127.0.0.1", "0.0.0.0") else args.host
     url = f"http://{shown}:{port}"
-    print(f"\n  {PINK}⛵ Odysseus {__version__}{RESET} is running at {PINK}{url}{RESET}")
+    print(f"\n  {PINK}⛵ Sunak {__version__}{RESET} is running at {PINK}{url}{RESET}")
     print(f"  Data: {args.data_dir}")
     if args.host == "0.0.0.0":
         print("  Reachable from other devices on your network. Set a password in Settings!")

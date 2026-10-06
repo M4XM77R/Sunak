@@ -1,6 +1,6 @@
 # docker compose up -d   ->   http://localhost:7000
 services:
-  odysseus:
+  sunak:
     build: .
     ports:
       - "${APP_BIND:-127.0.0.1}:${APP_PORT:-7000}:7000"
@@ -8,7 +8,7 @@ services:
       - ./data:/data
     environment:
       - OLLAMA_BASE_URL=http://ollama:11434
-      - ODYSSEUS_PASSWORD=${ODYSSEUS_PASSWORD:-}
+      - SUNAK_PASSWORD=${SUNAK_PASSWORD:-}
     depends_on:
       - ollama
     restart: unless-stopped

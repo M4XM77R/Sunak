@@ -1,5 +1,5 @@
 'use strict';
-/* Odysseus Clone – single-file frontend, no build step. */
+/* Sunak – single-file frontend, no build step. */
 
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
@@ -14,7 +14,7 @@ const state = { settings: null, models: [], modelErrors: [], sessions: [], sessi
 
 /* ---------------- API ---------------- */
 async function api(path, opts = {}) {
-  const init = { method: opts.method || 'GET', headers: { 'X-Requested-With': 'odysseus' } };
+  const init = { method: opts.method || 'GET', headers: { 'X-Requested-With': 'sunak' } };
   if (opts.body !== undefined) { init.headers['Content-Type'] = 'application/json'; init.body = JSON.stringify(opts.body); }
   const r = await fetch(path, init);
   if (r.status === 401) { location.reload(); throw new Error('Login required'); }
@@ -25,7 +25,7 @@ async function api(path, opts = {}) {
 
 async function stream(path, body, onEvent, signal) {
   const r = await fetch(path, { method: 'POST', signal, body: JSON.stringify(body),
-    headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'odysseus' } });
+    headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'sunak' } });
   if (!r.ok) {
     const d = await r.json().catch(() => ({}));
     throw new Error(d.error || `HTTP ${r.status}`);
@@ -268,7 +268,7 @@ $('#newChat').onclick = newChat;
 
 /* ---------------- Chat rendering ---------------- */
 function welcome() {
-  const box = el('div', { class: 'welcome' }, el('img', { src: '/icon.svg', alt: '' }), el('h2', {}, 'Ahoy! I am Odysseus.'),
+  const box = el('div', { class: 'welcome' }, el('img', { src: '/icon.svg', alt: '' }), el('h2', {}, 'Hi, I am Sunak.'),
     el('p', { class: 'muted' }, 'Your private AI workspace. Everything stays on your machine.'));
   if (!state.models.length) box.append(setupCard());
   else {
@@ -648,7 +648,7 @@ function renderSettings() {
   ACCENTS.forEach((c) => sw.append(el('button', { class: c === s.accent ? 'on' : '', style: `background:${c}`, title: c,
     onclick: () => { s.accent = c; applyLook(); renderSettings(); } })));
   $('#logoutBtn').classList.toggle('hidden', !s.password_set);
-  $('#aboutLine').textContent = `Odysseus Clone ${state.status?.version || ''} · ${state.status?.ram_gb ? state.status.ram_gb + ' GB RAM' : ''}`;
+  $('#aboutLine').textContent = `Sunak ${state.status?.version || ''} · ${state.status?.ram_gb ? state.status.ram_gb + ' GB RAM' : ''}`;
 }
 function renderProviders() {
   const box = $('#providerList');

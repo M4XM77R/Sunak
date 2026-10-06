@@ -1,17 +1,17 @@
-# Odysseus Clone installer for Windows 10/11.
+# Sunak installer for Windows 10/11.
 #
-#   irm https://raw.githubusercontent.com/M4XM77R/odysseus-clone/main/install.ps1 | iex
+#   irm https://raw.githubusercontent.com/M4XM77R/sunak/main/install.ps1 | iex
 #
-# Set $env:ODYSSEUS_YES = "1" before running for an unattended install.
+# Set $env:SUNAK_YES = "1" before running for an unattended install.
 $ErrorActionPreference = "Stop"
-$Repo = if ($env:ODYSSEUS_REPO) { $env:ODYSSEUS_REPO } else { "M4XM77R/odysseus-clone" }
-$Branch = if ($env:ODYSSEUS_BRANCH) { $env:ODYSSEUS_BRANCH } else { "main" }
-$HomeDir = Join-Path $env:LOCALAPPDATA "odysseus-clone"
+$Repo = if ($env:SUNAK_REPO) { $env:SUNAK_REPO } else { "M4XM77R/sunak" }
+$Branch = if ($env:SUNAK_BRANCH) { $env:SUNAK_BRANCH } else { "main" }
+$HomeDir = Join-Path $env:LOCALAPPDATA "sunak"
 $AppDir = Join-Path $HomeDir "app"
 
 function Say($m) { Write-Host "⛵ $m" -ForegroundColor Magenta }
 function Ask($q) {
-  if ($env:ODYSSEUS_YES -eq "1") { return $true }
+  if ($env:SUNAK_YES -eq "1") { return $true }
   $a = Read-Host "$q [Y/n]"
   return -not ($a -match '^[nN]')
 }
@@ -28,7 +28,7 @@ function Find-Python {
   return $null
 }
 
-Write-Host "`n  Odysseus Clone – your private AI workspace`n" -ForegroundColor Magenta
+Write-Host "`n  Sunak – your private AI workspace`n" -ForegroundColor Magenta
 
 # 1. Python
 $py = Find-Python
@@ -44,7 +44,7 @@ Say "Python ✓"
 
 # 2. App
 New-Item -ItemType Directory -Force -Path $HomeDir | Out-Null
-$local = if ($PSScriptRoot -and (Test-Path (Join-Path $PSScriptRoot "odysseus\server.py"))) { $PSScriptRoot } else { $null }
+$local = if ($PSScriptRoot -and (Test-Path (Join-Path $PSScriptRoot "sunak\server.py"))) { $PSScriptRoot } else { $null }
 $tmp = "$AppDir.new"
 if (Test-Path $tmp) { Remove-Item -Recurse -Force $tmp }
 if ($local) {
@@ -52,11 +52,11 @@ if ($local) {
   New-Item -ItemType Directory -Force -Path $tmp | Out-Null
   Copy-Item -Recurse -Path (Join-Path $local "*") -Destination $tmp -Exclude ".git", "data"
 } else {
-  Say "Downloading Odysseus…"
-  $zip = Join-Path $env:TEMP "odysseus-clone.zip"
+  Say "Downloading Sunak…"
+  $zip = Join-Path $env:TEMP "sunak.zip"
   try { Invoke-WebRequest -UseBasicParsing "https://codeload.github.com/$Repo/zip/refs/heads/$Branch" -OutFile $zip }
   catch { throw "Download failed. If the repository is private, clone it and run .\install.ps1 inside it." }
-  $ex = Join-Path $env:TEMP "odysseus-clone-x"
+  $ex = Join-Path $env:TEMP "sunak-x"
   if (Test-Path $ex) { Remove-Item -Recurse -Force $ex }
   Expand-Archive $zip -DestinationPath $ex
   Move-Item (Get-ChildItem $ex | Select-Object -First 1).FullName $tmp
@@ -68,15 +68,15 @@ Say "App installed in $AppDir ✓"
 
 # 3. Launcher + shortcuts
 $pyCmd = $py
-$cmd = Join-Path $HomeDir "odysseus.cmd"
+$cmd = Join-Path $HomeDir "sunak.cmd"
 @"
 @echo off
 if /I "%~1"=="update" (
-  powershell -NoProfile -ExecutionPolicy Bypass -Command "`$env:ODYSSEUS_YES='1'; `$env:ODYSSEUS_NO_START='1'; irm https://raw.githubusercontent.com/$Repo/$Branch/install.ps1 | iex"
+  powershell -NoProfile -ExecutionPolicy Bypass -Command "`$env:SUNAK_YES='1'; `$env:SUNAK_NO_START='1'; irm https://raw.githubusercontent.com/$Repo/$Branch/install.ps1 | iex"
   exit /b
 )
 set "PYTHONPATH=$AppDir;%PYTHONPATH%"
-$pyCmd -m odysseus %*
+$pyCmd -m sunak %*
 "@ | Set-Content -Encoding ASCII $cmd
 
 $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
@@ -85,7 +85,7 @@ if (-not ($userPath -split ";" | Where-Object { $_ -eq $HomeDir })) {
 }
 $ws = New-Object -ComObject WScript.Shell
 foreach ($dir in @([Environment]::GetFolderPath("Desktop"), (Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs"))) {
-  $lnk = $ws.CreateShortcut((Join-Path $dir "Odysseus.lnk"))
+  $lnk = $ws.CreateShortcut((Join-Path $dir "Sunak.lnk"))
   $lnk.TargetPath = $cmd
   $lnk.WorkingDirectory = $HomeDir
   $lnk.Save()
@@ -93,12 +93,12 @@ foreach ($dir in @([Environment]::GetFolderPath("Desktop"), (Join-Path $env:APPD
 Say "Shortcuts on Desktop and Start Menu ✓"
 
 # 4. Ollama
-if ($env:ODYSSEUS_NO_OLLAMA -ne "1" -and -not (Get-Command ollama -ErrorAction SilentlyContinue)) {
+if ($env:SUNAK_NO_OLLAMA -ne "1" -and -not (Get-Command ollama -ErrorAction SilentlyContinue)) {
   if (Ask "Install Ollama to run AI models on this computer? (recommended)") {
     try { winget install -e --id Ollama.Ollama --accept-package-agreements --accept-source-agreements }
     catch { Write-Warning "Ollama install failed – get it from https://ollama.com/download" }
   }
 }
 
-Write-Host "`n  Done! Start Odysseus with the desktop icon or by typing: odysseus`n" -ForegroundColor Magenta
-if ($env:ODYSSEUS_NO_START -ne "1") { & $cmd }
+Write-Host "`n  Done! Start Sunak with the desktop icon or by typing: sunak`n" -ForegroundColor Magenta
+if ($env:SUNAK_NO_START -ne "1") { & $cmd }
