@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Odysseus</title>
+  <meta name="theme-color" content="#ff4fa3">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar" id="sidebar">
+    <div class="brand">
+      <img src="/icon.svg" alt="" width="28" height="28">
+      <span>Odysseus</span>
+    </div>
+    <button class="btn primary wide" id="newChat" title="New chat (Ctrl+K)">＋ New chat</button>
+    <nav class="nav">
+      <button data-view="chat" class="active">💬 Chat</button>
+      <button data-view="compare">⚖️ Compare</button>
+      <button data-view="research">🔎 Research</button>
+      <button data-view="documents">📝 Documents</button>
+      <button data-view="notes">🧠 Notes &amp; Memory</button>
+      <button data-view="settings">⚙️ Settings</button>
+    </nav>
+    <div class="sessions-head">
+      <span>Chats</span>
+      <input id="sessionFilter" type="search" placeholder="Search…" aria-label="Search chats">
+    </div>
+    <div class="sessions" id="sessions"></div>
+  </aside>
+  <div class="scrim" id="scrim"></div>
+
+  <main class="main">
+    <header class="topbar">
+      <button class="icon-btn menu" id="menuBtn" aria-label="Menu">☰</button>
+      <h1 id="viewTitle">Chat</h1>
+      <div class="spacer"></div>
+      <select id="modelSelect" class="model-select" aria-label="Model"></select>
+      <button class="icon-btn" id="themeBtn" title="Toggle light/dark">🌓</button>
+    </header>
+
+    <!-- CHAT -->
+    <section class="view active" id="view-chat">
+      <div class="messages" id="messages"></div>
+      <form class="composer" id="composer">
+        <div class="attachments" id="attachments"></div>
+        <div class="composer-row">
+          <label class="icon-btn" title="Attach text file">📎<input type="file" id="fileInput" multiple hidden></label>
+          <textarea id="prompt" rows="1" placeholder="Message Odysseus…" title="Enter to send, Shift+Enter for a new line"></textarea>
+          <button class="btn primary" id="sendBtn" type="submit">Send</button>
+        </div>
+      </form>
+    </section>
+
+    <!-- COMPARE -->
+    <section class="view" id="view-compare">
+      <div class="pad">
+        <p class="muted">Send one prompt to several models at once and compare speed and quality side by side.</p>
+        <div class="compare-models" id="compareModels"></div>
+        <form id="compareForm" class="inline-form">
+          <textarea id="comparePrompt" rows="3" placeholder="Prompt to compare…"></textarea>
+          <button class="btn primary" type="submit">Compare</button>
+        </form>
+        <div class="compare-grid" id="compareGrid"></div>
+      </div>
+    </section>
+
+    <!-- RESEARCH -->
+    <section class="view" id="view-research">
+      <div class="pad narrow">
+        <p class="muted">Odysseus searches the web, reads the best pages and writes a report with sources.</p>
+        <form id="researchForm" class="inline-form">
+          <textarea id="researchQ" rows="2" placeholder="What do you want to know?"></textarea>
+          <button class="btn primary" type="submit">Research</button>
+        </form>
+        <div id="researchStatus" class="status-log"></div>
+        <div id="researchSources" class="sources"></div>
+        <article id="researchReport" class="md"></article>
+        <div id="researchActions" class="row hidden">
+          <button class="btn" id="researchSave">Save as document</button>
+          <button class="btn" id="researchCopy">Copy</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- DOCUMENTS -->
+    <section class="view" id="view-documents">
+      <div class="docs">
+        <div class="doc-list">
+          <button class="btn primary wide" id="newDoc">＋ New document</button>
+          <div id="docList"></div>
+        </div>
+        <div class="doc-editor hidden" id="docEditor">
+          <div class="row">
+            <input id="docTitle" class="title-input" placeholder="Title">
+            <span class="muted small" id="docSaved"></span>
+            <button class="btn" id="docPreviewBtn">Preview</button>
+            <button class="btn" id="docExport" title="Download as Markdown">⬇</button>
+            <button class="btn danger" id="docDelete" title="Delete">🗑</button>
+          </div>
+          <textarea id="docContent" class="doc-content" placeholder="Start writing… (Markdown supported)"></textarea>
+          <article id="docPreview" class="md doc-preview hidden"></article>
+          <form id="docAiForm" class="inline-form">
+            <input id="docAi" placeholder="✨ Ask AI: “make it shorter”, “fix grammar”, “continue writing”…  (select text to edit only that)">
+            <button class="btn primary" type="submit">Apply</button>
+          </form>
+        </div>
+        <div class="empty doc-empty" id="docEmpty">Pick a document or create a new one.</div>
+      </div>
+    </section>
+
+    <!-- NOTES -->
+    <section class="view" id="view-notes">
+      <div class="pad narrow">
+        <p class="muted">Notes marked as <b>memory</b> are remembered in every chat (e.g. “My name is Max”, “Answer in German”).</p>
+        <form id="noteForm" class="inline-form">
+          <textarea id="noteInput" rows="2" placeholder="New note…"></textarea>
+          <label class="check"><input type="checkbox" id="noteMemory" checked> memory</label>
+          <button class="btn primary" type="submit">Add</button>
+        </form>
+        <div id="noteList" class="notes"></div>
+      </div>
+    </section>
+
+    <!-- SETTINGS -->
+    <section class="view" id="view-settings">
+      <div class="pad narrow settings">
+        <h2>Models</h2>
+        <div id="modelBox"></div>
+        <div class="row">
+          <input id="pullName" placeholder="Ollama model, e.g. qwen3:4b, gemma3:4b, llama3.2">
+          <button class="btn primary" id="pullBtn">Download</button>
+        </div>
+        <div id="pullProgress"></div>
+
+        <h2>Providers</h2>
+        <p class="muted small">Ollama runs models on your computer. Add any OpenAI-compatible API (OpenAI, OpenRouter, Groq, LM Studio, llama.cpp, vLLM) to use other models.</p>
+        <div id="providerList"></div>
+        <div class="row">
+          <button class="btn" id="addProvider">＋ Add provider</button>
+          <select id="providerPreset" aria-label="Preset">
+            <option value="">Preset…</option>
+            <option value="openai|OpenAI|https://api.openai.com/v1">OpenAI</option>
+            <option value="openai|OpenRouter|https://openrouter.ai/api/v1">OpenRouter</option>
+            <option value="openai|Groq|https://api.groq.com/openai/v1">Groq</option>
+            <option value="openai|LM Studio|http://localhost:1234/v1">LM Studio</option>
+            <option value="openai|llama.cpp|http://localhost:8080/v1">llama.cpp server</option>
+            <option value="ollama|Ollama (remote)|http://192.168.1.10:11434">Ollama on another PC</option>
+          </select>
+        </div>
+
+        <h2>Chat</h2>
+        <label>System prompt<textarea id="sysPrompt" rows="3"></textarea></label>
+        <label>Creativity (temperature): <b id="tempVal"></b><input type="range" id="temperature" min="0" max="1.5" step="0.1"></label>
+        <label class="check"><input type="checkbox" id="useMemory"> Use memory notes in chats</label>
+
+        <h2>Look</h2>
+        <div class="row swatches" id="swatches"></div>
+
+        <h2>Security</h2>
+        <p class="muted small">Set a password if Odysseus is reachable from other devices. Leave empty to disable.</p>
+        <div class="row">
+          <input id="password" type="password" placeholder="New password" autocomplete="new-password">
+          <button class="btn" id="savePassword">Set password</button>
+          <button class="btn hidden" id="logoutBtn">Log out</button>
+        </div>
+
+        <div class="row sticky-save">
+          <button class="btn primary" id="saveSettings">Save settings</button>
+          <span class="muted small" id="settingsMsg"></span>
+        </div>
+        <p class="muted small" id="aboutLine"></p>
+      </div>
+    </section>
+  </main>
+</div>
+<div id="toast" class="toast"></div>
+<script src="/app.js"></script>
+</body>
+</html>
