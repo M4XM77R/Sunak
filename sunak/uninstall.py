@@ -347,7 +347,7 @@ def main(argv, ask=input, out=print):
     except OSError:
         pass
     failed = False
-    out("Removing Sunak…")
+    out("Removing Sunak...")
     _stop_running(out)
     if desktop.disable_autostart():
         out("  Removed autostart")
@@ -413,7 +413,7 @@ def main(argv, ask=input, out=print):
                 out("  " + cmds)
                 failed = True
             else:
-                out("Uninstalling Ollama…")
+                out("Uninstalling Ollama...")
                 for cmd in cmds:
                     if not _run(cmd, out) and not _best_effort(cmd):
                         failed = True

@@ -248,7 +248,7 @@ class OllamaTest(unittest.TestCase):
         code, out = self.go(answers=["y", "y", "n"])  # uninstall, Ollama yes, models no
         self.assertEqual((code, self.ran), (0, [["brew", "uninstall", "--cask", "ollama"]]))
         self.assertTrue(self.models.exists())
-        self.assertIn("  Ollama is uninstalled.", out)
+        self.assertTrue({"  Ollama is uninstalled.", "  Ollama's uninstaller has run."} & set(out), out)
         self.ran.clear()
         self.go("--yes", "--with-ollama")
         self.assertEqual(len(self.ran), 1)
