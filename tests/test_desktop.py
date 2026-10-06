@@ -94,6 +94,7 @@ class DesktopTest(unittest.TestCase):
         script = (written[0] / "Contents" / "MacOS" / "sunak").read_text()
         self.assertLess(script.index('mkdir -p "$HOME/.sunak"'), script.index("exec "))
 
+    @unittest.skipIf(platform.system() == "Windows", "desktop entries are Linux files")
     def test_desktop_entry_exec_is_one_argument_per_value(self):
         with mock.patch.object(desktop, "PKG_ROOT", desktop.Path("/opt/My Apps/sunak")):
             entry = desktop._desktop_entry(["/usr/bin/python3", "-m", "sunak"])
