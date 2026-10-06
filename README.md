@@ -7,6 +7,9 @@
   Läuft komplett auf deinem Rechner, in Pink und mit Fokus auf einfache Installation.
 </p>
 
+> [!WARNING]
+> **Komplett vibe coded.** Sunak wurde vollständig von einer KI (Claude) geschrieben, inklusive Installer, Tests und dieser Anleitung. Kein Mensch hat den Code Zeile für Zeile geprüft. Die automatischen Tests laufen zwar auf Linux, macOS und Windows, trotzdem können Fehler und Sicherheitslücken drin sein. Nutzung auf eigene Gefahr. Mach Sunak nicht ungeschützt im Internet erreichbar und leg keine sensiblen Daten hinein, ohne sie zusätzlich zu sichern.
+
 <p align="center"><img src="docs/chat.png" alt="Chat" width="820"></p>
 
 ## Installation (eine Zeile)
