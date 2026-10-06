@@ -500,7 +500,7 @@ async function sendNow() {
   if (state.attachments.some((a) => a.loading)) { toast('Still reading your files…'); return; }
   if (agentOn() && !agentFolder()) { toast('Enter the project folder for the agent first'); $('#agentFolder').focus(); return; }
   const pics = state.attachments.filter((a) => a.image);
-  if (pics.length && agentOn()) { toast('Agent mode cannot look at images yet. Switch it off (🛠) to ask about the image.'); return; }
+  if (pics.length && (agentOn() || mcpOn())) { toast('Agent mode and tools (MCP) cannot look at images yet. Switch them off (🛠, 🔌) to ask about the image.'); return; }
   const files = state.attachments.filter((a) => !a.image);
   if (files.length) {
     text = files.map((a) => `File \`${a.name}\`:\n\`\`\`\n${a.text}\n\`\`\``).join('\n\n') + (text ? `\n\n${text}` : '');
@@ -526,7 +526,7 @@ async function sendNow() {
 }
 
 async function runChat(payload, localUserMsg) {
-  if (agentOn()) return runAgent(payload, localUserMsg);
+  if (agentOn() || mcpOn()) return runAgent(payload, localUserMsg);
   const s = state.session;
   if (localUserMsg) s.messages.push(localUserMsg);
   const ans = { role: 'assistant', content: '', model: currentModel() };
@@ -594,12 +594,21 @@ async function runChat(payload, localUserMsg) {
    commands wait for a click. See sunak/agent.py. */
 const agentFolder = () => $('#agentFolder').value.trim();
 const agentOn = () => !!state.settings?.agent_enabled && store.get('sunak-agent') === '1';
+// 🔌 tools of the MCP servers (Settings → Tools); every call asks first, like a change in agent mode
+const mcpReady = () => (state.settings?.mcp_servers || []).some((m) => m.enabled);
+const mcpOn = () => mcpReady() && store.get('sunak-mcp') === '1';
 function renderAgentToggle() {
   const b = $('#agentToggle');
   b.classList.toggle('hidden', !state.settings?.agent_enabled);
   b.setAttribute('aria-pressed', String(agentOn()));
   b.title = agentOn() ? 'Agent mode on: the model works in your project folder' : 'Agent mode: let the model work in a project folder';
-  $('#agentBar').classList.toggle('hidden', !agentOn());
+  const m = $('#mcpToggle');
+  m.classList.toggle('hidden', !mcpReady());
+  m.setAttribute('aria-pressed', String(mcpOn()));
+  m.title = mcpOn() ? 'Tools (MCP) on: the model may use your MCP servers, after asking' : 'Tools (MCP): let the model use your MCP servers';
+  $('#agentBar').classList.toggle('hidden', !agentOn() && !mcpOn());
+  $('#agentLabel').classList.toggle('hidden', !agentOn());
+  $('#agentFolder').classList.toggle('hidden', !agentOn());
   promptEl.placeholder = agentOn() ? 'Tell the agent what to do…' : 'Message Sunak…';
 }
 $('#agentToggle').onclick = () => {
@@ -607,11 +616,15 @@ $('#agentToggle').onclick = () => {
   renderAgentToggle();
   if (agentOn() && !agentFolder()) $('#agentFolder').focus();
 };
+$('#mcpToggle').onclick = () => {
+  store.set('sunak-mcp', mcpOn() ? '0' : '1');
+  renderAgentToggle();
+};
 $('#agentFolder').value = store.get('sunak-agent-folder', '');
 $('#agentFolder').onchange = () => store.set('sunak-agent-folder', agentFolder());
 $('#agentRevoke').onclick = async () => {
   if (state.session?.id) await api('/api/agent/revoke', { method: 'POST', body: { session_id: state.session.id } }).catch((e) => toast(e.message));
-  toast('Sunak asks again before every change and command in this chat');
+  toast('Sunak asks again before every change, command and tool in this chat');
 };
 
 const STEP_ICONS = { running: '⏳', waiting: '❓', done: '✅', error: '⚠️', denied: '✋', stopped: '⏹' };
@@ -624,11 +637,19 @@ function stepEl(st, onDecide) {
   const status = onDecide ? 'waiting' : st.status;
   const kids = [];
   if (st.command) kids.push(el('pre', { class: 'cmd' }, `$ ${st.command}`));
+  if (st.input) kids.push(el('pre', { class: 'cmd' }, st.input));
   if (st.diff) kids.push(diffEl(st.diff));
   if (st.output && !onDecide) kids.push(el('pre', { class: 'step-out' }, st.output));
   const box = el('details', { class: `step ${status}`, open: !!onDecide || status === 'error' },
     el('summary', {}, el('span', { class: 'step-icon' }, STEP_ICONS[status] || '•'), el('code', {}, st.title || st.tool)), kids);
-  if (onDecide) {
+  if (onDecide && st.kind?.startsWith('tool:')) {
+    box.append(el('div', { class: 'row step-actions' },
+      el('span', { class: 'muted small' }, 'Use this tool?'),
+      el('button', { class: 'btn primary', type: 'button', onclick: () => onDecide('allow') }, 'Allow'),
+      el('button', { class: 'btn', type: 'button', onclick: () => onDecide('always'),
+        title: 'Don’t ask again in this chat until Sunak restarts or you click “Ask again”' }, tr('Allow {tool} in this chat', { tool: st.mcp_tool || st.tool })),
+      el('button', { class: 'btn', type: 'button', onclick: () => onDecide('deny') }, 'Deny')));
+  } else if (onDecide) {
     const run = st.kind === 'run';
     box.append(el('div', { class: 'row step-actions' },
       el('span', { class: 'muted small' }, run ? 'Run this command?' : st.new_file ? 'Create this file?' : 'Apply this change?'),
@@ -675,7 +696,7 @@ async function runAgent(payload, localUserMsg) {
     if (ask) node.scrollIntoView({ block: 'nearest' }); else scroll();
   };
   try {
-    await stream('/api/agent', { session_id: s.id, model: currentModel(), persona: currentPersona(), folder: agentFolder(), ...payload }, (ev) => {
+    await stream('/api/agent', { session_id: s.id, model: currentModel(), persona: currentPersona(), folder: agentOn() ? agentFolder() : '', mcp: mcpOn(), ...payload }, (ev) => {
       if (ev.type === 'start') { s.title = ev.title; $('#viewTitle').textContent = ev.title; state.agentRun = ev.run; }
       else if (ev.type === 'think' || ev.type === 'text') {
         if (!cur) { cur = { raw: '', thinking: false, el: el('div', { class: 'md' }) }; target.append(cur.el); }
@@ -1919,6 +1940,9 @@ function renderSettings() {
   renderProviders();
   draftPersonas = s.personas.map((p) => ({ ...p }));
   renderPersonas();
+  draftMcp = (s.mcp_servers || []).map((m) => ({ ...m }));
+  mcpSaved = JSON.stringify(draftMcp);
+  renderMcp();
   $('#sysPrompt').value = s.system_prompt;
   $('#temperature').value = s.temperature;
   $('#tempVal').textContent = s.temperature;
@@ -1999,10 +2023,80 @@ function renderPersonas() {
 }
 $('#addPersona').onclick = () => { draftPersonas.push({ icon: '✨', name: tr('New persona'), prompt: '' }); renderPersonas(); $('#personaList .persona:last-child input:not(.emoji)').select(); };
 
+/* MCP servers. Environment values and tokens are never sent to the browser: an empty field keeps the saved
+   ones (as long as the command or address stays the same), typing replaces them. */
+let draftMcp = [], mcpSaved = '[]';
+function mcpBody(m) {
+  const out = { id: m.id, name: m.name.trim(), type: m.type, enabled: m.enabled !== false };
+  if (m.type === 'stdio') {
+    out.command = m.command || '';
+    if (m.envText?.trim()) out.env = m.envText;
+  } else {
+    out.url = m.url || '';
+    if (m.token) out.token = m.token;
+  }
+  return out;
+}
+function renderMcp() {
+  const box = $('#mcpList');
+  box.innerHTML = '';
+  draftMcp.forEach((m, i) => {
+    const stdio = m.type === 'stdio';
+    const result = el('p', { class: 'muted small mcp-result' }, m.result || '');
+    const env = el('textarea', { rows: 2, spellcheck: 'false', 'aria-label': 'Environment variables',
+      placeholder: m.env_keys?.length ? tr('Saved: {names}. Type NAME=value lines to replace them.', { names: m.env_keys.join(', ') })
+        : 'Environment variables (optional), one NAME=value per line' });
+    env.value = m.envText || '';
+    env.oninput = () => (m.envText = env.value);
+    const test = el('button', { class: 'btn', type: 'button', onclick: async () => {
+      test.disabled = true;
+      result.textContent = tr('Starting {name} …', { name: m.name || 'server' });
+      try {
+        const r = await api('/api/mcp/test', { method: 'POST', body: { server: mcpBody(m) } });
+        m.result = `✓ ${trn(r.tools.length, '{n} tool', '{n} tools')}: ${r.tools.map((t) => t.name).join(', ')}`;
+      } catch (e) { m.result = `⚠️ ${e.message}`; }
+      result.textContent = m.result;
+      test.disabled = false;
+    } }, 'Test');
+    box.append(el('div', { class: 'card persona mcp' },
+      el('div', { class: 'row' },
+        el('input', { value: m.name, placeholder: 'Name', 'aria-label': 'Name', oninput: (e) => (m.name = e.target.value) }),
+        el('select', { 'aria-label': 'Type', onchange: (e) => { m.type = e.target.value; renderMcp(); } },
+          el('option', { value: 'stdio', selected: stdio }, 'Program'),
+          el('option', { value: 'http', selected: !stdio }, 'Address (HTTP)')),
+        el('label', { class: 'check' }, el('input', { type: 'checkbox', checked: m.enabled !== false,
+          onchange: (e) => (m.enabled = e.target.checked) }), 'on'),
+        test,
+        el('button', { class: 'icon-btn', type: 'button', title: 'Remove server', onclick: () => { draftMcp.splice(i, 1); renderMcp(); } }, '🗑')),
+      stdio
+        ? [el('input', { value: m.command || '', spellcheck: 'false', autocomplete: 'off', class: 'mcp-cmd', 'aria-label': 'Command',
+            placeholder: 'Command, e.g. npx -y @modelcontextprotocol/server-memory', oninput: (e) => (m.command = e.target.value) }), env]
+        : [el('input', { value: m.url || '', spellcheck: 'false', autocomplete: 'off', 'aria-label': 'Address',
+            placeholder: 'Address, e.g. http://localhost:3000/mcp', oninput: (e) => (m.url = e.target.value) }),
+          el('input', { value: m.token || '', type: 'password', autocomplete: 'off', 'aria-label': 'Token',
+            placeholder: m.has_token ? '•••••• saved (type to replace)' : 'Token (optional)', oninput: (e) => (m.token = e.target.value) })],
+      result));
+  });
+}
+$('#addMcp').onclick = () => { draftMcp.push({ name: '', type: 'stdio', command: '', enabled: true }); renderMcp(); $('#mcpList .mcp:last-child input').focus(); };
+$('#mcpPreset').onchange = (e) => {
+  if (!e.target.value) return;
+  const [name, command] = e.target.value.split('|');
+  draftMcp.push({ name, type: 'stdio', command, enabled: true });
+  e.target.value = '';
+  renderMcp();
+  const input = $('#mcpList .mcp:last-child .mcp-cmd');
+  input.focus();
+  if (command.includes('/path/to/folder')) input.setSelectionRange(command.indexOf('/path/to/folder'), command.length);
+};
+
 $('#saveSettings').onclick = async () => {
   const s = state.settings;
+  // only when changed: from another device without a password the server refuses MCP changes
+  const mcpChanged = JSON.stringify(draftMcp) !== mcpSaved;
   try {
     state.settings = await api('/api/settings', { method: 'PUT', body: {
+      ...(mcpChanged ? { mcp_servers: draftMcp.map(mcpBody) } : {}),
       providers: draftProviders.filter((p) => p.base_url.trim()), system_prompt: $('#sysPrompt').value,
       temperature: parseFloat($('#temperature').value), use_memory: $('#useMemory').checked,
       check_updates: $('#checkUpdates').checked,

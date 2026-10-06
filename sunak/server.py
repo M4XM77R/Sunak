@@ -24,7 +24,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlparse
 
-from . import __version__, agent, extract, gpu, images, knowledge, mail, ollama, providers, qr, research, speech, updates
+from . import __version__, agent, extract, gpu, images, knowledge, mail, mcp, ollama, providers, qr, research, speech, updates
 from .db import DB, new_id
 
 STATIC = Path(__file__).parent / "static"
@@ -213,6 +213,8 @@ class App:
         self._update_lock = threading.Lock()
         self._checking = False
         self.agents = agent.Registry()
+        self.mcp = mcp.Manager()  # MCP servers start when a chat first needs their tools
+        self.mcp.configure(self.mcp_servers())
         self.host, self.port, self.handler = None, None, None  # set by make_server
         self.lan, self.lan_error = None, ""  # second server on the network address (phone access)
         self._lan_lock = threading.Lock()
@@ -261,6 +263,10 @@ class App:
         s["personas"] = DEFAULT_PERSONAS if personas is None else personas
         return s
 
+    def mcp_servers(self):
+        """The MCP servers with their secrets (environment values, tokens); never send these to the browser."""
+        return self.db.get_setting("mcp_servers") or []
+
     def save_settings(self, data):
         """Validate everything in `data` (prefs, providers, personas, password), then store it.
         Nothing is saved when any part is invalid."""
@@ -272,6 +278,7 @@ class App:
                 prefs[k] = _check_pref(k, data[k], default)
         new_providers = self._clean_providers(data["providers"]) if "providers" in data else None
         new_personas = self._clean_personas(data["personas"]) if "personas" in data else None
+        new_mcp = mcp.clean(data["mcp_servers"], self.mcp_servers()) if "mcp_servers" in data else None
         if "password" in data and not isinstance(data["password"], (str, type(None))):
             raise ValueError("Password must be text")
         self.db.set_setting("prefs", prefs)
@@ -279,6 +286,9 @@ class App:
             self.db.set_setting("providers", new_providers)
         if new_personas is not None:
             self.db.set_setting("personas", new_personas)
+        if new_mcp is not None:
+            self.db.set_setting("mcp_servers", new_mcp)
+            self.mcp.configure(new_mcp)
         if "password" in data:
             pw = data["password"] or ""
             self.db.set_setting("password_hash", hash_password(pw) if pw else "")
@@ -816,11 +826,15 @@ class Handler(BaseHTTPRequestHandler):
         # API keys stay on the server: the browser only learns whether one is saved.
         s["providers"] = [dict({k: v for k, v in p.items() if k != "api_key"}, has_key=bool(p.get("api_key")))
                           for p in s["providers"]]
+        s["mcp_servers"] = [mcp.public(c) for c in self.app.mcp_servers()]  # without environment values and tokens
         self.send_json(s)
 
     def put_settings(self):
         """PUT /api/settings"""
-        self.app.save_settings(self.body())
+        d = self.body()
+        if isinstance(d, dict) and "mcp_servers" in d and not self.tools_allowed():
+            return
+        self.app.save_settings(d)
         self.get_settings()
 
     def get_models(self):
@@ -946,7 +960,7 @@ class Handler(BaseHTTPRequestHandler):
         refs = images.existing(self.app.data_dir, d.get("image_refs"))
         if d.get("images") or refs:
             if not allow_images:
-                raise ValueError("Agent mode cannot look at images yet. Switch it off (🛠) to ask about the image.")
+                raise ValueError("Agent mode and tools (MCP) cannot look at images yet. Switch them off (🛠, 🔌) to ask about the image.")
             if self.app.vision(prov, model) is False:
                 raise ValueError(f"{model} cannot see images. Pick a model with vision: on the Models page e.g. "
                                  "qwen2.5vl, gemma3 or llama3.2-vision, or Claude.")
@@ -1094,39 +1108,67 @@ class Handler(BaseHTTPRequestHandler):
             return False
         return True
 
+    def tools_allowed(self):
+        """MCP servers run programs on this computer: from other devices they need a password, like agent
+        mode. Sends the error and returns False otherwise."""
+        if not self.is_direct_local() and not self.app.auth_required():
+            self.error("Tools (MCP) from another device need a password. Set one in Settings → Security.", 403)
+            return False
+        return True
+
     def agent_chat(self):
-        """POST /api/agent: like /api/chat, but the model works in `folder` with tools (see sunak/agent.py).
+        """POST /api/agent: like /api/chat, but the model works with tools (see sunak/agent.py): in `folder`
+        (agent mode), with the tools of the enabled MCP servers (`mcp`: true), or both.
 
         Events: start (with `run`), think, text, step, confirm (answer with /api/agent/confirm),
         step_done, notice, ping, done | error. The answer is stored with its steps in meta.agent."""
-        if not self.agent_allowed():
-            return
         d = self.body()
-        folder = agent.check_folder(d.get("folder"), self.app.data_dir)
+        use_mcp = self.flag(d, "mcp")
+        if d.get("folder") or not use_mcp:
+            if not self.agent_allowed():
+                return
+            folder = agent.check_folder(d.get("folder"), self.app.data_dir)
+        else:
+            if not self.tools_allowed():
+                return
+            folder = ""
+            if not any(c.get("enabled") for c in self.app.mcp_servers()):
+                raise ValueError("No MCP server is switched on. Add one in Settings → Tools (MCP).")
         prepared = self.prepare_chat(d)
         if not prepared:
             return
         session, prov, model, model_id, title = prepared
         sid, db, s = session["id"], self.app.db, self.app.settings()
         allowed = self.app.agents.allowed(sid, folder)
-        run = agent.AgentRun(prov, model, self.app.build_messages(session, session["messages"]), folder, self.emit,
-                             self.app.options(), allowed, s["agent_timeout"], s["agent_max_steps"])
-        self.app.agents.add(run)
 
         def save():
-            if run.parts:
+            if run and run.parts:
                 try:
                     db.add_message(sid, "assistant", run.text(), model_id, {"agent": {"folder": folder, "parts": run.parts}})
                 except sqlite3.IntegrityError:
                     pass
 
+        run = None
+        run_id = agent.new_run_id()
         try:
             self.start_stream()
-            self.emit({"type": "start", "title": title, "model": model_id, "run": run.id, "folder": folder,
+            self.emit({"type": "start", "title": title, "model": model_id, "run": run_id, "folder": folder,
                        "allowed": sorted(allowed)})
+            tools = []
+            if use_mcp:
+                tools, errors = self.app.mcp.tools(
+                    self.app.mcp_servers(), lambda name: self.emit({"type": "notice", "t": f"Starting MCP server {name} …"}))
+                for name, err in errors.items():
+                    self.emit({"type": "notice", "t": f"MCP server {name}: {err}"})
+                if not tools and not folder:
+                    return self.emit({"type": "error", "error": "None of the MCP servers is available."})
+            run = agent.AgentRun(prov, model, self.app.build_messages(session, session["messages"]), folder, self.emit,
+                                 self.app.options(), allowed, s["agent_timeout"], s["agent_max_steps"], tools, run_id)
+            self.app.agents.add(run)
             run.run()
         except (BrokenPipeError, ConnectionResetError):  # the browser went away
-            run.cancel()
+            if run:
+                run.cancel()
             return save()
         except agent.Cancelled:
             pass
@@ -1136,13 +1178,14 @@ class Handler(BaseHTTPRequestHandler):
                 traceback.print_exc()
             return self.emit({"type": "error", "error": str(e)})
         finally:
-            self.app.agents.remove(run)
+            if run:
+                self.app.agents.remove(run)
         save()
         self.emit({"type": "done", "stopped": run.cancelled.is_set()})
 
     def agent_confirm(self):
         """POST /api/agent/confirm: {run, id, decision: allow | always | deny} for a waiting step."""
-        if not self.agent_allowed():
+        if not self.tools_allowed():
             return
         d = self.body()
         decision = self.text(d, "decision")
@@ -1164,6 +1207,20 @@ class Handler(BaseHTTPRequestHandler):
         """POST /api/agent/revoke: {session_id} forgets "Allow for this chat" for that chat."""
         self.app.agents.revoke(self.text(self.body(), "session_id"))
         self.send_json({"ok": True})
+
+    def mcp_test(self):
+        """POST /api/mcp/test: {server} (as in the settings form, not yet saved) is started once; returns its tools."""
+        if not self.tools_allowed():
+            return
+        d = self.body()
+        if not isinstance(d.get("server"), dict):
+            raise ValueError("server must be an object")
+        config = mcp.clean([d["server"]], self.app.mcp_servers())[0]
+        try:
+            tools = mcp.test(config)
+        except mcp.MCPError as e:
+            raise ValueError(str(e)) from None
+        self.send_json({"tools": [{"name": t["name"], "description": str(t.get("description") or "")[:300]} for t in tools]})
 
     def compare(self):
         """POST /api/compare: stream one prompt to 2-4 models in parallel. Events carry `i`, the model index."""
@@ -1591,6 +1648,7 @@ ROUTES = [
     (r"/api/agent/confirm", "POST", Handler.agent_confirm),
     (r"/api/agent/cancel", "POST", Handler.agent_cancel),
     (r"/api/agent/revoke", "POST", Handler.agent_revoke),
+    (r"/api/mcp/test", "POST", Handler.mcp_test),
     (r"/api/compare", "POST", Handler.compare),
     (r"/api/research", "POST", Handler.research),
     (r"/api/documents", "GET", Handler.list_documents),

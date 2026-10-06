@@ -148,6 +148,7 @@ def main(argv=None):
     except KeyboardInterrupt:
         pass
     srv.server_close()
+    app.mcp.close_all()
     print("\n  Bye 👋")
     return 0
 

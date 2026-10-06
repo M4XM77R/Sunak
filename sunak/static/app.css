@@ -363,6 +363,12 @@ a.btn { text-decoration: none; color: inherit; display: inline-block; }
 .card.persona .row { margin: 0 0 6px; }
 .card.persona input.emoji { width: 52px; min-width: 0; flex: none; text-align: center; }
 .card.persona textarea { width: 100%; }
+.card.mcp > input, .card.mcp > textarea { display: block; width: 100%; margin-top: 6px; }
+.card.mcp .row { flex-wrap: wrap; }
+.card.mcp .row input:not([type=checkbox]) { flex: 1; min-width: 120px; }
+.card.mcp .row .check { margin: 0; }
+.mcp-result { margin: 6px 0 0; overflow-wrap: anywhere; }
+.mcp-result:empty { display: none; }
 
 /* small phones: keep the top bar inside the screen */
 .main { overflow: hidden; }

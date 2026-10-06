@@ -21,7 +21,7 @@ import threading
 import time
 import urllib.parse
 
-from . import providers
+from . import mcp, providers
 from .providers import ProviderError
 
 SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", ".mypy_cache", ".pytest_cache", ".tox",
@@ -455,9 +455,9 @@ def prepare(ws, name, args, timeout, cancelled):
 
 # backends -------------------------------------------------------------------------------------
 
-def _openai_tools():
+def _openai_tools(tools):
     return [{"type": "function", "function": {"name": t["name"], "description": t["description"],
-                                              "parameters": t["parameters"]}} for t in TOOLS]
+                                              "parameters": t["parameters"]}} for t in tools]
 
 
 def _parse_args(raw):
@@ -477,13 +477,13 @@ class ClaudeTurns:
     """Claude tool use over the Messages API: the assistant content (thinking with signature,
     text, tool_use) goes back unchanged, results come back as tool_result blocks."""
 
-    def __init__(self, p, model, messages, options):
+    def __init__(self, p, model, messages, options, tools):
         self.p = p
         self.payload, self.headers = providers.anthropic_payload(p, model, messages)
         official = urllib.parse.urlparse(providers._base(p)).hostname == "api.anthropic.com"
         self.payload["tools"] = [dict({"name": t["name"], "description": t["description"],
                                        "input_schema": t["parameters"]},
-                                      **({"eager_input_streaming": True} if official else {})) for t in TOOLS]
+                                      **({"eager_input_streaming": True} if official else {})) for t in tools]
 
     def turn(self):
         resp = providers._request(providers._base(self.p) + "/v1/messages", self.payload, extra_headers=self.headers)
@@ -549,12 +549,12 @@ class ClaudeTurns:
 class OllamaTurns:
     """Ollama /api/chat with `tools`."""
 
-    def __init__(self, p, model, messages, options):
-        self.p, self.model, self.options = p, model, options or {}
+    def __init__(self, p, model, messages, options, tools):
+        self.p, self.model, self.options, self.tools = p, model, options or {}, tools
         self.msgs = [dict(m) for m in messages]
 
     def turn(self):
-        payload = {"model": self.model, "messages": self.msgs, "stream": True, "tools": _openai_tools()}
+        payload = {"model": self.model, "messages": self.msgs, "stream": True, "tools": _openai_tools(self.tools)}
         if "temperature" in self.options:
             payload["options"] = {"temperature": self.options["temperature"]}
         try:
@@ -600,12 +600,12 @@ class OllamaTurns:
 class OpenAITurns:
     """OpenAI-compatible /chat/completions with `tools`; tool calls arrive in pieces per index."""
 
-    def __init__(self, p, model, messages, options):
-        self.p, self.model, self.options = p, model, options or {}
+    def __init__(self, p, model, messages, options, tools):
+        self.p, self.model, self.options, self.tools = p, model, options or {}, tools
         self.msgs = [dict(m) for m in messages]
 
     def turn(self):
-        payload = {"model": self.model, "messages": self.msgs, "stream": True, "tools": _openai_tools()}
+        payload = {"model": self.model, "messages": self.msgs, "stream": True, "tools": _openai_tools(self.tools)}
         if "temperature" in self.options:
             payload["temperature"] = self.options["temperature"]
         try:
@@ -698,12 +698,12 @@ class TextTurns:
     """Fallback for models without tool calling: the model writes ```tool blocks into its text.
     The block is not shown as text; it appears as a step instead."""
 
-    def __init__(self, p, model, messages, options):
+    def __init__(self, p, model, messages, options, tools):
         self.p, self.model, self.options = p, model, options
         lines = []
-        for t in TOOLS:
-            props = t["parameters"]["properties"]
-            req = t["parameters"]["required"]
+        for t in tools:
+            props = t["parameters"].get("properties") or {}
+            req = t["parameters"].get("required") or []
             sig = ", ".join(k + ("" if k in req else "?") for k in props)
             lines.append(f"- {t['name']}({sig}): {t['description']}")
         proto = TEXT_PROTOCOL + "\n".join(lines)
@@ -768,6 +768,10 @@ TURNS = {"anthropic": ClaudeTurns, "ollama": OllamaTurns, "openai": OpenAITurns}
 # the agent loop -------------------------------------------------------------------------------
 
 def system_prompt(root, timeout):
+    if not root:
+        return ("You can use tools of the user's connected MCP servers (a tool's name starts with its server). "
+                "Every tool call needs the user's approval. If the user denies a call, do not try the same thing "
+                "another way; explain or ask instead. Never print secrets such as API keys.")
     shell = "cmd.exe" if os.name == "nt" else "sh"
     return (
         f"You are working as a coding agent in the project folder \"{os.path.basename(root)}\" on "
@@ -780,6 +784,14 @@ def system_prompt(root, timeout):
         "When you are done, briefly tell the user what you changed.")
 
 
+MCP_NOTE = ("Tools whose name starts with an MCP server's name come from the user's connected MCP servers; "
+            "each of their calls needs the user's approval.")
+
+
+def new_run_id():
+    return secrets.token_hex(8)
+
+
 class AgentRun:
     """One agent answer: alternate model turns and tool calls until the model stops calling tools.
 
@@ -788,10 +800,15 @@ class AgentRun:
     for storing the answer."""
 
     def __init__(self, prov, model, messages, folder, emit, options=None, allowed=None, timeout=120,
-                 max_steps=30):
-        self.id = secrets.token_hex(8)
+                 max_steps=30, mcp_tools=None, run_id=None):
+        """`folder` may be empty when only MCP tools are used; `mcp_tools` is [(exposed name, server, tool)]."""
+        self.id = run_id or new_run_id()
         self.prov, self.model, self.emit = prov, model, emit
-        self.ws = Workspace(folder)
+        self.ws = Workspace(folder) if folder else None
+        self.mcp = {name: (srv, tool) for name, srv, tool in mcp_tools or []}
+        self.tools = (TOOLS if self.ws else []) + [
+            {"name": name, "description": str(tool.get("description") or tool.get("title") or tool["name"])[:1024],
+             "parameters": mcp.schema(tool)} for name, (srv, tool) in self.mcp.items()]
         self.options = options or {}
         self.allowed = allowed if allowed is not None else set()
         self.timeout, self.max_steps = timeout, max_steps
@@ -802,6 +819,8 @@ class AgentRun:
         self._steps = 0
         msgs = [dict(m) for m in messages]
         extra = system_prompt(folder, timeout)
+        if folder and self.mcp:
+            extra += " " + MCP_NOTE
         if msgs and msgs[0]["role"] == "system":
             msgs[0]["content"] += "\n\n" + extra
         else:
@@ -829,7 +848,7 @@ class AgentRun:
     # the loop
     def run(self):
         ptype = self.prov["type"]
-        turns = TURNS.get(ptype, TextTurns)(self.prov, self.model, self.messages, self.options)
+        turns = TURNS.get(ptype, TextTurns)(self.prov, self.model, self.messages, self.options, self.tools)
         first = True
         for _ in range(self.max_steps):
             try:
@@ -839,7 +858,7 @@ class AgentRun:
                     raise ProviderError("The model stopped accepting tool calls.") from None
                 self.emit({"type": "notice", "t": "This model has no tool calling. Sunak uses a simple text "
                                                   "protocol instead; small models may get it wrong."})
-                turns = TextTurns(self.prov, self.model, self.messages, self.options)
+                turns = TextTurns(self.prov, self.model, self.messages, self.options, self.tools)
                 calls = self._turn(turns)
             first = False
             if not calls:
@@ -876,13 +895,19 @@ class AgentRun:
         self._steps += 1
         sid = f"s{self._steps}"
         name, args = call["name"], call["args"]
-        step = {"id": sid, "tool": name, "title": describe(name, args), "status": "running"}
+        title = f"{self.mcp[name][0].name} · {self.mcp[name][1]['name']}" if name in self.mcp else describe(name, args)
+        step = {"id": sid, "tool": name, "title": title, "status": "running"}
         self.parts.append({"step": step})
         self.emit({"type": "step", **step})
         try:
             if call.get("error"):
                 raise ToolError(call["error"])
-            action = prepare(self.ws, name, args, self.timeout, self.cancelled)
+            if name in self.mcp:
+                action = self._mcp_action(name, args)
+            elif self.ws is None:
+                raise ToolError(f"Unknown tool {name}. Available tools: {', '.join(sorted(self.mcp))}")
+            else:
+                action = prepare(self.ws, name, args, self.timeout, self.cancelled)
             step.update({k: (_clip(v, UI_DIFF) if k == "diff" else v) for k, v in action.preview.items()})
             if action.kind and not self._approved(sid, action, step):
                 step["status"] = "denied"
@@ -904,6 +929,29 @@ class AgentRun:
         step["output"] = _clip(result, UI_OUTPUT, keep_end=True)
         self.emit({"type": "step_done", **step})
         return {"id": call["id"], "name": name, "content": result, "is_error": step["status"] != "done"}
+
+    def _mcp_action(self, name, args):
+        """An MCP tool call; it always needs approval (kind "tool:<name>", allowed per tool)."""
+        srv, tool = self.mcp[name]
+        if not isinstance(args, dict):
+            raise ToolError("Tool arguments must be a JSON object")
+        missing = [k for k in mcp.schema(tool).get("required") or [] if k not in args]
+        if missing:
+            raise ToolError(f"{tool['name']} needs the argument {', '.join(map(str, missing))}")
+
+        def run():
+            try:
+                text, is_error = srv.call(tool["name"], args, self.cancelled)
+            except mcp.MCPError as e:
+                if self.cancelled.is_set():
+                    raise Cancelled from None
+                raise ToolError(str(e)) from None
+            if is_error:
+                raise ToolError(text)
+            return text
+
+        shown = json.dumps(args, indent=2, ensure_ascii=False)
+        return Action(run, f"tool:{name}", {"server": srv.name, "mcp_tool": tool["name"], "input": _clip(shown, UI_DIFF)})
 
     def _approved(self, sid, action, step):
         if action.kind in self.allowed:
@@ -936,8 +984,9 @@ class Registry:
         self._lock = threading.Lock()
 
     def allowed(self, session_id, folder):
+        """The kinds allowed for this chat and folder ("" when only MCP tools are used)."""
         with self._lock:
-            return self._allowed.setdefault((session_id, _norm(folder)), set())
+            return self._allowed.setdefault((session_id, _norm(folder) if folder else ""), set())
 
     def revoke(self, session_id):
         with self._lock:
