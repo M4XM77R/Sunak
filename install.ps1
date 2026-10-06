@@ -78,12 +78,19 @@ $pyCmd = $py
 $cmd = Join-Path $HomeDir "sunak.cmd"
 @"
 @echo off
-rem Sunak launcher: sunak, sunak stop, sunak status, sunak version, sunak shortcut, sunak autostart on/off, sunak update, sunak uninstall
+rem Sunak launcher: sunak, sunak stop, sunak status, sunak version, sunak gpu, sunak shortcut, sunak autostart on/off, sunak update, sunak uninstall (all: sunak -h)
 rem paths relative to this file (%~dp0), so user names with umlauts survive the ASCII file
 set "PYTHONPATH=%~dp0app;%PYTHONPATH%"
 rem uninstall deletes this file: the block is read in one go and "exit /b" ends it before cmd reads further
 if /I "%~1"=="uninstall" (
   $pyCmd -m sunak %*
+  exit /b
+)
+if /I "%~1"=="update" if /I "%~2"=="-h" set "SUNAK_HELP=1"
+if /I "%~1"=="update" if /I "%~2"=="--help" set "SUNAK_HELP=1"
+if defined SUNAK_HELP (
+  set "SUNAK_HELP="
+  $pyCmd -m sunak help update
   exit /b
 )
 if /I "%~1"=="update" (

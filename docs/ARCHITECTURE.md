@@ -15,7 +15,7 @@ Browser (sunak/static)  ──HTTP/JSON, NDJSON-Streams──▶  sunak/server.p
 
 | Datei | Aufgabe |
 |---|---|
-| `sunak/__main__.py` | Kommandozeile (`python -m sunak`): öffnet ein bereits laufendes Sunak im Browser, sonst sucht es einen freien Port, startet den Server und öffnet den Browser. Befehle `stop`, `status`, `gpu`, `autostart on\|off\|status`, `shortcut`, `version` |
+| `sunak/__main__.py` | Kommandozeile (`python -m sunak`): öffnet ein bereits laufendes Sunak im Browser, sonst sucht es einen freien Port, startet den Server und öffnet den Browser. Befehle `stop`, `status`, `gpu`, `autostart on\|off\|status`, `shortcut`, `version`, `uninstall`, `help`. Alle stehen mit Gruppe, Kurztext und Beispiel in `COMMANDS`; daraus entstehen `sunak -h`, `sunak <befehl> -h` und der Hinweis „Did you mean …?“ bei Tippfehlern. Farben nur im Terminal und ohne `NO_COLOR` |
 | `sunak/gpu.py` | GPU-Erkennung ohne Zusatzpakete: `nvidia-smi`, `/sys/class/drm` (Linux), Registry (Windows), Apple Silicon; Auswertung von Ollamas `/api/ps` und Warnung bei CPU-Betrieb |
 | `sunak/updates.py` | Update-Prüfung per git (neue Commits im Klon, aus dem installiert wurde) und Hilfsprozess für den Update-Knopf: wartet auf das Ende des Servers, installiert das Update, startet Sunak neu |
 | `sunak/desktop.py` | Desktop-Integration: laufendes Sunak erkennen (`/api/status` mit `Server: Sunak/…`) und beenden, Autostart-Datei und Desktop-Icon je Betriebssystem |

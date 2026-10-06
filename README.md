@@ -149,6 +149,7 @@ Sunak rechnet nicht selbst, die Modelle laufen in Ollama. Ollama nutzt eine pass
 | Diktieren | 🎤 neben dem Eingabefeld klicken, sprechen, noch einmal klicken. Der Text landet im Eingabefeld. Ganz lokal mit Whisper: z. B. whisper.cpp mit `whisper-server -m ggml-base.bin` starten und unter Settings → Voice `http://localhost:8080/inference` eintragen (Speaches/faster-whisper-server: `http://localhost:8000/v1` und den Modellnamen). Ohne Whisper nutzt Sunak die Offline-Erkennung von Google Chrome; die Online-Erkennung (Chrome schickt den Ton an Google) nur, wenn sie unter Settings → Voice erlaubt ist. Das Mikrofon geht nur am Computer selbst, nicht über den Handy-Zugriff |
 | Vorlesen lassen | 🔊 unter einer Antwort, noch einmal klicken stoppt. Stimme: Settings → Voice (pro Gerät, mit ▶ Test) |
 | Sprache wechseln | Settings → Look → Language (auf Deutsch: Einstellungen → Aussehen → Sprache). „Automatisch“ folgt der Sprache des Browsers; die Seite lädt danach neu. Die Wahl gilt für alle Geräte |
+| Alle Befehle und Optionen | `sunak -h` zeigt sie gruppiert mit je einem Beispiel, `sunak <befehl> -h` (oder `sunak help <befehl>`) die Details eines Befehls. Bei Tippfehlern schlägt Sunak den passenden Befehl vor. Farben lassen sich mit `NO_COLOR=1` abschalten |
 | Läuft Sunak? | `sunak status` |
 | Welche GPU wird genutzt? | `sunak gpu`, oder die Seite Models |
 | Automatisch beim Anmelden starten | `sunak autostart on` (aus: `sunak autostart off`) |

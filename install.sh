@@ -100,12 +100,13 @@ cat > "$BIN_DIR/sunak" <<EOF
 #!/usr/bin/env bash
 # Sunak launcher.
 #   sunak [--port N] [--host 0.0.0.0] [--no-browser]   start (or open the running Sunak)
-#   sunak stop | status | version | shortcut | autostart on|off | update | uninstall
+#   sunak stop | status | version | gpu | shortcut | autostart on|off | update | uninstall   (all: sunak -h)
 APP_DIR="$APP_DIR"
 export PYTHONPATH="\$APP_DIR\${PYTHONPATH:+:\$PYTHONPATH}"
 case "\${1:-}" in
   uninstall) cd "\$HOME" && exec python3 -m sunak "\$@" ;;  # keeps your data unless you say otherwise
   update)
+    case "\${2:-}" in -h|--help) exec python3 -m sunak help update ;; esac
     export SUNAK_HOME="$HOME_DIR" SUNAK_REPO="$REPO" SUNAK_BRANCH="$BRANCH"  # reinstall into the same place
     old=\$(python3 -m sunak version)
     src=\$(cat "$HOME_DIR/source" 2>/dev/null)
