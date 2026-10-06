@@ -219,6 +219,16 @@ class DB:
         )
         self._q("UPDATE sessions SET updated = ? WHERE id = ?", (now, sid))
 
+    def image_refs(self):
+        """Names of all images that messages refer to (see sunak/images.py)."""
+        refs = set()
+        for r in self._q("SELECT meta FROM messages WHERE meta LIKE '%\"images\"%'"):
+            try:
+                refs.update(json.loads(r["meta"]).get("images") or [])
+            except (ValueError, AttributeError):
+                pass
+        return refs
+
     def truncate_messages(self, sid, from_id):
         """Delete message `from_id` and everything after it (used for regenerate/edit)."""
         self._q("DELETE FROM messages WHERE session_id = ? AND id >= ?", (sid, from_id))

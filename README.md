@@ -95,7 +95,7 @@ Sunak rechnet nicht selbst, die Modelle laufen in Ollama. Ollama nutzt eine pass
 
 | | |
 |---|---|
-| 💬 **Chat** | Streaming-Antworten, Volltextsuche über alle Chats, Export als Markdown, JSON oder PDF, Bearbeiten und Neu generieren, Markdown, Tabellen, Code mit Kopier-Knopf, Denkprozess von Reasoning-Modellen ein- und ausklappbar, Dateien anhängen (auch PDF, Word, PowerPoint) per 📎 oder Drag & Drop |
+| 💬 **Chat** | Streaming-Antworten, Volltextsuche über alle Chats, Export als Markdown, JSON oder PDF, Bearbeiten und Neu generieren, Markdown, Tabellen, Code mit Kopier-Knopf, Denkprozess von Reasoning-Modellen ein- und ausklappbar, Dateien anhängen (auch PDF, Word, PowerPoint) per 📎 oder Drag & Drop, **Bilder verstehen**: Fotos und Screenshots anhängen oder einfügen (`Strg+V`), Vision-Modelle wie qwen2.5vl, gemma3, llama3.2-vision oder Claude beschreiben sie und beantworten Fragen dazu |
 | 🤖 **Claude** | Claude als eigener Anbieter: API-Key eintragen, die verfügbaren Claude-Modelle erscheinen automatisch in der Auswahl. Antworten werden gestreamt, der Denkprozess ist zusammengefasst sichtbar. Funktioniert in Chat, Compare, Research und Documents |
 | 📚 **Knowledge** | Eigene Wissensbasis: PDFs, Word (.docx), OpenDocument (.odt), PowerPoint (.pptx), HTML, Markdown, Text, CSV und Code hochladen, im Chat mit 📚 einschalten und Fragen dazu stellen. Antworten zeigen, aus welchen Dateien sie stammen. Volltextsuche über alle Dateien. Alles bleibt lokal, ohne Zusatzsoftware |
 | ✉️ **Mail** | Beliebig viele E-Mail-Konten verknüpfen (Gmail, Outlook, iCloud, Yahoo, GMX, WEB.DE, Telekom oder eigener Server über IMAP/SMTP). Posteingang je Konto, Ordner, Suche, Mails lesen ohne sie als gelesen zu markieren, Anhänge herunterladen, Antworten, Weiterleiten, Entwürfe. Die KI fasst Mails zusammen, entwirft Antworten, sortiert den Posteingang („Overview“) oder nimmt eine Mail mit in den Chat. Gesendet wird nur nach Klick auf **Send** |
@@ -124,6 +124,7 @@ Sunak rechnet nicht selbst, die Modelle laufen in Ollama. Ollama nutzt eine pass
 | Alte Chats finden | Suchfeld über der Chatliste: durchsucht Titel und alle Nachrichten, ein Klick springt zur Stelle |
 | Chat exportieren | ⬇ oben rechts → Markdown, JSON oder Drucken/PDF |
 | Alles sichern | Settings → Data → Download backup (ohne API-Keys und Passwort) |
+| Fragen zu einem Bild | Bild per 📎 anhängen, ins Chatfenster ziehen oder einen Screenshot mit `Strg+V` einfügen, Frage dazuschreiben, senden. Nötig ist ein Modell mit Bildverständnis (z. B. `qwen2.5vl:7b` oder `gemma3:4b` unter 🧩 Models, oder Claude); andere Modelle melden das sofort, die Nachricht bleibt dann im Eingabefeld |
 | Fragen zu eigenen Dateien | 📚 Knowledge → Dateien hineinziehen → im Chat 📚 neben dem Eingabefeld einschalten. Für eine einzelne Datei reicht auch 📎 |
 | E-Mail-Konto verknüpfen | Settings → Mail accounts → ＋ Add mail account → Adresse und App-Passwort eintragen (die Server werden für bekannte Anbieter automatisch ausgefüllt) → Test connection → Save account. Weitere Konten genauso |
 | Mails mit KI bearbeiten | ✉️ Mail → Mail öffnen → ✨ Summarize, ↩ Reply und dann ✨ Draft reply (optional mit Hinweis wie „zusagen, aber erst nächste Woche“), oder 💬 Ask in chat |

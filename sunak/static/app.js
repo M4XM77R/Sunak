@@ -40,7 +40,9 @@ async function stream(path, body, onEvent, signal) {
     headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'sunak' } });
   if (!r.ok) {
     const d = await r.json().catch(() => ({}));
-    throw new Error(d.error || `HTTP ${r.status}`);
+    const err = new Error(d.error || `HTTP ${r.status}`);
+    err.refused = r.status === 400; // nothing was stored
+    throw err;
   }
   const reader = r.body.getReader();
   const dec = new TextDecoder();
@@ -405,7 +407,7 @@ function setupCard() {
 function messageEl(m, i, msgs) {
   const isUser = m.role === 'user';
   const body = el('div', { class: 'body' });
-  if (isUser) body.append(userBubble(m.content));
+  if (isUser) body.append(userBubble(m.content, m.localImages || (m.meta?.images || []).map((n) => `/api/images/${n}`)));
   else {
     if (m.meta?.sources) body.append(sourcesEl(m.meta.sources));
     if (m.meta?.agent) body.append(agentEl(m.meta.agent));
@@ -424,10 +426,12 @@ function messageEl(m, i, msgs) {
 
 // attached files (File `name`: ``` text ```) are shown folded, the question as text
 const ATTACHED_RE = /File `([^`\n]+)`:\n```\n([\s\S]*?)\n```\s*/g;
-function userBubble(content) {
+function userBubble(content, images = []) {
   const files = [...content.matchAll(ATTACHED_RE)];
   const rest = content.replace(ATTACHED_RE, '').trim();
   return el('div', { class: 'bubble' },
+    images.length ? el('div', { class: 'msg-images' }, images.map((src) =>
+      el('a', { href: src, target: '_blank', rel: 'noopener' }, el('img', { src, alt: 'Attached image', loading: 'lazy' })))) : '',
     files.map((f) => el('details', { class: 'attached' }, el('summary', {}, `📄 ${f[1]}`), el('pre', { class: 'kb-text' }, f[2]))),
     rest);
 }
@@ -482,8 +486,11 @@ async function sendNow() {
   if (!currentModel()) { toast('Install or connect a model first'); show('settings'); return; }
   if (state.attachments.some((a) => a.loading)) { toast('Still reading your files…'); return; }
   if (agentOn() && !agentFolder()) { toast('Enter the project folder for the agent first'); $('#agentFolder').focus(); return; }
-  if (state.attachments.length) {
-    text = state.attachments.map((a) => `File \`${a.name}\`:\n\`\`\`\n${a.text}\n\`\`\``).join('\n\n') + (text ? `\n\n${text}` : '');
+  const pics = state.attachments.filter((a) => a.image);
+  if (pics.length && agentOn()) { toast('Agent mode cannot look at images yet. Switch it off (🛠) to ask about the image.'); return; }
+  const files = state.attachments.filter((a) => !a.image);
+  if (files.length) {
+    text = files.map((a) => `File \`${a.name}\`:\n\`\`\`\n${a.text}\n\`\`\``).join('\n\n') + (text ? `\n\n${text}` : '');
   }
   if (!state.session) {
     try {
@@ -491,10 +498,18 @@ async function sendNow() {
     } catch (e) { toast(e.message); return; } // keep the typed text and the files
     state.session.messages = [];
   }
+  const kept = { text: promptEl.value, attachments: state.attachments };
   promptEl.value = ''; autosize();
   state.attachments = []; renderAttachments();
   sending = false; // from here on state.busy guards against a second send
-  await runChat({ content: text }, { role: 'user', content: text });
+  const payload = { content: text };
+  if (pics.length) payload.images = pics.map((a) => ({ name: a.name, data: a.data }));
+  const result = await runChat(payload, { role: 'user', content: text, localImages: pics.map((a) => a.url) });
+  // the server refused before storing anything (e.g. a model without vision): give the message back
+  if (result === 'refused' && !promptEl.value && !state.attachments.length) {
+    promptEl.value = kept.text; autosize();
+    state.attachments = kept.attachments; renderAttachments();
+  }
 }
 
 async function runChat(payload, localUserMsg) {
@@ -510,7 +525,7 @@ async function runChat(payload, localUserMsg) {
   const box = $('#messages');
   const target = box.lastElementChild.querySelector('.md');
   target.classList.add('typing');
-  let raw = '', thinking = false, pending = false, error = null, stopped = false, thinkOpen = null;
+  let raw = '', thinking = false, pending = false, error = null, stopped = false, thinkOpen = null, refused = false;
   // the user may fold the thinking block while it streams: keep their choice across repaints
   target.addEventListener('click', (e) => { const d = e.target.closest('summary') && e.target.closest('details.think'); if (d) thinkOpen = !d.open; });
   const paint = () => {
@@ -532,7 +547,7 @@ async function runChat(payload, localUserMsg) {
     }, ctrl.signal);
   } catch (e) {
     if (e.name === 'AbortError') stopped = true;
-    else error = e.message;
+    else { error = e.message; refused = !!e.refused; }
   }
   state.busy = null;
   $('#sendBtn').textContent = 'Send';
@@ -553,6 +568,7 @@ async function runChat(payload, localUserMsg) {
   renderMessages();
   if (error) $('#messages').append(el('div', { class: 'msg' }, el('div', { class: 'avatar' }, '⚠️'), el('div', { class: 'body err' }, error)));
   $('#messages').scrollTop = $('#messages').scrollHeight;
+  return refused ? 'refused' : 'ok';
 }
 
 /* ---------------- Agent mode ----------------
@@ -685,9 +701,11 @@ function regenerate(m) {
 }
 function editMessage(m) {
   const text = prompt('Edit your message:', m.content);
-  if (text === null || !text.trim()) return;
+  if (text === null || !(text.trim() || m.meta?.images?.length)) return;
   state.session.messages = state.session.messages.filter((x) => x.id < m.id);
-  runChat({ truncate_from: m.id, content: text.trim() }, { role: 'user', content: text.trim() });
+  const refs = m.meta?.images || [];
+  runChat({ truncate_from: m.id, content: text.trim(), image_refs: refs },
+    { role: 'user', content: text.trim(), localImages: refs.map((n) => `/api/images/${n}`) });
 }
 
 /* attachments: the text of each file (also PDF, Word, …) is inlined into the prompt */
@@ -705,8 +723,49 @@ function dropAttachment(a) {
   const k = state.attachments.indexOf(a);
   if (k >= 0) state.attachments.splice(k, 1); // it may already be removed by its ✕
 }
+/* images go to the model as pictures (vision models), shrunk in the browser to at most 1568 px */
+const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
+const MAX_IMAGES = 4, IMG_SIDE = 1568, IMG_BYTES = 3.5 * 1024 * 1024;
+function loadImg(src) {
+  return new Promise((resolve, reject) => {
+    const i = new Image();
+    i.onload = () => resolve(i);
+    i.onerror = () => reject(new Error('this image cannot be read'));
+    i.src = src;
+  });
+}
+async function prepareImage(f) {
+  const url = URL.createObjectURL(f);
+  try {
+    const img = await loadImg(url);
+    const scale = Math.min(1, IMG_SIDE / Math.max(img.naturalWidth, img.naturalHeight));
+    if (scale === 1 && f.size <= IMG_BYTES) {
+      const data = await fileData(f);
+      return { data, url: `data:${f.type};base64,${data}` };
+    }
+    const c = document.createElement('canvas');
+    c.width = Math.round(img.naturalWidth * scale); c.height = Math.round(img.naturalHeight * scale);
+    const ctx = c.getContext('2d');
+    ctx.drawImage(img, 0, 0, c.width, c.height);
+    let out = f.type === 'image/png' ? c.toDataURL('image/png') : '';
+    if (!out || out.length > IMG_BYTES * 1.37) { // photos (and big PNGs) as JPEG on white
+      ctx.globalCompositeOperation = 'destination-over'; ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+      out = c.toDataURL('image/jpeg', 0.88);
+    }
+    return { data: out.slice(out.indexOf(',') + 1), url: out };
+  } finally { URL.revokeObjectURL(url); }
+}
+async function attachImage(f) {
+  if (state.attachments.filter((a) => a.image).length >= MAX_IMAGES) { toast(`At most ${MAX_IMAGES} images per message`); return; }
+  const a = { name: f.name || 'image.png', image: true, loading: true };
+  state.attachments.push(a);
+  renderAttachments();
+  try { Object.assign(a, await prepareImage(f), { loading: false }); } catch (e) { dropAttachment(a); toast(`${a.name}: ${e.message}`); }
+  renderAttachments();
+}
 async function attachFiles(files) {
   for (const f of files) {
+    if (IMAGE_TYPES.includes(f.type)) { await attachImage(f); continue; }
     if (f.size > MAX_UPLOAD) { toast(`${f.name} is too big (max 15 MB)`); continue; }
     const a = { name: f.name, text: '', loading: true };
     state.attachments.push(a);
@@ -729,9 +788,17 @@ $('#fileInput').onchange = (e) => { attachFiles([...e.target.files]); e.target.v
 function renderAttachments() {
   const box = $('#attachments');
   box.innerHTML = '';
-  state.attachments.forEach((a, i) => box.append(el('span', { class: 'chip' }, `${a.loading ? '⏳' : '📄'} ${a.name}`,
-    el('button', { type: 'button', onclick: () => { state.attachments.splice(i, 1); renderAttachments(); } }, '✕'))));
+  state.attachments.forEach((a, i) => box.append(el('span', { class: 'chip' },
+    a.image && a.url ? el('img', { class: 'thumb', src: a.url, alt: '' }) : (a.loading ? '⏳' : a.image ? '🖼' : '📄'), ` ${a.name}`,
+    el('button', { type: 'button', 'aria-label': `Remove ${a.name}`, onclick: () => { state.attachments.splice(i, 1); renderAttachments(); } }, '✕'))));
 }
+// paste a screenshot straight into the message box
+promptEl.addEventListener('paste', (e) => {
+  const pics = [...(e.clipboardData?.files || [])].filter((f) => IMAGE_TYPES.includes(f.type));
+  if (!pics.length) return;
+  e.preventDefault();
+  attachFiles(pics);
+});
 // drop files anywhere on the chat to attach them
 const chatView = $('#view-chat');
 chatView.addEventListener('dragover', (e) => { if ([...e.dataTransfer.types].includes('Files')) { e.preventDefault(); chatView.classList.add('drag'); } });

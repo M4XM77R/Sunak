@@ -22,7 +22,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlparse
 
-from . import __version__, agent, extract, gpu, knowledge, mail, ollama, providers, research, updates
+from . import __version__, agent, extract, gpu, images, knowledge, mail, ollama, providers, research, updates
 from .db import DB, new_id
 
 STATIC = Path(__file__).parent / "static"
@@ -322,6 +322,19 @@ class App:
             raise providers.ProviderError(f"Invalid model id '{model_id}'")
         return self.provider(pid), name
 
+    def vision(self, prov, model):
+        """Can the model see images? True, False, or None when the backend does not tell."""
+        if prov["type"] == "anthropic":
+            return True
+        if prov["type"] == "ollama":
+            caps = providers.ollama_capabilities(prov, model)
+            return None if caps is None else "vision" in caps
+        return None
+
+    def clean_images(self):
+        """Delete image files that no message refers to any more."""
+        images.cleanup(self.data_dir, self.db.image_refs())
+
     def models(self):
         """Ask all providers in parallel for their models; unreachable providers are listed in `errors`."""
         out, errors = [], []
@@ -371,9 +384,10 @@ class App:
                 return p["prompt"]
         return ""
 
-    def build_messages(self, session, history, extra=""):
+    def build_messages(self, session, history, extra="", with_images=False, vision=True):
         """Chat history for the model: system prompt, persona, session prompt, memory notes, `extra`
-        (knowledge-base excerpts), then the messages."""
+        (knowledge-base excerpts), then the messages. `with_images` adds attached images (see
+        images.attach); with `vision` False the model gets a note instead of the pictures."""
         s = self.settings()
         persona = self.persona_prompt(session.get("persona", ""), s["personas"])
         system = "\n\n".join(x for x in (s["system_prompt"], persona, session.get("system", "")) if x.strip())
@@ -387,6 +401,8 @@ class App:
         for m in history:
             content = providers.strip_think(m["content"]) if m["role"] == "assistant" else m["content"]
             msgs.append({"role": m["role"], "content": content})
+        if with_images:
+            images.attach(self.data_dir, history, msgs, vision)
         return msgs
 
     def options(self):
@@ -419,7 +435,8 @@ def session_markdown(session):
     out = [f"# {session['title']}", "", f"*Sunak · {when}*", ""]
     for m in session["messages"]:
         if m["role"] == "user":
-            out += ["## You", "", m["content"].strip(), ""]
+            pics = [f"*[Image: {n}]*" for n in (m.get("meta") or {}).get("images", [])]
+            out += ["## You", "", *pics, m["content"].strip(), ""]
         else:
             model = m["model"].split("::", 1)[-1] if m["model"] else ""
             out += ["## Sunak" + (f" ({model})" if model else ""), "", providers.strip_think(m["content"]), ""]
@@ -511,6 +528,7 @@ class Handler(BaseHTTPRequestHandler):
         return v
 
     streaming = False
+    sent_images = False  # set by prepare_chat: the request carried images
 
     def start_stream(self):
         """Send headers for an NDJSON stream; the connection closes when it ends."""
@@ -771,12 +789,28 @@ class Handler(BaseHTTPRequestHandler):
     def delete_session(self, sid):
         """DELETE /api/sessions/<id>"""
         self.app.db.delete_session(sid)
+        self.app.clean_images()
         self.send_json({"ok": True})
 
-    def prepare_chat(self, d):
+    def get_image(self, name):
+        """GET /api/images/<name>: an image attached to a chat message."""
+        found = images.load(self.app.data_dir, name)
+        if not found:
+            return self.error("Not found", 404)
+        data, ctype = found
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "private, max-age=86400")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.end_headers()
+        self.wfile.write(data)
+
+    def prepare_chat(self, d, allow_images=False):
         """Shared start of /api/chat and /api/agent: check the request, apply truncate_from, store the
-        user message, update model/persona/use_kb/title of the chat. Returns (session, provider, model,
-        model id, title), or None when an error was already sent."""
+        user message (with new `images` [{name, data}] and kept `image_refs`), update
+        model/persona/use_kb/title of the chat. Returns (session, provider, model, model id, title),
+        or None when an error was already sent."""
         db = self.app.db
         session = db.get_session(str(d.get("session_id") or ""))
         if not session:
@@ -792,14 +826,26 @@ class Handler(BaseHTTPRequestHandler):
         prov, model = self.app.resolve(model_id)
         model_id = f"{prov['id']}::{model}"
         sid = session["id"]
+        refs = images.existing(self.app.data_dir, d.get("image_refs"))
+        if d.get("images") or refs:
+            if not allow_images:
+                raise ValueError("Agent mode cannot look at images yet. Switch it off (🛠) to ask about the image.")
+            if self.app.vision(prov, model) is False:
+                raise ValueError(f"{model} cannot see images. Pick a model with vision: on the Models page e.g. "
+                                 "qwen2.5vl, gemma3 or llama3.2-vision, or Claude.")
+            if len(refs) + len(d.get("images") or []) > images.MAX_IMAGES:
+                raise ValueError(f"At most {images.MAX_IMAGES} images per message")
+        names = refs + images.save(self.app.data_dir, d.get("images"))
+        self.sent_images = bool(names)
         if d.get("truncate_from"):
             from_id = d["truncate_from"]
             # only a message of this chat; anything else would silently wipe the chat
             if isinstance(from_id, bool) or not isinstance(from_id, int) or from_id not in {m["id"] for m in session["messages"]}:
                 raise ValueError("That message is not part of this chat (reload the page)")
             db.truncate_messages(sid, from_id)
-        if content:
-            db.add_message(sid, "user", content)
+            self.app.clean_images()
+        if content or names:
+            db.add_message(sid, "user", content, meta={"images": names} if names else None)
         session = db.get_session(sid)
         if not session["messages"] or session["messages"][-1]["role"] != "user":
             self.error("Nothing to answer")
@@ -812,7 +858,7 @@ class Handler(BaseHTTPRequestHandler):
         if session["title"] == "New chat":
             # name the chat after the question, not after attached files (File `x`: ``` … ```)
             first_msg = session["messages"][0]["content"]
-            first = (ATTACHED_RE.sub("", first_msg).strip() or first_msg.strip()).splitlines()[0]
+            first = ((ATTACHED_RE.sub("", first_msg).strip() or first_msg.strip()).splitlines() or ["Image"])[0]
             updates["title"] = (first[:57] + "…") if len(first) > 58 else first
         db.update_session(sid, **updates)
         return session, prov, model, model_id, updates.get("title", session["title"])
@@ -827,7 +873,7 @@ class Handler(BaseHTTPRequestHandler):
         A partial answer is kept if the stream breaks."""
         d = self.body()
         db = self.app.db
-        prepared = self.prepare_chat(d)
+        prepared = self.prepare_chat(d, allow_images=True)
         if not prepared:
             return
         session, prov, model, model_id, title = prepared
@@ -841,7 +887,10 @@ class Handler(BaseHTTPRequestHandler):
             if found:
                 extra = knowledge.context(found)
             meta = {"sources": knowledge.sources(found)}
-        messages = self.app.build_messages(session, session["messages"], extra)
+        vision = True
+        if any(m["meta"].get("images") for m in session["messages"] if m["role"] == "user"):
+            vision = self.app.vision(prov, model) is not False
+        messages = self.app.build_messages(session, session["messages"], extra, with_images=True, vision=vision)
         self.start_stream()
         self.emit({"type": "start", "title": title, "model": model_id})
         if meta is not None:
@@ -867,7 +916,10 @@ class Handler(BaseHTTPRequestHandler):
             save()
             if not isinstance(e, providers.ProviderError):
                 traceback.print_exc()
-            return self.emit({"type": "error", "error": str(e)})
+            hint = ""
+            if self.sent_images and not chunks and prov["type"] == "openai":
+                hint = " (If this model cannot see images, pick one with vision.)"
+            return self.emit({"type": "error", "error": str(e) + hint})
         save()
         self.emit({"type": "done"})
 
@@ -1359,6 +1411,7 @@ ROUTES = [
     (r"/api/search", "GET", Handler.search),
     (r"/api/export", "GET", Handler.export_all),
     (r"/api/chat", "POST", Handler.chat),
+    (r"/api/images/([a-f0-9]{16}\.(?:png|jpg|gif|webp))", "GET", Handler.get_image),
     (r"/api/agent", "POST", Handler.agent_chat),
     (r"/api/agent/confirm", "POST", Handler.agent_confirm),
     (r"/api/agent/cancel", "POST", Handler.agent_cancel),

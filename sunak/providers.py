@@ -127,11 +127,39 @@ def chat_stream(p, model, messages, options=None):
         raise ProviderError(f"The connection to the model broke off ({type(e).__name__}: {e})") from None
 
 
+def _with_images(messages, kind):
+    """Messages in the backend's format for attached images (message["images"] = [{"type", "data"}]):
+    Ollama wants base64 strings in "images", OpenAI-compatible APIs content parts with data URLs."""
+    out = []
+    for m in messages:
+        m = dict(m)
+        images = m.pop("images", None) or []
+        if images and kind == "ollama":
+            m["images"] = [i["data"] for i in images]
+        elif images:
+            m["content"] = ([{"type": "text", "text": m["content"]}] if m["content"] else []) + [
+                {"type": "image_url", "image_url": {"url": f"data:{i['type']};base64,{i['data']}"}} for i in images]
+        out.append(m)
+    return out
+
+
+def ollama_capabilities(p, model, timeout=5):
+    """What Ollama says a model can do (e.g. ["completion", "vision"]), or None when it does not say."""
+    try:
+        with _request(_base(p) + "/api/show", {"model": model}, p.get("api_key", ""), timeout=timeout) as r:
+            caps = json.load(r).get("capabilities")
+    except (ProviderError, OSError, ValueError, AttributeError):
+        return None
+    return caps if isinstance(caps, list) else None
+
+
 def _chat_stream(p, model, messages, options=None):
     options = options or {}
     if p["type"] == "anthropic":
         yield from anthropic_stream(p, model, messages)
         return
+    if any(m.get("images") for m in messages):
+        messages = _with_images(messages, p["type"])
     if p["type"] == "ollama":
         payload = {"model": model, "messages": messages, "stream": True}
         if "temperature" in options:
@@ -287,6 +315,10 @@ def claude_max_tokens(model):
     return 64000
 
 
+def _blocks(content):
+    return content if isinstance(content, list) else [{"type": "text", "text": content}]
+
+
 def anthropic_payload(p, model, messages):
     """Request body for POST /v1/messages: system prompt moved to the top level, streaming on,
     summarized reasoning on models with adaptive thinking (temperature is not sent; current
@@ -294,12 +326,21 @@ def anthropic_payload(p, model, messages):
     system = "\n\n".join(m["content"] for m in messages if m["role"] == "system")
     chat = []
     for m in messages:
-        if m["role"] == "system" or not m["content"]:
+        images = m.get("images") or []
+        if m["role"] == "system" or not (m["content"] or images):
             continue
+        content = m["content"]
+        if images:  # pictures first, then the question about them
+            content = [{"type": "image", "source": {"type": "base64", "media_type": i["type"], "data": i["data"]}}
+                       for i in images] + ([{"type": "text", "text": m["content"]}] if m["content"] else [])
         if chat and chat[-1]["role"] == m["role"]:  # the API needs alternating turns
-            chat[-1]["content"] += "\n\n" + m["content"]
+            prev = chat[-1]["content"]
+            if isinstance(prev, str) and isinstance(content, str):
+                chat[-1]["content"] = prev + "\n\n" + content
+            else:
+                chat[-1]["content"] = _blocks(prev) + _blocks(content)
         else:
-            chat.append({"role": m["role"], "content": m["content"]})
+            chat.append({"role": m["role"], "content": content})
     payload = {"model": model, "max_tokens": claude_max_tokens(model), "stream": True, "messages": chat}
     if system:
         payload["system"] = system
