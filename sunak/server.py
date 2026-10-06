@@ -22,7 +22,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlparse
 
-from . import __version__, extract, gpu, knowledge, mail, ollama, providers, research, updates
+from . import __version__, agent, extract, gpu, knowledge, mail, ollama, providers, research, updates
 from .db import DB, new_id
 
 STATIC = Path(__file__).parent / "static"
@@ -37,7 +37,11 @@ DEFAULT_SETTINGS = {
     "accent": "",       # "" = the theme's own accent color
     "theme": "dark",
     "check_updates": True,
+    "agent_enabled": False,  # agent mode (agentic coding): off until the user switches it on
+    "agent_timeout": 120,    # seconds a command of the agent may run
+    "agent_max_steps": 30,   # tool calls per answer
 }
+INT_PREFS = {"agent_timeout": (5, 3600), "agent_max_steps": (1, 200)}  # allowed ranges
 
 # Themes: [data-theme] blocks in static/app.css, THEMES in static/app.js.
 THEMES = ("dark", "light", "retro", "cyberpunk", "ocean", "forest", "sunset", "corporate")
@@ -119,6 +123,11 @@ def _check_pref(key, value, default):
         if not isinstance(value, bool):
             raise ValueError(f"{key} must be true or false")
         return value
+    if isinstance(default, int):
+        lo, hi = INT_PREFS[key]
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not lo <= value <= hi or value != int(value):
+            raise ValueError(f"{key} must be a whole number between {lo} and {hi}")
+        return int(value)
     if isinstance(default, float):
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= 2:
             raise ValueError(f"{key} must be a number between 0 and 2")
@@ -164,6 +173,7 @@ class App:
         self.update = {"behind": None, "checked": 0.0}
         self._update_lock = threading.Lock()
         self._checking = False
+        self.agents = agent.Registry()
 
     def _detect_gpu(self):
         try:
@@ -763,19 +773,15 @@ class Handler(BaseHTTPRequestHandler):
         self.app.db.delete_session(sid)
         self.send_json({"ok": True})
 
-    def chat(self):
-        """POST /api/chat: store the user message, stream the answer, store it.
-
-        `truncate_from` deletes that message and everything after it first (regenerate / edit).
-        `use_kb` switches the knowledge base on or off for this chat, `persona` picks a persona id
-        (both are stored with the chat).
-        Events: start, sources (knowledge base only), think, text, done | error.
-        A partial answer is kept if the stream breaks."""
-        d = self.body()
+    def prepare_chat(self, d):
+        """Shared start of /api/chat and /api/agent: check the request, apply truncate_from, store the
+        user message, update model/persona/use_kb/title of the chat. Returns (session, provider, model,
+        model id, title), or None when an error was already sent."""
         db = self.app.db
         session = db.get_session(str(d.get("session_id") or ""))
         if not session:
-            return self.error("Session not found", 404)
+            self.error("Session not found", 404)
+            return None
         model_id = d.get("model") or session["model"]
         if not isinstance(model_id, str):
             raise ValueError("model must be text")
@@ -796,7 +802,8 @@ class Handler(BaseHTTPRequestHandler):
             db.add_message(sid, "user", content)
         session = db.get_session(sid)
         if not session["messages"] or session["messages"][-1]["role"] != "user":
-            return self.error("Nothing to answer")
+            self.error("Nothing to answer")
+            return None
         updates = {"model": model_id}
         if "use_kb" in d:
             updates["use_kb"] = session["use_kb"] = self.flag(d, "use_kb")
@@ -808,6 +815,23 @@ class Handler(BaseHTTPRequestHandler):
             first = (ATTACHED_RE.sub("", first_msg).strip() or first_msg.strip()).splitlines()[0]
             updates["title"] = (first[:57] + "…") if len(first) > 58 else first
         db.update_session(sid, **updates)
+        return session, prov, model, model_id, updates.get("title", session["title"])
+
+    def chat(self):
+        """POST /api/chat: store the user message, stream the answer, store it.
+
+        `truncate_from` deletes that message and everything after it first (regenerate / edit).
+        `use_kb` switches the knowledge base on or off for this chat, `persona` picks a persona id
+        (both are stored with the chat).
+        Events: start, sources (knowledge base only), think, text, done | error.
+        A partial answer is kept if the stream breaks."""
+        d = self.body()
+        db = self.app.db
+        prepared = self.prepare_chat(d)
+        if not prepared:
+            return
+        session, prov, model, model_id, title = prepared
+        sid = session["id"]
 
         extra, meta = "", None
         if session["use_kb"]:
@@ -819,7 +843,7 @@ class Handler(BaseHTTPRequestHandler):
             meta = {"sources": knowledge.sources(found)}
         messages = self.app.build_messages(session, session["messages"], extra)
         self.start_stream()
-        self.emit({"type": "start", "title": updates.get("title", session["title"]), "model": model_id})
+        self.emit({"type": "start", "title": title, "model": model_id})
         if meta is not None:
             self.emit({"type": "sources", "sources": meta["sources"]})
         chunks = []
@@ -846,6 +870,89 @@ class Handler(BaseHTTPRequestHandler):
             return self.emit({"type": "error", "error": str(e)})
         save()
         self.emit({"type": "done"})
+
+    # agent mode -------------------------------------------------------
+    def agent_allowed(self):
+        """Agent mode must be switched on, and from other devices it needs a password: it can change
+        files and run commands on this computer. Sends the error and returns False otherwise."""
+        if not self.app.settings()["agent_enabled"]:
+            self.error("Agent mode is off. Switch it on in Settings → Agent.", 403)
+            return False
+        if not self.is_direct_local() and not self.app.auth_required():
+            self.error("Agent mode from another device needs a password. Set one in Settings → Security.", 403)
+            return False
+        return True
+
+    def agent_chat(self):
+        """POST /api/agent: like /api/chat, but the model works in `folder` with tools (see sunak/agent.py).
+
+        Events: start (with `run`), think, text, step, confirm (answer with /api/agent/confirm),
+        step_done, notice, ping, done | error. The answer is stored with its steps in meta.agent."""
+        if not self.agent_allowed():
+            return
+        d = self.body()
+        folder = agent.check_folder(d.get("folder"), self.app.data_dir)
+        prepared = self.prepare_chat(d)
+        if not prepared:
+            return
+        session, prov, model, model_id, title = prepared
+        sid, db, s = session["id"], self.app.db, self.app.settings()
+        allowed = self.app.agents.allowed(sid, folder)
+        run = agent.AgentRun(prov, model, self.app.build_messages(session, session["messages"]), folder, self.emit,
+                             self.app.options(), allowed, s["agent_timeout"], s["agent_max_steps"])
+        self.app.agents.add(run)
+
+        def save():
+            if run.parts:
+                try:
+                    db.add_message(sid, "assistant", run.text(), model_id, {"agent": {"folder": folder, "parts": run.parts}})
+                except sqlite3.IntegrityError:
+                    pass
+
+        try:
+            self.start_stream()
+            self.emit({"type": "start", "title": title, "model": model_id, "run": run.id, "folder": folder,
+                       "allowed": sorted(allowed)})
+            run.run()
+        except (BrokenPipeError, ConnectionResetError):  # the browser went away
+            run.cancel()
+            return save()
+        except agent.Cancelled:
+            pass
+        except Exception as e:  # noqa: BLE001 - keep what was done and tell the browser
+            save()
+            if not isinstance(e, providers.ProviderError):
+                traceback.print_exc()
+            return self.emit({"type": "error", "error": str(e)})
+        finally:
+            self.app.agents.remove(run)
+        save()
+        self.emit({"type": "done", "stopped": run.cancelled.is_set()})
+
+    def agent_confirm(self):
+        """POST /api/agent/confirm: {run, id, decision: allow | always | deny} for a waiting step."""
+        if not self.agent_allowed():
+            return
+        d = self.body()
+        decision = self.text(d, "decision")
+        if decision not in ("allow", "always", "deny"):
+            raise ValueError("decision must be allow, always or deny")
+        run = self.app.agents.get(self.text(d, "run"))
+        if not run or not run.decide(self.text(d, "id"), decision):
+            return self.error("Nothing is waiting for this answer any more", 404)
+        self.send_json({"ok": True})
+
+    def agent_cancel(self):
+        """POST /api/agent/cancel: {run} stops the agent (a running command is killed)."""
+        run = self.app.agents.get(self.text(self.body(), "run"))
+        if run:
+            run.cancel()
+        self.send_json({"ok": True})
+
+    def agent_revoke(self):
+        """POST /api/agent/revoke: {session_id} forgets "Allow for this chat" for that chat."""
+        self.app.agents.revoke(self.text(self.body(), "session_id"))
+        self.send_json({"ok": True})
 
     def compare(self):
         """POST /api/compare: stream one prompt to 2-4 models in parallel. Events carry `i`, the model index."""
@@ -1252,6 +1359,10 @@ ROUTES = [
     (r"/api/search", "GET", Handler.search),
     (r"/api/export", "GET", Handler.export_all),
     (r"/api/chat", "POST", Handler.chat),
+    (r"/api/agent", "POST", Handler.agent_chat),
+    (r"/api/agent/confirm", "POST", Handler.agent_confirm),
+    (r"/api/agent/cancel", "POST", Handler.agent_cancel),
+    (r"/api/agent/revoke", "POST", Handler.agent_revoke),
     (r"/api/compare", "POST", Handler.compare),
     (r"/api/research", "POST", Handler.research),
     (r"/api/documents", "GET", Handler.list_documents),

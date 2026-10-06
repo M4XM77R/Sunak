@@ -344,7 +344,7 @@ async function searchChats() {
 
 let openSeq = 0;
 async function openSession(id, messageId) {
-  if (state.busy) state.busy.abort(); // the partial answer is saved by the server
+  stopBusy(); // the partial answer is saved by the server
   const seq = ++openSeq;
   const session = await api(`/api/sessions/${id}`);
   if (seq !== openSeq) return; // another chat was clicked meanwhile
@@ -361,7 +361,7 @@ async function openSession(id, messageId) {
   }
 }
 function newChat() {
-  if (state.busy) state.busy.abort();
+  stopBusy();
   openSeq++;
   state.session = null;
   state.attachments = [];
@@ -408,7 +408,8 @@ function messageEl(m, i, msgs) {
   if (isUser) body.append(userBubble(m.content));
   else {
     if (m.meta?.sources) body.append(sourcesEl(m.meta.sources));
-    body.append(el('div', { class: 'md', html: md(m.content) }));
+    if (m.meta?.agent) body.append(agentEl(m.meta.agent));
+    else body.append(el('div', { class: 'md', html: md(m.content) }));
   }
   const meta = el('div', { class: 'meta' });
   meta.append(el('button', { onclick: () => navigator.clipboard.writeText(m.content.replace(/<think>[\s\S]*?(<\/think>|$)/g, '').trim()).then(() => toast('Copied')) }, 'Copy'));
@@ -463,7 +464,11 @@ promptEl.addEventListener('input', autosize);
 promptEl.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); }
 });
-$('#composer').onsubmit = (e) => { e.preventDefault(); state.busy ? state.busy.abort() : send(); };
+$('#composer').onsubmit = (e) => { e.preventDefault(); state.busy ? stopBusy() : send(); };
+function stopBusy() {
+  if (state.agentRun) api('/api/agent/cancel', { method: 'POST', body: { run: state.agentRun } }).catch(() => {});
+  if (state.busy) state.busy.abort();
+}
 
 let sending = false;
 async function send() {
@@ -476,6 +481,7 @@ async function sendNow() {
   if (!text && !state.attachments.length) return;
   if (!currentModel()) { toast('Install or connect a model first'); show('settings'); return; }
   if (state.attachments.some((a) => a.loading)) { toast('Still reading your files…'); return; }
+  if (agentOn() && !agentFolder()) { toast('Enter the project folder for the agent first'); $('#agentFolder').focus(); return; }
   if (state.attachments.length) {
     text = state.attachments.map((a) => `File \`${a.name}\`:\n\`\`\`\n${a.text}\n\`\`\``).join('\n\n') + (text ? `\n\n${text}` : '');
   }
@@ -492,6 +498,7 @@ async function sendNow() {
 }
 
 async function runChat(payload, localUserMsg) {
+  if (agentOn()) return runAgent(payload, localUserMsg);
   const s = state.session;
   if (localUserMsg) s.messages.push(localUserMsg);
   const ans = { role: 'assistant', content: '', model: currentModel() };
@@ -543,6 +550,130 @@ async function runChat(payload, localUserMsg) {
     if (stopped && raw && fresh.messages.at(-1)?.role !== 'assistant') fresh.messages.push({ ...ans, content: raw + (thinking ? '</think>' : '') });
     state.session = fresh;
   }
+  renderMessages();
+  if (error) $('#messages').append(el('div', { class: 'msg' }, el('div', { class: 'avatar' }, '⚠️'), el('div', { class: 'body err' }, error)));
+  $('#messages').scrollTop = $('#messages').scrollHeight;
+}
+
+/* ---------------- Agent mode ----------------
+   The model works in a project folder: steps (tool calls) appear between its text, writes and
+   commands wait for a click. See sunak/agent.py. */
+const agentFolder = () => $('#agentFolder').value.trim();
+const agentOn = () => !!state.settings?.agent_enabled && store.get('sunak-agent') === '1';
+function renderAgentToggle() {
+  const b = $('#agentToggle');
+  b.classList.toggle('hidden', !state.settings?.agent_enabled);
+  b.setAttribute('aria-pressed', String(agentOn()));
+  b.title = agentOn() ? 'Agent mode on: the model works in your project folder' : 'Agent mode: let the model work in a project folder';
+  $('#agentBar').classList.toggle('hidden', !agentOn());
+  promptEl.placeholder = agentOn() ? 'Tell the agent what to do…' : 'Message Sunak…';
+}
+$('#agentToggle').onclick = () => {
+  store.set('sunak-agent', agentOn() ? '0' : '1');
+  renderAgentToggle();
+  if (agentOn() && !agentFolder()) $('#agentFolder').focus();
+};
+$('#agentFolder').value = store.get('sunak-agent-folder', '');
+$('#agentFolder').onchange = () => store.set('sunak-agent-folder', agentFolder());
+$('#agentRevoke').onclick = async () => {
+  if (state.session?.id) await api('/api/agent/revoke', { method: 'POST', body: { session_id: state.session.id } }).catch((e) => toast(e.message));
+  toast('Sunak asks again before every change and command in this chat');
+};
+
+const STEP_ICONS = { running: '⏳', waiting: '❓', done: '✅', error: '⚠️', denied: '✋', stopped: '⏹' };
+function diffEl(diff) {
+  return el('pre', { class: 'diff' }, diff.split('\n').map((line) => el('span', {
+    class: line.startsWith('@@') ? 'hunk' : /^\+(?!\+\+ )/.test(line) ? 'add' : /^-(?!-- )/.test(line) ? 'del' : '' }, line + '\n')));
+}
+// one tool call; with onDecide it is a question with Allow / Allow for this chat / Deny
+function stepEl(st, onDecide) {
+  const status = onDecide ? 'waiting' : st.status;
+  const kids = [];
+  if (st.command) kids.push(el('pre', { class: 'cmd' }, `$ ${st.command}`));
+  if (st.diff) kids.push(diffEl(st.diff));
+  if (st.output && !onDecide) kids.push(el('pre', { class: 'step-out' }, st.output));
+  const box = el('details', { class: `step ${status}`, open: !!onDecide || status === 'error' },
+    el('summary', {}, el('span', { class: 'step-icon' }, STEP_ICONS[status] || '•'), el('code', {}, st.title || st.tool)), kids);
+  if (onDecide) {
+    const run = st.kind === 'run';
+    box.append(el('div', { class: 'row step-actions' },
+      el('span', { class: 'muted small' }, run ? 'Run this command?' : st.new_file ? 'Create this file?' : 'Apply this change?'),
+      el('button', { class: 'btn primary', type: 'button', onclick: () => onDecide('allow') }, run ? 'Run' : 'Apply'),
+      el('button', { class: 'btn', type: 'button', onclick: () => onDecide('always'),
+        title: 'Don’t ask again in this chat until Sunak restarts or you click “Ask again”' }, run ? 'Allow commands in this chat' : 'Allow changes in this chat'),
+      el('button', { class: 'btn', type: 'button', onclick: () => onDecide('deny') }, 'Deny')));
+  }
+  return box;
+}
+function agentEl(a) {
+  const box = el('div', { class: 'agent' });
+  for (const p of a.parts || []) {
+    if (p.step) box.append(stepEl(p.step));
+    else if (p.text) box.append(el('div', { class: 'md', html: md(p.text) }));
+  }
+  return box;
+}
+
+async function runAgent(payload, localUserMsg) {
+  const s = state.session;
+  if (localUserMsg) s.messages.push(localUserMsg);
+  s.messages.push({ role: 'assistant', content: '', model: currentModel(), meta: { agent: { parts: [] } } });
+  const ctrl = new AbortController();
+  state.busy = ctrl;
+  $('#sendBtn').textContent = 'Stop';
+  renderMessages();
+  const box = $('#messages');
+  const target = box.lastElementChild.querySelector('.agent');
+  target.classList.add('typing');
+  const steps = {};
+  let cur = null, pending = false, error = null, stopped = false;
+  const scroll = () => { if (box.scrollHeight - box.scrollTop - box.clientHeight < 160) box.scrollTop = box.scrollHeight; };
+  const paint = () => { pending = false; if (cur) cur.el.innerHTML = md(cur.raw); scroll(); };
+  const endText = () => { if (cur) { if (cur.thinking) cur.raw += '</think>'; cur.el.innerHTML = md(cur.raw); cur = null; } };
+  const showStep = (st, ask) => {
+    const node = stepEl(st, ask && (async (decision) => {
+      node.querySelectorAll('.step-actions button').forEach((b) => (b.disabled = true));
+      try { await api('/api/agent/confirm', { method: 'POST', body: { run: state.agentRun, id: st.id, decision } }); }
+      catch (e) { toast(e.message); }
+    }));
+    if (steps[st.id]) steps[st.id].replaceWith(node); else target.append(node);
+    steps[st.id] = node;
+    if (ask) node.scrollIntoView({ block: 'nearest' }); else scroll();
+  };
+  try {
+    await stream('/api/agent', { session_id: s.id, model: currentModel(), persona: currentPersona(), folder: agentFolder(), ...payload }, (ev) => {
+      if (ev.type === 'start') { s.title = ev.title; $('#viewTitle').textContent = ev.title; state.agentRun = ev.run; }
+      else if (ev.type === 'think' || ev.type === 'text') {
+        if (!cur) { cur = { raw: '', thinking: false, el: el('div', { class: 'md' }) }; target.append(cur.el); }
+        if (ev.type === 'think' && !cur.thinking) { cur.raw += '<think>'; cur.thinking = true; }
+        if (ev.type === 'text' && cur.thinking) { cur.raw += '</think>\n\n'; cur.thinking = false; }
+        cur.raw += ev.t;
+        if (!pending) { pending = true; requestAnimationFrame(paint); }
+      } else if (ev.type === 'step' || ev.type === 'step_done') { endText(); showStep(ev); }
+      else if (ev.type === 'confirm') showStep(ev, true);
+      else if (ev.type === 'notice') { endText(); target.append(el('p', { class: 'notice muted small' }, `ℹ️ ${ev.t}`)); }
+      else if (ev.type === 'done') stopped = !!ev.stopped;
+      else if (ev.type === 'error') error = ev.error;
+    }, ctrl.signal);
+  } catch (e) {
+    if (e.name === 'AbortError') stopped = true;
+    else error = e.message;
+  }
+  endText();
+  state.busy = null;
+  state.agentRun = null;
+  $('#sendBtn').textContent = 'Send';
+  loadSessions();
+  if (state.session !== s) return;
+  // after Stop the server saves what was done a moment later
+  let fresh = null;
+  for (let i = 0; i < (stopped ? 6 : 1); i++) {
+    try { fresh = await api(`/api/sessions/${s.id}`); } catch (e) { break; }
+    if (!stopped || fresh.messages.at(-1)?.role === 'assistant') break;
+    await new Promise((r) => setTimeout(r, 400));
+  }
+  if (state.session !== s || state.busy) return;
+  if (fresh) state.session = fresh;
   renderMessages();
   if (error) $('#messages').append(el('div', { class: 'msg' }, el('div', { class: 'avatar' }, '⚠️'), el('div', { class: 'body err' }, error)));
   $('#messages').scrollTop = $('#messages').scrollHeight;
@@ -1515,6 +1646,9 @@ function renderSettings() {
   $('#tempVal').textContent = s.temperature;
   $('#useMemory').checked = s.use_memory;
   $('#checkUpdates').checked = s.check_updates;
+  $('#agentEnabled').checked = s.agent_enabled;
+  $('#agentTimeout').value = s.agent_timeout;
+  $('#agentSteps').value = s.agent_max_steps;
   renderLook();
   renderMailAccounts();
   $('#logoutBtn').classList.toggle('hidden', !s.password_set);
@@ -1589,16 +1723,23 @@ $('#saveSettings').onclick = async () => {
       providers: draftProviders.filter((p) => p.base_url.trim()), system_prompt: $('#sysPrompt').value,
       temperature: parseFloat($('#temperature').value), use_memory: $('#useMemory').checked,
       check_updates: $('#checkUpdates').checked,
+      agent_enabled: $('#agentEnabled').checked, agent_timeout: Number($('#agentTimeout').value),
+      agent_max_steps: Number($('#agentSteps').value),
       accent: s.accent, theme: s.theme, default_model: $('#defaultModel').value, personas: draftPersonas,
     } });
     applyLook();
     renderPersonaSelect();
+    renderAgentToggle();
     await loadModels();
     renderSettings();
     checkUpdate();
     $('#settingsMsg').textContent = 'Saved ✓';
     setTimeout(() => ($('#settingsMsg').textContent = ''), 2000);
   } catch (e) { toast(e.message); }
+};
+$('#agentEnabled').onchange = (e) => {
+  if (e.target.checked && !confirm('Enable agent mode?\n\nThe model can then change files in the folder you choose and run '
+    + 'commands on this computer, each time after you allowed it. Commands are not sandboxed.')) e.target.checked = false;
 };
 $('#savePassword').onclick = async () => {
   const pw = $('#password').value;
@@ -1669,6 +1810,7 @@ async function refreshAll(poll = false) {
   applyLook();
   renderLook();
   renderKbToggle();
+  renderAgentToggle();
   renderPersonaSelect();
   await Promise.all([refreshAll(), loadSessions()]);
   renderMessages();
