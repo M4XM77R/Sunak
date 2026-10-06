@@ -29,7 +29,7 @@
     </nav>
     <div class="sessions-head">
       <span>Chats</span>
-      <input id="sessionFilter" type="search" placeholder="Search…" aria-label="Search chats">
+      <input id="sessionFilter" type="search" placeholder="Search chats…" aria-label="Search in all chats">
     </div>
     <div class="sessions" id="sessions"></div>
   </aside>
@@ -41,6 +41,14 @@
       <h1 id="viewTitle">Chat</h1>
       <div class="spacer"></div>
       <select id="modelSelect" class="model-select" aria-label="Model"></select>
+      <div class="pop-wrap hidden" id="exportWrap">
+        <button class="icon-btn" id="exportBtn" title="Export this chat" aria-haspopup="true">⬇</button>
+        <div class="pop hidden" id="exportMenu">
+          <a id="exportMd" download>Markdown (.md)</a>
+          <a id="exportJson" download>JSON (.json)</a>
+          <button type="button" id="exportPrint">Print / PDF</button>
+        </div>
+      </div>
       <button class="icon-btn" id="themeBtn" title="Toggle light/dark">🌓</button>
     </header>
 
@@ -193,6 +201,10 @@
 
         <h2>Look</h2>
         <div class="row swatches" id="swatches"></div>
+
+        <h2>Data</h2>
+        <p class="muted small">All chats, documents, notes and your knowledge base in one JSON file. API keys and the password are not included.</p>
+        <div class="row"><a class="btn" href="/api/export" download>⬇ Download backup</a></div>
 
         <h2>Security</h2>
         <p class="muted small">Set a password if Sunak is reachable from other devices. Leave empty to disable.</p>

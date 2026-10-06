@@ -189,6 +189,7 @@ function show(view) {
   $$('.view').forEach((v) => v.classList.toggle('active', v.id === `view-${view}`));
   $('#viewTitle').textContent = view === 'chat' && state.session ? state.session.title : TITLES[view];
   $('#modelSelect').classList.toggle('hidden', ['notes', 'settings', 'compare', 'models', 'knowledge'].includes(view));
+  syncExport();
   closeSidebar();
   if (view === 'documents') loadDocs();
   if (view === 'notes') loadNotes();
@@ -235,10 +236,10 @@ async function loadSessions() {
   renderSessions();
 }
 function renderSessions() {
-  const f = $('#sessionFilter').value.toLowerCase();
+  if ($('#sessionFilter').value.trim().length >= 2) { searchChats(); return; }
   const box = $('#sessions');
   box.innerHTML = '';
-  for (const s of state.sessions.filter((x) => x.title.toLowerCase().includes(f))) {
+  for (const s of state.sessions) {
     box.append(el('div', { class: `session${state.session?.id === s.id ? ' active' : ''}`, onclick: () => openSession(s.id) },
       el('span', { class: 't', title: s.title }, s.title),
       el('button', { class: 'x', title: 'Delete', onclick: async (e) => {
@@ -250,15 +251,33 @@ function renderSessions() {
       } }, '✕')));
   }
 }
-$('#sessionFilter').oninput = renderSessions;
+// search in all chats (titles and messages); results show where the words occur
+let searchTimer = null;
+$('#sessionFilter').oninput = () => { clearTimeout(searchTimer); searchTimer = setTimeout(renderSessions, 200); };
+async function searchChats() {
+  const q = $('#sessionFilter').value.trim();
+  const hits = await api(`/api/search?q=${encodeURIComponent(q)}`);
+  if ($('#sessionFilter').value.trim() !== q) return; // a newer search is on its way
+  const box = $('#sessions');
+  box.innerHTML = '';
+  if (!hits.length) box.append(el('p', { class: 'muted small', style: 'padding:4px 10px' }, 'No chats found.'));
+  for (const h of hits) {
+    box.append(el('div', { class: `session hit${state.session?.id === h.session_id ? ' active' : ''}`, onclick: () => openSession(h.session_id, h.message_id) },
+      el('span', { class: 't', title: h.title }, h.title), h.snippet && h.snippet !== h.title ? el('span', { class: 'snip' }, h.snippet) : null));
+  }
+}
 
-async function openSession(id) {
+async function openSession(id, messageId) {
   state.session = await api(`/api/sessions/${id}`);
   syncModelSelect();
   renderKbToggle();
   renderMessages();
   renderSessions();
   show('chat');
+  if (messageId) {
+    const m = $(`#messages .msg[data-id="${messageId}"]`);
+    if (m) { m.scrollIntoView({ block: 'center' }); m.classList.add('flash'); setTimeout(() => m.classList.remove('flash'), 1800); }
+  }
 }
 function newChat() {
   state.session = null;
@@ -315,7 +334,7 @@ function messageEl(m, i, msgs) {
   }
   if (!isUser && m.model) meta.append(el('span', {}, m.model.split('::')[1] || m.model));
   body.append(meta);
-  return el('div', { class: `msg ${m.role}` }, el('div', { class: 'avatar' }, isUser ? '🙂' : '⛵'), body);
+  return el('div', { class: `msg ${m.role}`, 'data-id': m.id }, el('div', { class: 'avatar' }, isUser ? '🙂' : '⛵'), body);
 }
 
 // attached files (File `name`: ``` text ```) are shown folded, the question as text
@@ -332,10 +351,26 @@ function renderMessages() {
   const box = $('#messages');
   box.innerHTML = '';
   const msgs = state.session?.messages || [];
+  syncExport();
   if (!msgs.length) { box.append(welcome()); return; }
   msgs.forEach((m, i) => box.append(messageEl(m, i, msgs)));
   box.scrollTop = box.scrollHeight;
 }
+
+/* ---------------- Export ---------------- */
+function syncExport() {
+  const s = state.session;
+  $('#exportWrap').classList.toggle('hidden', !(state.view === 'chat' && s?.id && s.messages?.length));
+  $('#exportMenu').classList.add('hidden');
+  if (s?.id) {
+    $('#exportMd').href = `/api/sessions/${s.id}/export?format=md`;
+    $('#exportJson').href = `/api/sessions/${s.id}/export?format=json`;
+  }
+}
+$('#exportBtn').onclick = (e) => { e.stopPropagation(); $('#exportMenu').classList.toggle('hidden'); };
+$('#exportMenu').onclick = () => $('#exportMenu').classList.add('hidden');
+$('#exportPrint').onclick = () => window.print();
+document.addEventListener('click', (e) => { if (!$('#exportWrap').contains(e.target)) $('#exportMenu').classList.add('hidden'); });
 
 /* ---------------- Sending ---------------- */
 const promptEl = $('#prompt');

@@ -1,6 +1,7 @@
 """SQLite storage. One file, created on first start."""
 
 import json
+import re
 import sqlite3
 import threading
 import time
@@ -155,6 +156,49 @@ class DB:
             f"UPDATE sessions SET {sets}, updated = ? WHERE id = ?",
             (*allowed.values(), time.time(), sid),
         )
+
+    def search_messages(self, query, limit=50):
+        """Chats whose title or messages contain every word of `query` (case-insensitive, any language).
+
+        Returns one hit per chat, newest chat first: {session_id, title, updated, message_id, snippet}.
+        A plain scan in Python: fast enough for a personal history and, unlike SQL LIKE, handles umlauts."""
+        words = query.casefold().split()
+        if not words:
+            return []
+        with self._lock:
+            sessions = self.conn.execute("SELECT id, title, updated FROM sessions ORDER BY updated DESC").fetchall()
+            rows = self.conn.execute("SELECT id, session_id, content FROM messages ORDER BY id").fetchall()
+        by_session = {}
+        for r in rows:
+            by_session.setdefault(r["session_id"], []).append(r)
+        hits = []
+        for s in sessions:
+            title_hit = all(w in s["title"].casefold() for w in words)
+            match = None
+            for m in by_session.get(s["id"], []):
+                text = re.sub(r"<think>.*?(</think>|$)", "", m["content"], flags=re.S)
+                low = text.casefold()
+                if all(w in low for w in words):
+                    match = (m["id"], text, low.find(words[0]))
+                    break
+            if match or title_hit:
+                hit = {"session_id": s["id"], "title": s["title"], "updated": s["updated"], "message_id": None, "snippet": ""}
+                if match:
+                    mid, text, pos = match
+                    start = max(0, pos - 60)
+                    snippet = " ".join(text[start:start + 180].split())
+                    hit.update(message_id=mid, snippet=("…" if start else "") + snippet + ("…" if start + 180 < len(text) else ""))
+                hits.append(hit)
+                if len(hits) >= limit:
+                    break
+        return hits
+
+    def export_all(self):
+        """Every chat with its messages, documents, notes and knowledge-base texts (for a backup)."""
+        sessions = [self.get_session(s["id"]) for s in self._q("SELECT id FROM sessions ORDER BY created")]
+        kb = [self.kb_file(f["id"]) for f in self._q("SELECT id FROM kb_files ORDER BY created")]
+        return {"sessions": sessions, "documents": self._q("SELECT * FROM documents ORDER BY updated"),
+                "notes": self._q("SELECT * FROM notes ORDER BY created"), "knowledge": kb}
 
     def delete_session(self, sid):
         """Delete a chat and its messages."""

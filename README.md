@@ -56,7 +56,7 @@ docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d   # mit NVI
 
 | | |
 |---|---|
-| 💬 **Chat** | Streaming-Antworten, Verlauf mit Suche, Bearbeiten und Neu generieren, Markdown, Tabellen, Code mit Kopier-Knopf, Denkprozess von Reasoning-Modellen ein- und ausklappbar, Dateien anhängen (auch PDF, Word, PowerPoint) per 📎 oder Drag & Drop |
+| 💬 **Chat** | Streaming-Antworten, Volltextsuche über alle Chats, Export als Markdown, JSON oder PDF, Bearbeiten und Neu generieren, Markdown, Tabellen, Code mit Kopier-Knopf, Denkprozess von Reasoning-Modellen ein- und ausklappbar, Dateien anhängen (auch PDF, Word, PowerPoint) per 📎 oder Drag & Drop |
 | 🤖 **Claude** | Claude als eigener Anbieter: API-Key eintragen, die verfügbaren Claude-Modelle erscheinen automatisch in der Auswahl. Antworten werden gestreamt, der Denkprozess ist zusammengefasst sichtbar. Funktioniert in Chat, Compare, Research und Documents |
 | 📚 **Knowledge** | Eigene Wissensbasis: PDFs, Word (.docx), OpenDocument (.odt), PowerPoint (.pptx), HTML, Markdown, Text, CSV und Code hochladen, im Chat mit 📚 einschalten und Fragen dazu stellen. Antworten zeigen, aus welchen Dateien sie stammen. Volltextsuche über alle Dateien. Alles bleibt lokal, ohne Zusatzsoftware |
 | ⚖️ **Compare** | Ein Prompt an 2 bis 4 Modelle gleichzeitig, Antworten und Geschwindigkeit nebeneinander |
@@ -78,6 +78,9 @@ docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d   # mit NVI
 | Neuer Chat | `Strg+K` (Mac: `⌘K`) |
 | Modell herunterladen | 🧩 Models → Modell aussuchen → Download (Abbrechen jederzeit möglich, der Download läuft beim nächsten Mal weiter) |
 | Modell wechseln | Auswahl oben rechts |
+| Alte Chats finden | Suchfeld über der Chatliste: durchsucht Titel und alle Nachrichten, ein Klick springt zur Stelle |
+| Chat exportieren | ⬇ oben rechts → Markdown, JSON oder Drucken/PDF |
+| Alles sichern | Settings → Data → Download backup (ohne API-Keys und Passwort) |
 | Fragen zu eigenen Dateien | 📚 Knowledge → Dateien hineinziehen → im Chat 📚 neben dem Eingabefeld einschalten. Für eine einzelne Datei reicht auch 📎 |
 | Claude nutzen | Settings → Providers → Preset „Claude (Anthropic)“ → API-Key von [console.anthropic.com](https://console.anthropic.com) einfügen → Save settings. Alternativ beim ersten Start „Use Claude with an API key“ klicken |
 | Anderes Cloud-Modell nutzen | Settings → Providers → Preset wählen → API-Key eintragen → Save settings |

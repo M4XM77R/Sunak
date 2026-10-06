@@ -17,7 +17,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
 from . import __version__, extract, knowledge, ollama, providers, research
 from .db import DB
@@ -242,6 +242,28 @@ def stream_to_text(chunks):
     return "".join(out)
 
 
+def session_markdown(session):
+    """A chat as Markdown: title, then each message under a heading. Reasoning is left out."""
+    when = time.strftime("%Y-%m-%d %H:%M", time.localtime(session["created"]))
+    out = [f"# {session['title']}", "", f"*Sunak · {when}*", ""]
+    for m in session["messages"]:
+        if m["role"] == "user":
+            out += ["## You", "", m["content"].strip(), ""]
+        else:
+            model = m["model"].split("::", 1)[-1] if m["model"] else ""
+            out += ["## Sunak" + (f" ({model})" if model else ""), "", providers.strip_think(m["content"]), ""]
+            files = (m.get("meta") or {}).get("sources")
+            if files:
+                out += ["Sources: " + ", ".join(f["name"] for f in files), ""]
+    return "\n".join(out)
+
+
+def file_name(title, ext):
+    """Safe download name from a chat title."""
+    base = re.sub(r"[^\w\- ]+", "", title, flags=re.U).strip()[:60] or "chat"
+    return f"{base}.{ext}"
+
+
 class Handler(BaseHTTPRequestHandler):
     """HTTP request handler. Static files are served from STATIC; JSON API routes are listed in ROUTES.
 
@@ -260,6 +282,19 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def send_download(self, data, name, ctype):
+        """Send `data` (str or bytes) as a file download."""
+        body = data.encode() if isinstance(data, str) else data
+        ascii_name = name.encode("ascii", "replace").decode().replace("?", "_").replace('"', "")
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Content-Disposition",
+                         f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(name)}")
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(body)
@@ -429,6 +464,31 @@ class Handler(BaseHTTPRequestHandler):
         """PATCH /api/sessions/<id>: change title, model or system prompt."""
         self.app.db.update_session(sid, **self.body())
         self.get_session(sid)
+
+    def search(self):
+        """GET /api/search?q=: chats whose title or messages contain all words, with a snippet."""
+        q = parse_qs(urlparse(self.path).query).get("q", [""])[0]
+        self.send_json(self.app.db.search_messages(q))
+
+    def export_session(self, sid):
+        """GET /api/sessions/<id>/export?format=md|json: download one chat."""
+        s = self.app.db.get_session(sid)
+        if not s:
+            return self.error("Not found", 404)
+        fmt = parse_qs(urlparse(self.path).query).get("format", ["md"])[0]
+        if fmt == "json":
+            return self.send_download(json.dumps(s, indent=2, ensure_ascii=False), file_name(s["title"], "json"),
+                                      "application/json; charset=utf-8")
+        self.send_download(session_markdown(s), file_name(s["title"], "md"), "text/markdown; charset=utf-8")
+
+    def export_all(self):
+        """GET /api/export: everything as one JSON file (API keys and the password are left out)."""
+        data = self.app.db.export_all()
+        s = self.app.settings()
+        s["providers"] = [{k: v for k, v in p.items() if k != "api_key"} for p in s["providers"]]
+        data.update(sunak_version=__version__, exported=time.strftime("%Y-%m-%dT%H:%M:%S"), settings=s)
+        self.send_download(json.dumps(data, indent=2, ensure_ascii=False),
+                           f"sunak-backup-{time.strftime('%Y-%m-%d')}.json", "application/json; charset=utf-8")
 
     def delete_session(self, sid):
         """DELETE /api/sessions/<id>"""
@@ -800,6 +860,9 @@ ROUTES = [
     (rf"/api/sessions/{ID}", "GET", Handler.get_session),
     (rf"/api/sessions/{ID}", "PATCH", Handler.patch_session),
     (rf"/api/sessions/{ID}", "DELETE", Handler.delete_session),
+    (rf"/api/sessions/{ID}/export", "GET", Handler.export_session),
+    (r"/api/search", "GET", Handler.search),
+    (r"/api/export", "GET", Handler.export_all),
     (r"/api/chat", "POST", Handler.chat),
     (r"/api/compare", "POST", Handler.compare),
     (r"/api/research", "POST", Handler.research),

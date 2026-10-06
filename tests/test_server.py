@@ -7,6 +7,7 @@ import tempfile
 import threading
 import unittest
 import urllib.error
+import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -318,6 +319,30 @@ class SunakTest(unittest.TestCase):
         ev = self.call("POST", "/api/chat", {"session_id": s["id"], "model": "ollama::tiny:1b",
                                              "content": "File `a.txt`:\n```\nlong text\n```\n\nSummarize this"})
         self.assertEqual(ev[0]["title"], "Summarize this")
+
+    def test_search_and_export(self):
+        s = self.call("POST", "/api/sessions", {})
+        self.call("POST", "/api/chat", {"session_id": s["id"], "model": "ollama::think:1b", "content": "Grüße aus München"})
+        hits = self.call("GET", "/api/search?q=" + urllib.parse.quote("MÜNCHEN grüße"))
+        self.assertEqual([h["session_id"] for h in hits], [s["id"]])
+        self.assertIn("München", hits[0]["snippet"])
+        self.assertIsNotNone(hits[0]["message_id"])
+        self.assertEqual(self.call("GET", "/api/search?q=hmm"), [])  # reasoning is not searched
+        self.assertEqual(self.call("GET", "/api/search?q=m%C3%BCnchen%20paris"), [])
+        req = urllib.request.Request(f"{self.base}/api/sessions/{s['id']}/export?format=md")
+        with urllib.request.urlopen(req) as r:
+            md = r.read().decode()
+            self.assertIn("filename*=UTF-8''Gr%C3%BC%C3%9Fe%20aus%20M%C3%BCnchen.md", r.headers["Content-Disposition"])
+        self.assertTrue(md.startswith("# Grüße aus München\n"))
+        self.assertIn("## You\n\nGrüße aus München\n\n## Sunak (think:1b)\n\nHello from Ollama", md)
+        self.assertNotIn("hmm", md)
+        js = self.call("GET", f"/api/sessions/{s['id']}/export?format=json")
+        self.assertEqual(len(js["messages"]), 2)
+        backup = self.call("GET", "/api/export")
+        self.assertIn(s["id"], [x["id"] for x in backup["sessions"]])
+        self.assertTrue({"documents", "notes", "knowledge", "settings"} <= set(backup))
+        self.assertNotIn("sk-test", json.dumps(backup))
+        self.assertNotIn("api_key", json.dumps(backup))
 
     def test_extract_and_bad_uploads(self):
         r = self.call("POST", "/api/extract", {"name": "n.txt", "data": base64.b64encode(b"note").decode()})
