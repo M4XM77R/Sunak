@@ -3,7 +3,8 @@
 #   irm https://raw.githubusercontent.com/M4XM77R/sunak/main/uninstall.ps1 | iex
 #
 # Set $env:SUNAK_YES = "1" for no questions (removes the program, keeps your data),
-# $env:SUNAK_PURGE = "1" to also delete your data. The same as "sunak uninstall".
+# $env:SUNAK_PURGE = "1" to also delete your data, $env:SUNAK_WITH_OLLAMA = "1" to also uninstall Ollama,
+# $env:SUNAK_WITH_MODELS = "1" to also delete the downloaded models. The same as "sunak uninstall".
 $ErrorActionPreference = "Stop"
 $Repo = if ($env:SUNAK_REPO) { $env:SUNAK_REPO } else { "M4XM77R/sunak" }
 $Branch = if ($env:SUNAK_BRANCH) { $env:SUNAK_BRANCH } else { "main" }
@@ -49,6 +50,8 @@ else {
 $flags = @()
 if ($env:SUNAK_YES -eq "1") { $flags += "--yes" }
 if ($env:SUNAK_PURGE -eq "1") { $flags += "--purge" }
+if ($env:SUNAK_WITH_OLLAMA -eq "1") { $flags += "--with-ollama" }
+if ($env:SUNAK_WITH_MODELS -eq "1") { $flags += "--with-models" }
 $rest = @()
 if ($py.Length -gt 1) { $rest = $py[1..($py.Length - 1)] }
 Set-Location $HOME

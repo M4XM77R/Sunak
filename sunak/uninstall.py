@@ -1,10 +1,10 @@
-"""Remove Sunak from this computer:  sunak uninstall [--yes] [--purge]
+"""Remove Sunak from this computer:  sunak uninstall [--yes] [--purge] [--with-ollama] [--with-models]
 
 Removes the program: the `sunak` command, the app folder, desktop and menu icons, autostart and the
-PATH entry, and (after asking) Sunak's Docker containers. Your data (chats, settings, API keys, mail
-accounts) is only deleted when you say so or pass --purge. Downloaded Ollama models are only deleted
-when you say so; Ollama itself stays installed, because other programs may use it.
-Safe to run twice: whatever is already gone is skipped."""
+PATH entry, and (after asking) Sunak's Docker container. Everything else is a question of its own
+whose answer defaults to keeping it: your data (chats, settings, API keys, mail accounts), Ollama
+(native or its Docker container), and the downloaded Ollama models. Without a terminal nothing of that
+is deleted. Safe to run twice: whatever is already gone is skipped."""
 
 import os
 import platform
@@ -17,7 +17,12 @@ from . import desktop
 
 PATH_MARK = "# sunak PATH"  # written by install.sh into the shell start files
 LAUNCHER_MARK = "Sunak launcher"
-USAGE = "Usage: sunak uninstall [--yes] [--purge]\n  --yes    no questions: remove the program, keep your data\n  --purge  also delete your data"
+SERVICE_MODELS = Path("/usr/share/ollama/.ollama/models")  # where the Linux Ollama service keeps its models
+USAGE = """Usage: sunak uninstall [--yes] [--purge] [--with-ollama] [--with-models]
+  --yes          no questions: remove the program, keep your data, Ollama and its models
+  --purge        also delete your data
+  --with-ollama  also uninstall Ollama (and remove its Docker container)
+  --with-models  also delete the downloaded Ollama models"""
 
 
 def _windows():
@@ -177,17 +182,109 @@ def docker_projects():
     return sorted(found.items())
 
 
-def docker_remove(project, out):
-    """Remove the containers, network and built image of a Compose project. The data folder stays."""
-    ids = (_docker("ps", "-aq", "--filter", f"label=com.docker.compose.project={project}") or "").split()
+def docker_containers(project, service):
+    return (_docker("ps", "-aq", "--filter", f"label=com.docker.compose.project={project}",
+                    "--filter", f"label=com.docker.compose.service={service}") or "").split()
+
+
+def docker_remove(project, service, out):
+    """Remove the containers of one Compose service and their image. Data folders stay."""
+    ids = docker_containers(project, service)
+    images = [i for i in (_docker("inspect", "-f", "{{.Image}}", *ids) or "").split()] if ids else []
     if ids and _docker("rm", "-f", *ids) is None:
-        out(f"  Could not remove the Docker containers of '{project}'.")
+        out(f"  Could not remove the Docker container '{service}' of '{project}'.")
         return False
-    _docker("network", "rm", f"{project}_default")
-    for image in (f"{project}-sunak", f"{project}_sunak"):  # Compose v2 / v1 names
-        _docker("image", "rm", image)
-    out(f"  Removed Docker containers of '{project}'")
+    if service == "sunak":
+        images += [f"{project}-sunak", f"{project}_sunak"]  # built by Compose v2 / v1
+    for image in images:
+        _docker("image", "rm", image)  # fails harmlessly when something else still uses it
+    _docker("network", "rm", f"{project}_default")  # only works once no container uses it
+    out(f"  Removed the Docker container '{service}' of '{project}'")
     return True
+
+
+# Ollama ----------------------------------------------------------------------
+
+def _run(cmd, out):
+    """Run a command with the terminal attached (sudo may ask for a password). True on success."""
+    try:
+        return subprocess.run(cmd).returncode == 0
+    except OSError as e:
+        out(f"  Could not run {cmd[0]}: {e.strerror or e}")
+        return False
+
+
+def _quiet(cmd):
+    try:
+        return subprocess.run(cmd, capture_output=True, timeout=60).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def ollama_install():
+    """How Ollama is installed on this computer (not in Docker): a dict with 'how', or None."""
+    system, exe = platform.system(), shutil.which("ollama")
+    if system == "Windows":
+        folder = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "Programs" / "Ollama"
+        if (folder / "unins000.exe").exists():
+            return {"how": "inno", "uninstaller": folder / "unins000.exe"}
+        if exe or folder.exists():
+            return {"how": "winget" if shutil.which("winget") else "manual"}
+        return None
+    if system == "Darwin":
+        if shutil.which("brew"):
+            if _quiet(["brew", "list", "--cask", "ollama"]):
+                return {"how": "brew-cask"}
+            if _quiet(["brew", "list", "--formula", "ollama"]):
+                return {"how": "brew"}
+        apps = [p for p in (Path("/Applications/Ollama.app"), Path.home() / "Applications" / "Ollama.app") if p.exists()]
+        return {"how": "app", "apps": apps, "exe": exe} if apps or exe else None
+    if not exe:
+        return None
+    if exe.startswith("/snap/"):
+        return {"how": "snap"}
+    if Path("/etc/systemd/system/ollama.service").exists() or Path(exe).parent == Path("/usr/local/bin"):
+        return {"how": "script", "exe": exe}  # the official install.sh from ollama.com
+    return {"how": "manual", "exe": exe}  # a distribution package: its package manager removes it
+
+
+def ollama_commands(info):
+    """Commands that remove Ollama, or a hint (str) when that has to be done by hand."""
+    how = info["how"]
+    if how == "inno":
+        return [["taskkill", "/F", "/IM", "ollama app.exe"], ["taskkill", "/F", "/IM", "ollama.exe"],
+                [str(info["uninstaller"]), "/VERYSILENT", "/NORESTART"]]
+    if how == "winget":
+        return [["taskkill", "/F", "/IM", "ollama app.exe"], ["taskkill", "/F", "/IM", "ollama.exe"],
+                ["winget", "uninstall", "-e", "--id", "Ollama.Ollama", "--silent", "--accept-source-agreements"]]
+    if how == "brew-cask":
+        return [["brew", "uninstall", "--cask", "ollama"]]
+    if how == "brew":
+        return [["brew", "services", "stop", "ollama"], ["brew", "uninstall", "ollama"]]
+    if how == "app":
+        cmds = [["osascript", "-e", 'quit app "Ollama"']] + [["rm", "-rf", str(a)] for a in info["apps"]]
+        if info["exe"] and ".app/" in os.path.realpath(info["exe"]):  # the link the app puts in /usr/local/bin
+            cmds.append(["rm", "-f", info["exe"]])
+        return cmds
+    sudo = [] if hasattr(os, "geteuid") and os.geteuid() == 0 else ["sudo"]
+    if how == "snap":
+        return [sudo + ["snap", "remove", "ollama"]]
+    if how == "script":
+        exe = Path(info["exe"])
+        return [sudo + ["systemctl", "stop", "ollama"], sudo + ["systemctl", "disable", "ollama"],
+                sudo + ["rm", "-f", "/etc/systemd/system/ollama.service", str(exe)],
+                sudo + ["rm", "-rf", str(exe.parent.parent / "lib" / "ollama")],
+                sudo + ["userdel", "ollama"], sudo + ["groupdel", "ollama"]]
+    if platform.system() == "Windows":
+        return "Remove it in Settings > Apps > Ollama > Uninstall."
+    return f"Remove it with your package manager (it is at {info.get('exe')})."
+
+
+def _best_effort(cmd):
+    """Steps that may fail without harm: stopping what is not running, a user that does not exist."""
+    c = cmd[1:] if cmd[0] == "sudo" else cmd
+    return c[0] in ("taskkill", "osascript", "userdel", "groupdel") or c[:2] in (["systemctl", "stop"], ["systemctl", "disable"]) \
+        or c[:3] == ["brew", "services", "stop"]
 
 
 # the command -----------------------------------------------------------------
@@ -225,10 +322,11 @@ def _size(path):
 def main(argv, ask=input, out=print):
     """Run the uninstall. `ask` reads an answer (EOF or Enter means the default). Returns the exit code."""
     flags = set(argv)
-    if flags - {"--yes", "-y", "--purge"}:
+    if flags - {"--yes", "-y", "--purge", "--with-ollama", "--with-models"}:
         out(USAGE)
         return 2
     yes, purge = bool(flags & {"--yes", "-y"}), "--purge" in flags
+    with_ollama, with_models = "--with-ollama" in flags, "--with-models" in flags
 
     def confirm(question, default):
         try:
@@ -236,6 +334,10 @@ def main(argv, ask=input, out=print):
         except EOFError:
             answer = ""
         return default if not answer else answer.startswith("y")
+
+    def decide(flag, question):
+        """Flag given: yes. --yes without the flag: no. Otherwise ask, default no."""
+        return flag or (not yes and confirm(question, False))
 
     if not yes and not confirm("Uninstall Sunak from this computer? Your data is kept unless you say otherwise.", False):
         out("Nothing removed. (To uninstall without questions: --yes)")
@@ -269,13 +371,22 @@ def main(argv, ask=input, out=print):
     except OSError:
         pass
 
-    data_folders = []
+    # Docker: Sunak's container, then (separately) the Ollama container next to it
+    data_folders, models = [], []
     for project, folder in docker_projects():
-        if yes or confirm(f"Remove the Docker containers of Sunak (project '{project}' in {folder or '?'})?", False):
-            failed |= not docker_remove(project, out)
+        where = f"project '{project}' in {folder or '?'}"
+        if yes or confirm(f"Remove Sunak's Docker container ({where})?", False):
+            failed |= not docker_remove(project, "sunak", out)
+        if docker_containers(project, "ollama"):
+            if decide(with_ollama, f"Also remove the Ollama Docker container ({where})? Other setups may use it."):
+                failed |= not docker_remove(project, "ollama", out)
+            else:
+                out(f"Kept the Ollama Docker container of '{project}'.")
         if folder:
             data_folders.append(Path(folder) / "data")
+            models.append(Path(folder) / "data" / "ollama")  # models of the Ollama container
 
+    # Sunak's data: chats, settings, API keys, mail accounts
     for folder in [data_dir()] + data_folders:
         if not folder.is_dir():
             continue
@@ -283,23 +394,49 @@ def main(argv, ask=input, out=print):
         if not _safe_to_delete(folder):
             out(f"Kept {folder}: it is not a folder of its own (check SUNAK_DATA).")
         elif purge or (not yes and confirm(f"Also delete {what}? This cannot be undone.", False)):
-            if not remove(folder, out):
-                failed = True
-                if not _windows():  # e.g. files the Ollama container wrote as root
-                    out(f"  Delete it yourself, e.g. with: sudo rm -rf \"{folder}\"")
+            # Docker's data folder also holds the Ollama models: those have their own question below
+            parts = [p for p in folder.iterdir() if p not in models] if folder in data_folders else [folder]
+            for part in parts:
+                if not remove(part, out):
+                    failed = True
+                    if not _windows():  # e.g. files a container wrote as root
+                        out(f"  Delete it yourself, e.g. with: sudo rm -rf \"{part}\"")
         else:
             out(f"Kept {what}. Delete that folder to remove them.")
 
-    models = Path(os.environ.get("OLLAMA_MODELS") or Path.home() / ".ollama" / "models")
-    if models.is_dir() and _safe_to_delete(models):
-        if not yes and confirm(f"Also delete the downloaded Ollama models in {models} ({_size(models):.1f} GB)?", False):
-            failed |= not remove(models, out)
+    # Ollama itself: only when the user says so, because other programs may use it
+    info = ollama_install()
+    if info:
+        if decide(with_ollama, "Also uninstall Ollama? Other programs may use it."):
+            cmds = ollama_commands(info)
+            if isinstance(cmds, str):
+                out("  " + cmds)
+                failed = True
+            else:
+                out("Uninstalling Ollama…")
+                for cmd in cmds:
+                    if not _run(cmd, out) and not _best_effort(cmd):
+                        failed = True
+                        out("  Failed: " + " ".join(cmd))
+                if _windows():
+                    out("  Ollama's uninstaller has run.")
+                else:
+                    out("  Ollama is uninstalled." if not shutil.which("ollama") else "  Ollama may still be installed, see above.")
         else:
-            out(f"Kept the Ollama models in {models}.")
-    if shutil.which("ollama"):
-        out("Ollama stays installed (other programs may use it). To remove it: "
-            + {"Windows": "Settings > Apps > Ollama > Uninstall.",
-               "Darwin": "quit Ollama and move it from Applications to the Trash."}.get(
-                platform.system(), "see https://github.com/ollama/ollama/blob/main/docs/linux.md#uninstall"))
+            out("Kept Ollama (other programs may use it).")
+
+    # downloaded models: big, and usable again after reinstalling Ollama, so a question of their own
+    models = [Path(os.environ.get("OLLAMA_MODELS") or Path.home() / ".ollama" / "models"),
+              SERVICE_MODELS] + models
+    for folder in dict.fromkeys(models):
+        if not folder.is_dir() or not _safe_to_delete(folder):
+            continue
+        if decide(with_models, f"Also delete the downloaded Ollama models in {folder} ({_size(folder):.1f} GB)?"):
+            if not remove(folder, out):
+                failed = True
+                if not _windows():
+                    out(f"  Delete them yourself, e.g. with: sudo rm -rf \"{folder}\"")
+        else:
+            out(f"Kept the Ollama models in {folder}.")
     out("Some parts could not be removed, see above." if failed else "Sunak is uninstalled.")
     return 1 if failed else 0

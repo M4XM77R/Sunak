@@ -24,6 +24,8 @@ class UninstallTest(unittest.TestCase):
                   mock.patch.object(uninstall, "docker_projects", return_value=[]),
                   mock.patch.object(uninstall, "windows_path_remove", return_value=False),
                   mock.patch.object(uninstall, "_windows_desktop", return_value=[]),  # never the real desktop
+                  mock.patch.object(uninstall, "ollama_install", return_value=None),  # never the real Ollama
+                  mock.patch.object(uninstall, "SERVICE_MODELS", self.home / "no-service-models"),
                   mock.patch("shutil.which", return_value=None)):
             p.start()
             self.addCleanup(p.stop)
@@ -149,32 +151,118 @@ class UninstallTest(unittest.TestCase):
 
 
 class DockerTest(unittest.TestCase):
-    def test_containers_only_after_yes_and_data_kept(self):
-        calls = []
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
         self.addCleanup(os.chdir, os.getcwd())
+        self.calls = []
+        root = Path(self.tmp.name)
+        for p in (mock.patch.object(uninstall, "docker_projects", return_value=[("sunak", str(root))]),
+                  mock.patch.object(uninstall, "_docker", side_effect=self.fake),
+                  mock.patch.object(desktop, "running", return_value=None),
+                  mock.patch.object(desktop, "disable_autostart", return_value=False),
+                  mock.patch.object(uninstall, "program_files", return_value=[]),
+                  mock.patch.object(uninstall, "windows_path_remove", return_value=False),
+                  mock.patch.object(uninstall, "data_dir", return_value=root / "none"),
+                  mock.patch.object(uninstall, "remove_path_lines", return_value=False),
+                  mock.patch.object(uninstall, "ollama_install", return_value=None),
+                  mock.patch.object(uninstall, "SERVICE_MODELS", root / "none"),
+                  mock.patch.dict(os.environ, {"OLLAMA_MODELS": str(root / "no-models")}),
+                  mock.patch("shutil.which", return_value=None)):
+            p.start()
+            self.addCleanup(p.stop)
+        self.data = root / "data"
+        (self.data / "ollama").mkdir(parents=True)
+        (self.data / "sunak.db").write_text("x")
 
-        def fake(*args, timeout=60):
-            calls.append(args)
-            return "c1\nc2\n" if args[:2] == ("ps", "-aq") else ""
-        with tempfile.TemporaryDirectory() as tmp, \
-                mock.patch.object(uninstall, "docker_projects", return_value=[("sunak", tmp)]), \
-                mock.patch.object(uninstall, "_docker", side_effect=fake), \
-                mock.patch.object(desktop, "running", return_value=None), \
-                mock.patch.object(desktop, "disable_autostart", return_value=False), \
-                mock.patch.object(uninstall, "program_files", return_value=[]), \
-                mock.patch.object(uninstall, "windows_path_remove", return_value=False), \
-                mock.patch.object(uninstall, "data_dir", return_value=Path(tmp) / "none"), \
-                mock.patch.object(uninstall, "remove_path_lines", return_value=False), \
-                mock.patch.dict(os.environ, {"OLLAMA_MODELS": os.path.join(tmp, "no-models")}), \
-                mock.patch("shutil.which", return_value=None):
-            (Path(tmp) / "data").mkdir()
-            answers = iter(["y", "n", "n"])
-            uninstall.main([], ask=lambda q: next(answers), out=lambda s: None)
-            self.assertEqual(calls, [])  # said no to the containers
-            uninstall.main(["--yes"], ask=lambda q: self.fail(q), out=lambda s: None)
-            self.assertIn(("rm", "-f", "c1", "c2"), calls)
-            self.assertTrue((Path(tmp) / "data").exists())  # data only with --purge
+    def fake(self, *args, timeout=60):
+        self.calls.append(args)
+        if args[:2] == ("ps", "-aq"):
+            return "s1\n" if "label=com.docker.compose.service=sunak" in args else "o1\n"
+        return ""
 
+    def removed(self):
+        return [c[2:] for c in self.calls if c[:2] == ("rm", "-f")]
+
+    def test_each_container_has_its_own_question(self):
+        answers = iter(["y", "n", "n", "n", "n"])  # uninstall, Sunak container, Ollama container, data, models
+        uninstall.main([], ask=lambda q: next(answers), out=lambda s: None)
+        self.assertEqual(self.removed(), [])
+        answers = iter(["y", "y", "n", "n", "n"])
+        uninstall.main([], ask=lambda q: next(answers), out=lambda s: None)
+        self.assertEqual(self.removed(), [("s1",)])
+
+    def test_yes_keeps_the_ollama_container_and_all_data(self):
+        uninstall.main(["--yes"], ask=lambda q: self.fail(q), out=lambda s: None)
+        self.assertEqual(self.removed(), [("s1",)])
+        self.assertTrue((self.data / "sunak.db").exists())
+        uninstall.main(["--yes", "--purge"], ask=lambda q: self.fail(q), out=lambda s: None)
+        self.assertFalse((self.data / "sunak.db").exists())
+        self.assertTrue((self.data / "ollama").exists())  # models: only with --with-models
+        uninstall.main(["--yes", "--with-ollama", "--with-models"], ask=lambda q: self.fail(q), out=lambda s: None)
+        self.assertIn(("o1",), self.removed())
+        self.assertFalse((self.data / "ollama").exists())
+
+class OllamaTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.addCleanup(os.chdir, os.getcwd())
+        root = Path(self.tmp.name)
+        self.ran = []
+        for p in (mock.patch.object(uninstall, "docker_projects", return_value=[]),
+                  mock.patch.object(desktop, "running", return_value=None),
+                  mock.patch.object(desktop, "disable_autostart", return_value=False),
+                  mock.patch.object(uninstall, "program_files", return_value=[]),
+                  mock.patch.object(uninstall, "windows_path_remove", return_value=False),
+                  mock.patch.object(uninstall, "data_dir", return_value=root / "none"),
+                  mock.patch.object(uninstall, "remove_path_lines", return_value=False),
+                  mock.patch.object(uninstall, "ollama_install", return_value={"how": "brew-cask"}),
+                  mock.patch.object(uninstall, "_run", side_effect=lambda cmd, out: self.ran.append(cmd) or True),
+                  mock.patch.object(uninstall, "SERVICE_MODELS", root / "none"),
+                  mock.patch.dict(os.environ, {"OLLAMA_MODELS": str(root / "models")}),
+                  mock.patch("shutil.which", return_value=None)):
+            p.start()
+            self.addCleanup(p.stop)
+        self.models = root / "models"
+        self.models.mkdir()
+
+    def go(self, *args, answers=()):
+        answers = list(answers)
+
+        def ask(q):
+            if not answers:
+                raise EOFError
+            return answers.pop(0)
+        out = []
+        code = uninstall.main(list(args), ask=ask, out=out.append)
+        return code, out
+
+    def test_ollama_is_only_removed_when_asked(self):
+        self.go(answers=["y"])  # Enter (here: no terminal) on the Ollama question
+        self.go("--yes")
+        self.go("--yes", "--purge")
+        self.go(answers=["y", "n", "n"])
+        self.assertEqual(self.ran, [])
+        self.assertTrue(self.models.exists())
+        code, out = self.go(answers=["y", "y", "n"])  # uninstall, Ollama yes, models no
+        self.assertEqual((code, self.ran), (0, [["brew", "uninstall", "--cask", "ollama"]]))
+        self.assertTrue(self.models.exists())
+        self.assertIn("  Ollama is uninstalled.", out)
+        self.ran.clear()
+        self.go("--yes", "--with-ollama")
+        self.assertEqual(len(self.ran), 1)
+        self.assertTrue(self.models.exists())  # models have their own flag
+        self.go("--yes", "--with-models")
+        self.assertFalse(self.models.exists())
+
+    def test_failed_step_is_reported(self):
+        with mock.patch.object(uninstall, "_run", return_value=False):
+            code, out = self.go("--yes", "--with-ollama")
+        self.assertEqual(code, 1)
+        self.assertIn("  Failed: brew uninstall --cask ollama", out)
+
+class DetectTest(unittest.TestCase):
     def test_projects_are_read_from_labels(self):
         with mock.patch("shutil.which", return_value="/usr/bin/docker"), \
                 mock.patch.object(uninstall, "_docker", return_value="sunak\t/srv/sunak\nsunak\t/srv/sunak\n\n"):
@@ -182,6 +270,34 @@ class DockerTest(unittest.TestCase):
         with mock.patch("shutil.which", return_value="/usr/bin/docker"), \
                 mock.patch.object(uninstall, "_docker", return_value=None):  # daemon not running
             self.assertEqual(uninstall.docker_projects(), [])
+
+    def test_commands_per_install(self):
+        c = uninstall.ollama_commands
+        self.assertEqual(c({"how": "winget"})[-1][:4], ["winget", "uninstall", "-e", "--id"])
+        self.assertEqual(c({"how": "inno", "uninstaller": Path("u.exe")})[-1], ["u.exe", "/VERYSILENT", "/NORESTART"])
+        self.assertEqual(c({"how": "brew"}), [["brew", "services", "stop", "ollama"], ["brew", "uninstall", "ollama"]])
+        app = c({"how": "app", "apps": [Path("/Applications/Ollama.app")], "exe": None})
+        self.assertEqual(app[1], ["rm", "-rf", str(Path("/Applications/Ollama.app"))])
+        with mock.patch("os.geteuid", return_value=1000, create=True):
+            script = c({"how": "script", "exe": "/usr/local/bin/ollama"})
+            self.assertEqual(c({"how": "snap"}), [["sudo", "snap", "remove", "ollama"]])
+        self.assertIn(["sudo", "systemctl", "stop", "ollama"], script)
+        self.assertIn(["sudo", "rm", "-rf", str(Path("/usr/local/lib/ollama"))], script)
+        self.assertTrue(all(uninstall._best_effort(x) for x in script if x[1] in ("systemctl", "userdel", "groupdel")))
+        self.assertFalse(uninstall._best_effort(["sudo", "rm", "-f", "x"]))
+        self.assertIsInstance(c({"how": "manual", "exe": "/usr/bin/ollama"}), str)
+
+    def test_linux_detection(self):
+        with mock.patch("platform.system", return_value="Linux"):
+            with mock.patch("shutil.which", return_value="/usr/local/bin/ollama"):
+                self.assertEqual(uninstall.ollama_install()["how"], "script")
+            with mock.patch("shutil.which", return_value="/snap/bin/ollama"):
+                self.assertEqual(uninstall.ollama_install()["how"], "snap")
+            with mock.patch("shutil.which", return_value="/usr/bin/ollama"), \
+                    mock.patch.object(Path, "exists", return_value=False):
+                self.assertEqual(uninstall.ollama_install()["how"], "manual")
+            with mock.patch("shutil.which", return_value=None):
+                self.assertIsNone(uninstall.ollama_install())
 
 
 class WindowsPathTest(unittest.TestCase):

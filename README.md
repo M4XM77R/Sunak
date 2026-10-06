@@ -47,10 +47,17 @@ Beim ersten Start erkennt Sunak deinen Arbeitsspeicher und schlägt ein passende
 sunak uninstall
 ```
 
-Das entfernt den Befehl `sunak`, den App-Ordner, Desktop- und Menü-Icons, den Autostart und den PATH-Eintrag. Läuft Sunak noch, wird es vorher beendet. Sunaks Docker-Container werden nur nach Rückfrage entfernt. **Deine Daten bleiben erhalten** (Chats, Einstellungen, API-Keys, Mail-Konten in `~/.sunak`), außer du antwortest bei der Frage mit `y`. Heruntergeladene Ollama-Modelle werden ebenfalls nur auf Nachfrage gelöscht. Ollama selbst bleibt installiert, weil andere Programme es nutzen können; Sunak sagt dir, wie du es entfernst. Zweimal ausführen schadet nicht.
+Das entfernt den Befehl `sunak`, den App-Ordner, Desktop- und Menü-Icons, den Autostart und den PATH-Eintrag. Läuft Sunak noch, wird es vorher beendet. Alles Weitere fragt Sunak einzeln, die Vorgabe (Enter) ist immer „behalten“:
 
-- Ohne Fragen: `sunak uninstall --yes` (Programm weg, Daten bleiben), alles inklusive Daten: `sunak uninstall --yes --purge`.
-- Als Einzeiler, auch wenn der Befehl `sunak` fehlt: `curl -fsSL https://raw.githubusercontent.com/M4XM77R/sunak/main/uninstall.sh | bash` (Optionen: `| bash -s -- --yes`), unter Windows `irm https://raw.githubusercontent.com/M4XM77R/sunak/main/uninstall.ps1 | iex` (ohne Fragen vorher `$env:SUNAK_YES = "1"`, mit Daten zusätzlich `$env:SUNAK_PURGE = "1"`). Im Klon: `./uninstall.sh` bzw. `.\uninstall.ps1`.
+1. Sunaks Docker-Container, falls vorhanden,
+2. **deine Daten** (Chats, Einstellungen, API-Keys, Mail-Konten in `~/.sunak`),
+3. **Ollama selbst** (nativ installiert oder als Docker-Container). Andere Programme können es nutzen. Bei Ja entfernt Sunak es passend zum System: Windows über den Ollama-Deinstaller bzw. winget, macOS über Homebrew oder die App, Linux Dienst, Programm und Benutzer der offiziellen Installation (fragt nach dem `sudo`-Passwort), Snap per `snap remove`. Bei einem Paket der Distribution sagt Sunak, dass der Paketmanager das übernimmt,
+4. die **heruntergeladenen Modelle**. Sie belegen viel Platz, wären nach einer Neuinstallation von Ollama aber sofort wieder nutzbar.
+
+Ohne Terminal wird nichts davon gelöscht. Zweimal ausführen schadet nicht.
+
+- Ohne Fragen: `sunak uninstall --yes` (Programm weg, Daten, Ollama und Modelle bleiben). Dazu einzeln: `--purge` (Daten löschen), `--with-ollama` (Ollama deinstallieren), `--with-models` (Modelle löschen).
+- Als Einzeiler, auch wenn der Befehl `sunak` fehlt: `curl -fsSL https://raw.githubusercontent.com/M4XM77R/sunak/main/uninstall.sh | bash` (Optionen: `| bash -s -- --yes`), unter Windows `irm https://raw.githubusercontent.com/M4XM77R/sunak/main/uninstall.ps1 | iex` (Optionen vorher als `$env:SUNAK_YES = "1"`, `SUNAK_PURGE`, `SUNAK_WITH_OLLAMA`, `SUNAK_WITH_MODELS`). Im Klon: `./uninstall.sh` bzw. `.\uninstall.ps1`.
 - Wer Sunak vor diesem Stand installiert hat, macht erst `sunak update` oder nimmt das Skript; der alte Befehl `sunak uninstall` löschte nach einer Frage auch die Daten.
 
 ### Ohne Installation ausprobieren
@@ -133,7 +140,7 @@ Sunak rechnet nicht selbst, die Modelle laufen in Ollama. Ollama nutzt eine pass
 | Aktualisieren | Bei „✨ Update available“ oben links auf **Update** klicken: Sunak installiert die neue Version und startet neu. Oder im Terminal `sunak update` (holt die neueste Version und beendet ein laufendes Sunak, damit der nächste Start sie nutzt) |
 | Update-Hinweis abschalten | Settings → Updates → Haken bei „Check for updates“ entfernen → Save settings |
 | Version anzeigen | `sunak version` |
-| Deinstallieren | `sunak uninstall`: entfernt das Programm, fragt vor dem Löschen der Daten (Standard: behalten). Details unter [Deinstallieren](#deinstallieren) |
+| Deinstallieren | `sunak uninstall`: entfernt das Programm und fragt einzeln nach Daten, Ollama und Modellen (Standard: behalten). Details unter [Deinstallieren](#deinstallieren) |
 
 ## E-Mail
 

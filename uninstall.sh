@@ -4,8 +4,10 @@
 #   curl -fsSL https://raw.githubusercontent.com/M4XM77R/sunak/main/uninstall.sh | bash
 #
 # Options (append after "bash -s --" when piping, or pass directly):
-#   --yes    no questions: remove the program, keep your data
-#   --purge  also delete your data
+#   --yes          no questions: remove the program, keep your data, Ollama and its models
+#   --purge        also delete your data
+#   --with-ollama  also uninstall Ollama (otherwise you are asked; the default keeps it)
+#   --with-models  also delete the downloaded Ollama models (otherwise you are asked)
 # The same as "sunak uninstall".
 set -uo pipefail
 
@@ -14,7 +16,8 @@ BRANCH="${SUNAK_BRANCH:-main}"
 HOME_DIR="${SUNAK_HOME:-$HOME/.sunak}"
 LAUNCHER="$HOME/.local/bin/sunak"
 for a in "$@"; do
-  case "$a" in --yes|-y|--purge) ;; *) echo "Unknown option: $a (use --yes or --purge)" >&2; exit 2 ;; esac
+  case "$a" in --yes|-y|--purge|--with-ollama|--with-models) ;;
+    *) echo "Unknown option: $a (use --yes, --purge, --with-ollama, --with-models)" >&2; exit 2 ;; esac
 done
 command -v python3 >/dev/null || { echo "Python 3 is not installed, so Sunak cannot be either. Your data (if any) is in $HOME_DIR."; exit 0; }
 
