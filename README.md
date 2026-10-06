@@ -61,10 +61,11 @@ docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d   # mit NVI
 | 🔎 **Research** | Sucht im Web, liest die besten Seiten und schreibt einen Bericht mit Quellenangaben; als Dokument speicherbar |
 | 📝 **Documents** | Markdown-Editor mit Autosave, Vorschau, Export und KI-Bearbeitung („kürzer“, „Grammatik korrigieren“), auch nur für markierten Text, mit Rückgängig |
 | 🧠 **Notes & Memory** | Notizen; als „memory“ markierte Notizen kennt die KI in jedem Chat |
-| 🧩 **Modelle** | Ollama (lokal oder im Netzwerk) und jede OpenAI-kompatible API: OpenAI, OpenRouter, Groq, LM Studio, llama.cpp, vLLM. Modelle direkt in der Oberfläche herunterladen und löschen |
+| 🧩 **Modelle** | Eingebaute Ollama-Verwaltung: Modellkatalog mit Empfehlungen passend zu deinem RAM, Download per Klick mit Fortschrittsbalken und Abbrechen, jedes Ollama-Modell per Name, installierte Modelle anzeigen und löschen. Ollama lässt sich aus Sunak heraus starten und unter Windows (winget) und macOS (Homebrew) auch installieren. Zusätzlich jede OpenAI-kompatible API: OpenAI, OpenRouter, Groq, LM Studio, llama.cpp, vLLM |
 | 🎨 **Look** | Dunkel/Hell, Pink als Standard-Akzent, weitere Akzentfarben in den Einstellungen, als App installierbar (PWA), handytauglich |
 | 🔒 **Sicherheit** | Läuft standardmäßig nur auf `localhost`; optionales Passwort; Daten in einer SQLite-Datei unter `~/.sunak` |
 
+<p align="center"><img src="docs/models.png" alt="Modelle" width="820"></p>
 <p align="center"><img src="docs/onboarding.png" alt="Erster Start" width="410"> <img src="docs/compare.png" alt="Compare" width="410"></p>
 
 ## Bedienung
@@ -73,6 +74,7 @@ docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d   # mit NVI
 |---|---|
 | Senden / neue Zeile | `Enter` / `Shift+Enter` |
 | Neuer Chat | `Strg+K` (Mac: `⌘K`) |
+| Modell herunterladen | 🧩 Models → Modell aussuchen → Download (Abbrechen jederzeit möglich, der Download läuft beim nächsten Mal weiter) |
 | Modell wechseln | Auswahl oben rechts |
 | Cloud-Modell nutzen | Settings → Providers → Preset wählen → API-Key eintragen → Save |
 | Vom Handy nutzen | `sunak --host 0.0.0.0`, in Settings ein Passwort setzen, dann `http://<PC-IP>:7000` öffnen |
@@ -109,6 +111,7 @@ SUNAK_DEBUG=1 python3 -m sunak                    # mit Zugriffslog
 |---|---|
 | `sunak/server.py` | HTTP-Server, alle API-Endpunkte, Einstellungen, Login |
 | `sunak/providers.py` | Anbindung von Ollama und OpenAI-kompatiblen APIs (Streaming) |
+| `sunak/ollama.py` | Ollama-Integration: Modellkatalog, Status, Ollama starten und installieren |
 | `sunak/research.py` | Websuche und Seitenauswertung für Research |
 | `sunak/db.py` | SQLite-Speicher |
 | `sunak/static/` | Oberfläche (HTML, CSS, ein JavaScript-File) |

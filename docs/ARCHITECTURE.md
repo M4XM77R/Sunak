@@ -19,6 +19,7 @@ Browser (sunak/static)  ──HTTP/JSON, NDJSON-Streams──▶  sunak/server.p
 | `sunak/server.py` | `App` (Zustand, Einstellungen, Modellauswahl, Login, Prompt-Aufbau) und `Handler` (HTTP-Routing, alle API-Endpunkte) |
 | `sunak/db.py` | SQLite-Speicher: Chats, Nachrichten, Dokumente, Notizen, Einstellungen |
 | `sunak/providers.py` | Backends: Ollama und OpenAI-kompatible APIs, Streaming, Modell-Download |
+| `sunak/ollama.py` | Native Ollama-Integration: Modellkatalog, Status, lokales Ollama finden, starten und installieren |
 | `sunak/research.py` | Websuche, Seiten lesen, Prompt für den Recherchebericht |
 | `sunak/static/` | Oberfläche: `index.html`, `app.js` (gesamte Logik), `app.css`, `login.html`, Icon, PWA-Manifest |
 | `tests/test_server.py` | End-to-End-Tests gegen simulierte Backends |
@@ -46,7 +47,10 @@ Alle Endpunkte liegen unter `/api/`. Schreibende Anfragen brauchen den Header `X
 | `POST /api/login`, `POST /api/logout` | Anmelden, Abmelden | JSON |
 | `GET`/`PUT /api/settings` | Einstellungen und Provider | JSON |
 | `GET /api/models` | Modelle aller Provider, dazu Fehler nicht erreichbarer Provider | JSON |
-| `POST /api/models/pull` | Ollama-Modell herunterladen | NDJSON `progress` |
+| `GET /api/ollama` | Ollama-Status (installiert, läuft, Version), installierte Modelle mit Größe, Katalog mit `fits`, Installationsweg | JSON |
+| `POST /api/ollama/start` | Lokales Ollama im Hintergrund starten | JSON |
+| `POST /api/ollama/install` | Ollama per winget bzw. Homebrew installieren | NDJSON `status` |
+| `POST /api/models/pull` | Ollama-Modell herunterladen; Fortschritt aller Layer summiert | NDJSON `progress` (`completed`, `total` in Bytes) |
 | `POST /api/models/delete` | Ollama-Modell löschen | JSON |
 | `GET`/`POST /api/sessions`, `GET`/`PATCH`/`DELETE /api/sessions/<id>` | Chats | JSON |
 | `POST /api/chat` | Antwort erzeugen | NDJSON `start`, `think`, `text`, `done`/`error` |
@@ -68,6 +72,17 @@ Ein Provider ist ein Eintrag `{id, name, type, base_url, api_key}`, gespeichert 
 Lokale Adressen (localhost, private IPs, `*.local`, `host.docker.internal`) werden immer direkt angesprochen, also nie über einen System-Proxy.
 
 Modell-IDs haben die Form `provider::modell`, zum Beispiel `ollama::qwen3:4b`.
+
+## Native Ollama-Integration
+
+Die Seite „Models“ und die Einrichtung beim ersten Start nutzen `sunak/ollama.py`:
+
+- **Status**: `ollama.status` fragt `/api/version` und `/api/tags` des ersten Providers vom Typ `ollama` ab. Antwortet Ollama nicht, sucht Sunak die Programmdatei: `PATH`, Homebrew, `/Applications/Ollama.app`, `%LOCALAPPDATA%\Programs\Ollama`.
+- **Starten**: Ist Ollama installiert, aber gestoppt, startet `ollama.start` es im Hintergrund. Auf macOS geschieht das über die App, sonst über `ollama serve` als losgelösten Prozess. Danach wartet Sunak bis zu 15 Sekunden auf eine Antwort. Das geht nur, wenn der Provider auf `localhost` zeigt.
+- **Installieren**: Unter Windows nutzt Sunak `winget`, unter macOS Homebrew; beide brauchen kein Admin-Passwort. Die Ausgabe wird live gestreamt. Unter Linux braucht der offizielle Installer `sudo`, deshalb zeigt Sunak den Befehl zum Kopieren an. Ohne Homebrew gibt es einen Download-Link.
+- **Katalog**: `CATALOG` ist eine kuratierte Liste mit Name, ungefährer Größe, Tags und Beschreibung. `fits()` markiert Modelle, die zum Arbeitsspeicher passen. Die Faustregel lautet: Größe × 1,3 + 2 GB.
+- **Download**: `POST /api/models/pull` streamt `/api/pull` von Ollama und summiert den Fortschritt aller Layer. Bricht der Browser die Anfrage ab („Cancel“), schließt der Server die Verbindung zu Ollama und der Download stoppt. Bereits geladene Teile bleiben erhalten, ein neuer Start setzt dort fort.
+- **Frontend**: Laufende Downloads liegen in `state.pulls` und laufen weiter, wenn man die Seite wechselt. Jedes Element mit `data-slot`/`data-pull` zeigt denselben Fortschritt, zum Beispiel Katalogkarte, Download-Liste und Einrichtungskarte im Chat.
 
 ## Deep Research
 
@@ -108,10 +123,11 @@ Umgebungsvariablen: `SUNAK_HOST`, `SUNAK_PORT`, `SUNAK_DATA`, `SUNAK_PASSWORD`, 
 python3 -m unittest discover tests -v
 ```
 
-Die Tests starten Sunak und einen simulierten Server, der die Ollama- und OpenAI-API nachbildet. Abgedeckt sind Chat, Neu generieren, Denkprozess, Gedächtnis, Compare, Research (mit gestubbter Suche), Dokumente, Modell-Download, Login, CSRF-Schutz und Pfad-Traversal. GitHub Actions führt sie auf Linux, macOS und Windows aus (`.github/workflows/test.yml`).
+Die Tests starten Sunak und einen simulierten Server, der die Ollama- und OpenAI-API nachbildet. Abgedeckt sind Chat, Neu generieren, Denkprozess, Gedächtnis, Compare, Research (mit gestubbter Suche), Dokumente, Modell-Download mit Fortschritt, Ollama-Status und Katalog, Login, CSRF-Schutz und Pfad-Traversal. GitHub Actions führt sie auf Linux, macOS und Windows aus (`.github/workflows/test.yml`).
 
 ## Erweitern
 
 - **Neuer API-Endpunkt:** Methode auf `Handler` schreiben und in `ROUTES` eintragen; Ausnahmen vom Typ `ValueError` werden automatisch als 400 beantwortet.
+- **Neues Modell im Katalog:** Eintrag in `CATALOG` in `sunak/ollama.py` ergänzen (Ollama-Name, Titel, Größe in GB, Tags, Beschreibung).
 - **Neuer Backend-Typ:** `list_models` und `chat_stream` in `providers.py` um den Typ erweitern und den Typ in `App.save_settings` zulassen.
 - **Neue Ansicht:** einen `<section class="view" id="view-…">` und einen Navigationsknopf in `index.html` anlegen, die Logik als eigenen Abschnitt in `app.js` ergänzen und in `show()` einhängen.

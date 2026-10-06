@@ -17,7 +17,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
-from . import __version__, providers, research
+from . import __version__, ollama, providers, research
 from .db import DB
 
 STATIC = Path(__file__).parent / "static"
@@ -143,6 +143,13 @@ class App:
             if p["id"] == pid:
                 return p
         raise providers.ProviderError(f"Unknown provider '{pid}'. Check Settings.")
+
+    def ollama_provider(self):
+        """The first configured Ollama provider (used by the Models page)."""
+        for p in self.settings()["providers"]:
+            if p["type"] == "ollama":
+                return p
+        raise providers.ProviderError("No Ollama provider configured. Add one in Settings → Providers.")
 
     def resolve(self, model_id):
         """Turn a model id 'provider::model' (or the default) into (provider, model name)."""
@@ -634,21 +641,60 @@ class Handler(BaseHTTPRequestHandler):
 
     # model management (Ollama)
     def pull(self):
-        """POST /api/models/pull: download an Ollama model and stream its progress."""
+        """POST /api/models/pull: download an Ollama model and stream its progress.
+
+        Progress of all layers is summed so the bar moves smoothly from 0 to 100 %.
+        Closing the request (Cancel in the UI) stops the download; Ollama resumes it next time."""
         d = self.body()
-        prov = self.app.provider(d.get("provider") or "ollama")
+        prov = self.app.provider(d["provider"]) if d.get("provider") else self.app.ollama_provider()
         if prov["type"] != "ollama":
             raise ValueError("Downloading models only works with Ollama")
         name = (d.get("model") or "").strip()
         if not re.fullmatch(r"[A-Za-z0-9._:/-]+", name):
             raise ValueError("Invalid model name")
         self.start_stream()
+        layers = {}
+        events = providers.ollama_pull(prov, name)
         try:
-            for ev in providers.ollama_pull(prov, name):
-                self.emit({"type": "progress", **{k: ev.get(k) for k in ("status", "completed", "total")}})
+            for ev in events:
+                if ev.get("digest") and ev.get("total"):
+                    layers[ev["digest"]] = (ev.get("completed") or 0, ev["total"])
+                done = sum(c for c, _ in layers.values())
+                total = sum(t for _, t in layers.values())
+                self.emit({"type": "progress", "status": ev.get("status", ""), "completed": done, "total": total})
             self.emit({"type": "done"})
         except providers.ProviderError as e:
             self.emit({"type": "error", "error": str(e)})
+        finally:
+            events.close()  # closes the connection to Ollama, which cancels an unfinished pull
+
+    def ollama_status(self):
+        """GET /api/ollama: installed / running / version, installed models, catalog, install method."""
+        self.send_json(ollama.status(self.app.ollama_provider(), self.app.ram))
+
+    def ollama_start(self):
+        """POST /api/ollama/start: start the local Ollama server in the background."""
+        version = ollama.start(self.app.ollama_provider())
+        self.send_json({"ok": True, "version": version})
+
+    def ollama_install(self):
+        """POST /api/ollama/install: install Ollama with winget (Windows) or Homebrew (macOS), streaming the output."""
+        method, command = ollama.install_method()
+        cmd = ollama.install_command(method)
+        if not cmd:
+            raise ValueError(f"Install Ollama yourself: {command}")
+        self.start_stream()
+        self.emit({"type": "status", "t": "$ " + " ".join(cmd)})
+        try:
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace")
+        except OSError as e:
+            return self.emit({"type": "error", "error": str(e)})
+        for line in proc.stdout:
+            if line.strip():
+                self.emit({"type": "status", "t": line.rstrip()[-300:]})
+        if proc.wait() != 0:
+            return self.emit({"type": "error", "error": f"Installer exited with code {proc.returncode}"})
+        self.emit({"type": "done"})
 
     def delete_model(self):
         """POST /api/models/delete: remove an Ollama model from disk."""
@@ -668,6 +714,9 @@ ROUTES = [
     (r"/api/models", "GET", Handler.get_models),
     (r"/api/models/pull", "POST", Handler.pull),
     (r"/api/models/delete", "POST", Handler.delete_model),
+    (r"/api/ollama", "GET", Handler.ollama_status),
+    (r"/api/ollama/start", "POST", Handler.ollama_start),
+    (r"/api/ollama/install", "POST", Handler.ollama_install),
     (r"/api/sessions", "GET", Handler.list_sessions),
     (r"/api/sessions", "POST", Handler.create_session),
     (rf"/api/sessions/{ID}", "GET", Handler.get_session),

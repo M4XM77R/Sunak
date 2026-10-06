@@ -23,6 +23,7 @@
       <button data-view="research">🔎 Research</button>
       <button data-view="documents">📝 Documents</button>
       <button data-view="notes">🧠 Notes &amp; Memory</button>
+      <button data-view="models">🧩 Models</button>
       <button data-view="settings">⚙️ Settings</button>
     </nav>
     <div class="sessions-head">
@@ -125,17 +126,27 @@
       </div>
     </section>
 
+    <!-- MODELS (native Ollama) -->
+    <section class="view" id="view-models">
+      <div class="pad wide-pad">
+        <div id="ollamaBanner"></div>
+        <h2 class="section">Installed</h2>
+        <div id="installedList" class="installed"></div>
+        <h2 class="section">Get models</h2>
+        <form class="row" id="pullForm">
+          <input id="pullName" placeholder="Any Ollama model, e.g. llama3.2:1b or qwen3:4b" autocomplete="off" spellcheck="false">
+          <button class="btn primary" type="submit">Download</button>
+          <a class="small" href="https://ollama.com/library" target="_blank" rel="noopener">Browse all models on ollama.com ↗</a>
+        </form>
+        <div id="downloads" class="downloads"></div>
+        <div class="row" id="catFilters"></div>
+        <div id="catalog" class="catalog"></div>
+      </div>
+    </section>
+
     <!-- SETTINGS -->
     <section class="view" id="view-settings">
       <div class="pad narrow settings">
-        <h2>Models</h2>
-        <div id="modelBox"></div>
-        <div class="row">
-          <input id="pullName" placeholder="Ollama model, e.g. qwen3:4b, gemma3:4b, llama3.2">
-          <button class="btn primary" id="pullBtn">Download</button>
-        </div>
-        <div id="pullProgress"></div>
-
         <h2>Providers</h2>
         <p class="muted small">Ollama runs models on your computer. Add any OpenAI-compatible API (OpenAI, OpenRouter, Groq, LM Studio, llama.cpp, vLLM) to use other models.</p>
         <div id="providerList"></div>
@@ -153,6 +164,7 @@
         </div>
 
         <h2>Chat</h2>
+        <label>Default model for new chats<select id="defaultModel"></select></label>
         <label>System prompt<textarea id="sysPrompt" rows="3"></textarea></label>
         <label>Creativity (temperature): <b id="tempVal"></b><input type="range" id="temperature" min="0" max="1.5" step="0.1"></label>
         <label class="check"><input type="checkbox" id="useMemory"> Use memory notes in chats</label>

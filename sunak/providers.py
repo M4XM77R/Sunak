@@ -160,6 +160,25 @@ def ollama_pull(p, model):
                 yield obj
 
 
+def ollama_version(p, timeout=3):
+    """Version string of a running Ollama. Raises ProviderError when it is not reachable."""
+    with _request(_base(p) + "/api/version", api_key=p.get("api_key", ""), timeout=timeout) as r:
+        return json.load(r).get("version", "")
+
+
+def ollama_tags(p, timeout=4):
+    """Installed Ollama models with size and details, sorted by name."""
+    with _request(_base(p) + "/api/tags", api_key=p.get("api_key", ""), timeout=timeout) as r:
+        data = json.load(r)
+    out = []
+    for m in data.get("models", []):
+        d = m.get("details") or {}
+        out.append({"name": m["name"], "size": m.get("size", 0), "modified": m.get("modified_at", ""),
+                    "parameters": d.get("parameter_size", ""), "quantization": d.get("quantization_level", ""),
+                    "family": d.get("family", "")})
+    return sorted(out, key=lambda m: m["name"])
+
+
 def ollama_delete(p, model):
     """Delete a downloaded model from Ollama."""
     with _request(_base(p) + "/api/delete", {"model": model}, p.get("api_key", ""), method="DELETE"):

@@ -9,7 +9,8 @@ import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from sunak import research
+from sunak import ollama, research
+from sunak.providers import ProviderError
 from sunak.server import make_server, recommend, stream_to_text
 
 
@@ -30,6 +31,8 @@ class FakeBackend(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
+        if self.path == "/api/version":
+            return self._json({"version": "0.12.3"})
         if self.path == "/api/tags":
             return self._json({"models": [{"name": "tiny:1b"}, {"name": "think:1b"}]})
         if self.path == "/v1/models":
@@ -52,7 +55,11 @@ class FakeBackend(BaseHTTPRequestHandler):
                 self.wfile.write(b"data: " + json.dumps({"choices": [{"delta": {"content": w}}]}).encode() + b"\n\n")
             self.wfile.write(b"data: [DONE]\n\n")
         elif self.path == "/api/pull":
-            for ev in [{"status": "pulling", "completed": 5, "total": 10}, {"status": "success"}]:
+            for ev in [{"status": "pulling manifest"},
+                       {"status": "pulling a", "digest": "a", "completed": 5, "total": 10},
+                       {"status": "pulling b", "digest": "b", "completed": 0, "total": 30},
+                       {"status": "pulling b", "digest": "b", "completed": 30, "total": 30},
+                       {"status": "success"}]:
                 self.wfile.write(json.dumps(ev).encode() + b"\n")
 
 
@@ -173,8 +180,29 @@ class SunakTest(unittest.TestCase):
 
     def test_pull_progress(self):
         events = self.call("POST", "/api/models/pull", {"model": "tiny:1b"})
-        self.assertEqual(events[0], {"type": "progress", "status": "pulling", "completed": 5, "total": 10})
+        progress = [(e["completed"], e["total"]) for e in events if e["type"] == "progress"]
+        self.assertEqual(progress, [(0, 0), (5, 10), (5, 40), (35, 40), (35, 40)])
         self.assertEqual(events[-1]["type"], "done")
+
+    def test_ollama_status_and_catalog(self):
+        st = self.call("GET", "/api/ollama")
+        self.assertTrue(st["running"])
+        self.assertTrue(st["installed"])
+        self.assertTrue(st["local"])
+        self.assertEqual(st["version"], "0.12.3")
+        self.assertEqual([m["name"] for m in st["models"]], ["think:1b", "tiny:1b"])
+        self.assertIn("qwen3:4b", [m["name"] for m in st["catalog"]])
+        self.assertTrue(all("fits" in m for m in st["catalog"]))
+        self.assertIn(st["install"]["method"], ("winget", "brew", "script", "download"))
+
+    def test_ollama_start_refuses_remote(self):
+        with self.assertRaises(ProviderError):
+            ollama.start({"base_url": "http://192.168.1.50:11434"})
+
+    def test_pull_rejects_bad_names(self):
+        with self.assertRaises(urllib.error.HTTPError) as cm:
+            self.call("POST", "/api/models/pull", {"model": "x; rm -rf /"})
+        self.assertEqual(cm.exception.code, 400)
 
     def test_csrf_header_required(self):
         with self.assertRaises(urllib.error.HTTPError) as cm:
@@ -227,6 +255,11 @@ class UnitTest(unittest.TestCase):
     def test_stream_to_text(self):
         self.assertEqual(stream_to_text([("think", "a"), ("think", "b"), ("text", "c")]), "<think>ab</think>\n\nc")
         self.assertEqual(stream_to_text([("text", "x")]), "x")
+
+    def test_fits(self):
+        self.assertTrue(ollama.fits(2.6, 8))
+        self.assertFalse(ollama.fits(9.3, 8))
+        self.assertTrue(ollama.fits(19, None))
 
     def test_recommend(self):
         self.assertEqual(recommend(4)["model"], "qwen3:1.7b")

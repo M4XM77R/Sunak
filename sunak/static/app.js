@@ -10,7 +10,7 @@ const store = {
 };
 
 const state = { settings: null, models: [], modelErrors: [], sessions: [], session: null, view: 'chat',
-  busy: null, attachments: [], doc: null, docUndo: null, status: null };
+  busy: null, attachments: [], doc: null, docUndo: null, status: null, ollama: null, pulls: {}, catFilter: 'fits' };
 
 /* ---------------- API ---------------- */
 async function api(path, opts = {}) {
@@ -181,18 +181,19 @@ $('#themeBtn').onclick = () => {
 };
 
 /* ---------------- Navigation ---------------- */
-const TITLES = { chat: 'Chat', compare: 'Compare models', research: 'Deep Research', documents: 'Documents', notes: 'Notes & Memory', settings: 'Settings' };
+const TITLES = { chat: 'Chat', compare: 'Compare models', research: 'Deep Research', documents: 'Documents', notes: 'Notes & Memory', models: 'Models', settings: 'Settings' };
 function show(view) {
   state.view = view;
   $$('.nav button').forEach((b) => b.classList.toggle('active', b.dataset.view === view));
   $$('.view').forEach((v) => v.classList.toggle('active', v.id === `view-${view}`));
   $('#viewTitle').textContent = view === 'chat' && state.session ? state.session.title : TITLES[view];
-  $('#modelSelect').classList.toggle('hidden', ['notes', 'settings', 'compare'].includes(view));
+  $('#modelSelect').classList.toggle('hidden', ['notes', 'settings', 'compare', 'models'].includes(view));
   closeSidebar();
   if (view === 'documents') loadDocs();
   if (view === 'notes') loadNotes();
   if (view === 'settings') renderSettings();
   if (view === 'compare') renderCompareModels();
+  if (view === 'models') { renderModelsView(); loadOllama(); }
   if (view === 'chat') $('#prompt').focus();
 }
 $$('.nav button').forEach((b) => (b.onclick = () => show(b.dataset.view)));
@@ -280,21 +281,17 @@ function welcome() {
 }
 
 function setupCard() {
-  const ollamaErr = state.modelErrors.find((e) => e.provider === 'ollama');
-  const rec = state.status?.recommended || { model: 'qwen3:4b', size: '2.6 GB' };
-  if (ollamaErr) {
-    return el('div', { class: 'card' }, el('h3', {}, '1. Install Ollama to run models locally'),
-      el('p', {}, 'Ollama was not found. Download it from ', el('a', { href: 'https://ollama.com/download', target: '_blank', rel: 'noopener' }, 'ollama.com/download'),
-        ', start it, then click “Check again”. Or use a cloud API key in Settings.'),
-      el('div', { class: 'row' }, el('button', { class: 'btn primary', onclick: refreshAll }, 'Check again'),
-        el('button', { class: 'btn', onclick: () => show('settings') }, 'Use an API key instead')));
+  const o = state.ollama;
+  if (!o || !o.running) {
+    return el('div', { class: 'card' }, el('h3', {}, 'Let’s get a model running'), ollamaBanner(),
+      el('p', { class: 'muted small' }, 'Prefer the cloud? ', el('a', { href: '#', onclick: (e) => { e.preventDefault(); show('settings'); } }, 'Add an API key in Settings'), '.'));
   }
-  const prog = el('div');
+  const rec = state.status?.recommended || { model: 'qwen3:4b', size: '2.6 GB' };
   const ram = state.status?.ram_gb ? `${state.status.ram_gb} GB RAM detected. ` : '';
   return el('div', { class: 'card' }, el('h3', {}, 'Download your first model'),
     el('p', { class: 'muted' }, `${ram}Recommended for your computer: `, el('b', {}, rec.model), ` (${rec.size}).`),
-    el('div', { class: 'row' }, el('button', { class: 'btn primary', onclick: (e) => pullModel(rec.model, prog, e.target) }, `Download ${rec.model}`),
-      el('button', { class: 'btn', onclick: () => show('settings') }, 'Other models')), prog);
+    el('div', { class: 'row' }, pullButton(rec.model, `Download ${rec.model}`),
+      el('button', { class: 'btn', onclick: () => show('models') }, 'Browse models')));
 }
 
 function messageEl(m, i, msgs) {
@@ -416,37 +413,195 @@ function renderAttachments() {
     el('button', { type: 'button', onclick: () => { state.attachments.splice(i, 1); renderAttachments(); } }, '✕'))));
 }
 
-/* ---------------- Model download ---------------- */
-async function pullModel(name, progBox, btn) {
-  if (btn) btn.disabled = true;
-  const bar = el('div', { class: 'progress' }, el('div'));
-  const label = el('div', { class: 'muted small' }, 'Starting download…');
-  progBox.innerHTML = '';
-  progBox.append(bar, label);
-  try {
-    let failed = null;
-    await stream('/api/models/pull', { model: name }, (ev) => {
-      if (ev.type === 'error') failed = ev.error;
-      if (ev.type !== 'progress') return;
-      if (ev.total) {
-        const pct = Math.round((ev.completed || 0) / ev.total * 100);
-        bar.firstChild.style.width = `${pct}%`;
-        label.textContent = `${ev.status} – ${pct}% of ${(ev.total / 1e9).toFixed(1)} GB`;
-      } else label.textContent = ev.status;
-    });
-    if (failed) throw new Error(failed);
-    bar.firstChild.style.width = '100%';
-    label.textContent = `✓ ${name} is ready`;
-    store.set('sunak-model', `ollama::${name}`);
-    await loadModels();
-    toast(`${name} installed`);
-    if (state.view === 'chat') renderMessages();
-    if (state.view === 'settings') renderSettings();
-  } catch (e) {
-    label.textContent = `Download failed: ${e.message}`;
-    label.className = 'bad small';
-  } finally { if (btn) btn.disabled = false; }
+/* ---------------- Models (native Ollama) ---------------- */
+const gb = (bytes) => `${(bytes / 1e9).toFixed(1)} GB`;
+
+async function loadOllama() {
+  try { state.ollama = await api('/api/ollama'); } catch (e) { state.ollama = null; }
+  if (state.view === 'models') renderModelsView();
+  if (state.view === 'chat' && !state.session?.messages?.length) renderMessages();
 }
+
+function ollamaBanner() {
+  const o = state.ollama;
+  const box = el('div', { class: 'banner' });
+  if (!o) {
+    box.append(el('span', {}, 'No Ollama provider configured. '), el('button', { class: 'btn', onclick: () => show('settings') }, 'Open Settings'));
+    return box;
+  }
+  if (o.running) {
+    box.classList.add('ok-banner');
+    box.append(el('span', {}, `● Ollama ${o.version || ''} is running`), el('span', { class: 'muted small' }, ` · ${o.models.length} model${o.models.length === 1 ? "" : "s"} · ${o.base_url}`));
+    return box;
+  }
+  box.classList.add('warn-banner');
+  if (!o.local) {
+    box.append(el('p', {}, `Can’t reach Ollama at ${o.base_url}. Make sure it runs on that computer.`),
+      el('button', { class: 'btn primary', onclick: refreshAll }, 'Check again'));
+  } else if (o.installed) {
+    const btn = el('button', { class: 'btn primary', onclick: async () => {
+      btn.disabled = true; btn.textContent = 'Starting…';
+      try { await api('/api/ollama/start', { method: 'POST', body: {} }); toast('Ollama started'); await refreshAll(); }
+      catch (e) { toast(e.message); btn.disabled = false; btn.textContent = 'Start Ollama'; }
+    } }, 'Start Ollama');
+    box.append(el('p', {}, 'Ollama is installed but not running.'), btn);
+  } else if (o.install.automatic) {
+    const log = el('pre', { class: 'install-log hidden' });
+    const btn = el('button', { class: 'btn primary', onclick: async () => {
+      btn.disabled = true; btn.textContent = 'Installing…'; log.classList.remove('hidden');
+      let failed = null;
+      try {
+        await stream('/api/ollama/install', {}, (ev) => {
+          if (ev.type === 'status') { log.textContent += ev.t + '\n'; log.scrollTop = log.scrollHeight; }
+          if (ev.type === 'error') failed = ev.error;
+        });
+      } catch (e) { failed = e.message; }
+      if (failed) { toast(failed); btn.disabled = false; btn.textContent = 'Install Ollama'; return; }
+      toast('Ollama installed');
+      await api('/api/ollama/start', { method: 'POST', body: {} }).catch(() => {});
+      await refreshAll();
+    } }, 'Install Ollama');
+    box.append(el('p', {}, 'Ollama runs AI models on your computer. It is free and installs in a minute.'), btn,
+      el('span', { class: 'muted small' }, ` (${o.install.command})`), log);
+  } else if (o.install.method === 'script') {
+    box.append(el('p', {}, 'Ollama runs AI models on your computer. Install it with this command in a terminal, then click “Check again”:'),
+      el('div', { class: 'cmd' }, el('code', {}, o.install.command),
+        el('button', { class: 'btn', onclick: () => navigator.clipboard.writeText(o.install.command).then(() => toast('Copied')) }, 'Copy')),
+      el('button', { class: 'btn primary', onclick: refreshAll }, 'Check again'));
+  } else {
+    box.append(el('p', {}, 'Ollama runs AI models on your computer. Download and open it, then click “Check again”.'),
+      el('a', { class: 'btn primary', href: o.install.command, target: '_blank', rel: 'noopener' }, 'Download Ollama'), ' ',
+      el('button', { class: 'btn', onclick: refreshAll }, 'Check again'));
+  }
+  return box;
+}
+
+/* Downloads keep running while you switch pages; every widget for a model shows the same progress. */
+function startPull(name) {
+  if (state.pulls[name]) return;
+  const ctrl = new AbortController();
+  state.pulls[name] = { pct: 0, label: 'Starting…', ctrl };
+  updatePullWidgets();
+  (async () => {
+    let failed = null;
+    try {
+      await stream('/api/models/pull', { model: name }, (ev) => {
+        const p = state.pulls[name];
+        if (!p) return;
+        if (ev.type === 'error') failed = ev.error;
+        if (ev.type !== 'progress') return;
+        if (ev.total) {
+          p.pct = Math.min(100, Math.round(ev.completed / ev.total * 100));
+          p.label = `${p.pct}% · ${gb(ev.completed)} of ${gb(ev.total)}`;
+        } else p.label = ev.status;
+        updatePullWidgets();
+      }, ctrl.signal);
+    } catch (e) {
+      if (e.name === 'AbortError') { delete state.pulls[name]; updatePullWidgets(); toast(`Download of ${name} cancelled`); return; }
+      failed = e.message;
+    }
+    delete state.pulls[name];
+    if (failed) { toast(`Download failed: ${failed}`); updatePullWidgets(); return; }
+    store.set('sunak-model', `ollama::${name}`);
+    toast(`${name} is ready ✓`);
+    await refreshAll();
+  })();
+}
+
+function pullWidget(name) {
+  const w = el('div', { class: 'pull', 'data-pull': name });
+  fillPullWidget(w);
+  return w;
+}
+function fillPullWidget(w) {
+  const name = w.dataset.pull, p = state.pulls[name];
+  w.innerHTML = '';
+  if (!p) return;
+  w.append(el('div', { class: 'progress' }, el('div', { style: `width:${p.pct}%` })),
+    el('div', { class: 'pull-row' }, el('span', { class: 'muted small' }, p.label),
+      el('button', { class: 'btn small-btn', type: 'button', onclick: () => p.ctrl.abort() }, 'Cancel')));
+}
+function pullButton(name, label = 'Download') {
+  const wrap = el('div', { class: 'pull-slot', 'data-slot': name, 'data-label': label });
+  fillPullSlot(wrap);
+  return wrap;
+}
+function fillPullSlot(wrap) {
+  const name = wrap.dataset.slot;
+  wrap.innerHTML = '';
+  if (state.pulls[name]) wrap.append(pullWidget(name));
+  else if (isInstalled(name)) wrap.append(el('button', { class: 'btn', onclick: () => useModel(name) }, 'Chat with it →'));
+  else wrap.append(el('button', { class: 'btn primary', onclick: () => startPull(name) }, wrap.dataset.label));
+}
+function updatePullWidgets() {
+  $$('.pull-slot').forEach(fillPullSlot);
+  $$('.downloads > .pull').forEach(fillPullWidget);
+  const dl = $('#downloads');
+  if (dl) {
+    dl.innerHTML = '';
+    for (const name of Object.keys(state.pulls)) dl.append(el('div', { class: 'card dl' }, el('b', {}, name), pullWidget(name)));
+  }
+}
+function isInstalled(name) {
+  const tagged = name.includes(':') ? name : `${name}:latest`;
+  return (state.ollama?.models || []).some((m) => m.name === name || m.name === tagged);
+}
+function useModel(name) {
+  const id = `ollama::${isInstalled(name) && !name.includes(':') ? `${name}:latest` : name}`;
+  store.set('sunak-model', id);
+  newChat();
+  syncModelSelect();
+}
+
+function renderModelsView() {
+  const o = state.ollama;
+  const banner = $('#ollamaBanner');
+  banner.innerHTML = '';
+  banner.append(ollamaBanner());
+  const list = $('#installedList');
+  list.innerHTML = '';
+  if (!o?.models?.length) list.append(el('p', { class: 'muted' }, o?.running ? 'No models yet. Pick one below.' : '–'));
+  for (const m of o?.models || []) {
+    list.append(el('div', { class: 'model-row' },
+      el('span', { class: 'n' }, el('b', {}, m.name), el('span', { class: 'muted small' }, [m.parameters, m.quantization].filter(Boolean).map((x) => ` · ${x}`).join(''))),
+      el('span', { class: 'muted small' }, gb(m.size)),
+      el('button', { class: 'btn', onclick: () => useModel(m.name) }, 'Chat'),
+      el('button', { class: 'btn danger', title: 'Delete from disk', onclick: async () => {
+        if (!confirm(`Delete ${m.name} from disk?`)) return;
+        try { await api('/api/models/delete', { method: 'POST', body: { model: `ollama::${m.name}` } }); toast('Deleted'); await refreshAll(); }
+        catch (e) { toast(e.message); }
+      } }, '🗑')));
+  }
+  const filters = { fits: 'Fits my computer', all: 'All', chat: 'Chat', reasoning: 'Reasoning', coding: 'Coding' };
+  const fbox = $('#catFilters');
+  fbox.innerHTML = '';
+  for (const [k, label] of Object.entries(filters)) {
+    fbox.append(el('button', { class: `chip-btn${state.catFilter === k ? ' on' : ''}`, onclick: () => { state.catFilter = k; renderModelsView(); } }, label));
+  }
+  const cat = $('#catalog');
+  cat.innerHTML = '';
+  const f = state.catFilter;
+  const items = (o?.catalog || []).filter((m) => f === 'all' || (f === 'fits' ? m.fits : m.tags.includes(f)));
+  if (!items.length) cat.append(el('p', { class: 'muted' }, o ? 'Nothing in this category fits your computer. Try “All”.' : ''));
+  for (const m of items) {
+    cat.append(el('div', { class: 'model-card' },
+      el('div', { class: 'mc-head' }, el('b', {}, m.title), el('span', { class: `badge ${m.fits ? 'fit' : 'nofit'}` }, m.fits ? '✓ fits' : 'needs more RAM')),
+      el('code', { class: 'small' }, m.name),
+      el('p', { class: 'muted small' }, m.description),
+      el('div', { class: 'mc-foot' }, el('span', { class: 'small' }, `≈ ${m.size_gb} GB`), ...m.tags.map((t) => el('span', { class: 'chip' }, t))),
+      o?.running ? pullButton(m.name) : null));
+  }
+  updatePullWidgets();
+}
+$('#pullForm').onsubmit = (e) => {
+  e.preventDefault();
+  const n = $('#pullName').value.trim();
+  if (!n) return;
+  if (!/^[A-Za-z0-9._:/-]+$/.test(n)) return toast('Use an Ollama name like qwen3:4b');
+  if (!state.ollama?.running) return toast('Start Ollama first');
+  startPull(n);
+  $('#pullName').value = '';
+};
 
 /* ---------------- Compare ---------------- */
 function renderCompareModels() {
@@ -626,17 +781,9 @@ $('#noteInput').addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e
 let draftProviders = [];
 function renderSettings() {
   const s = state.settings;
-  const mbox = $('#modelBox');
-  mbox.innerHTML = '';
-  if (!state.models.length) mbox.append(setupCard());
-  for (const m of state.models) {
-    mbox.append(el('div', { class: 'model-row' }, el('span', { class: 'n' }, m.name), el('span', { class: 'muted small' }, m.provider_name),
-      el('label', { class: 'check small' }, el('input', { type: 'radio', name: 'defmodel', checked: s.default_model === m.id, onchange: () => (s.default_model = m.id) }), 'default'),
-      m.provider === 'ollama' ? el('button', { class: 'btn danger', title: 'Delete from disk', onclick: async () => {
-        if (!confirm(`Delete ${m.name} from disk?`)) return;
-        try { await api('/api/models/delete', { method: 'POST', body: { model: m.id } }); await loadModels(); renderSettings(); toast('Deleted'); } catch (e) { toast(e.message); }
-      } }, '🗑') : null));
-  }
+  const dm = $('#defaultModel');
+  dm.innerHTML = '';
+  dm.append(el('option', { value: '' }, 'Last used model'), state.models.map((m) => el('option', { value: m.id, selected: s.default_model === m.id }, `${m.name} (${m.provider_name})`)));
   draftProviders = s.providers.map((p) => ({ ...p }));
   renderProviders();
   $('#sysPrompt').value = s.system_prompt;
@@ -682,7 +829,7 @@ $('#saveSettings').onclick = async () => {
     state.settings = await api('/api/settings', { method: 'PUT', body: {
       providers: draftProviders.filter((p) => p.base_url.trim()), system_prompt: $('#sysPrompt').value,
       temperature: parseFloat($('#temperature').value), use_memory: $('#useMemory').checked,
-      accent: s.accent, default_model: s.default_model,
+      accent: s.accent, default_model: $('#defaultModel').value,
     } });
     applyLook();
     await loadModels();
@@ -691,7 +838,6 @@ $('#saveSettings').onclick = async () => {
     setTimeout(() => ($('#settingsMsg').textContent = ''), 2000);
   } catch (e) { toast(e.message); }
 };
-$('#pullBtn').onclick = () => { const n = $('#pullName').value.trim(); if (n) pullModel(n, $('#pullProgress'), $('#pullBtn')); };
 $('#savePassword').onclick = async () => {
   const pw = $('#password').value;
   if (pw && pw.length < 4) return toast('Use at least 4 characters');
@@ -710,9 +856,10 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') closeSidebar();
 });
 async function refreshAll() {
-  await loadModels().catch((e) => toast(e.message));
+  await Promise.all([loadModels().catch((e) => toast(e.message)), loadOllama()]);
   if (state.view === 'chat' && !state.session?.messages?.length) renderMessages();
   if (state.view === 'settings') renderSettings();
+  if (state.view === 'models') renderModelsView();
 }
 (async function boot() {
   applyLook();

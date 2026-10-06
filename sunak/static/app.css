@@ -203,3 +203,37 @@ details.think summary { cursor: pointer; user-select: none; }
   .doc-list { width: auto; max-height: 30vh; border-right: 0; border-bottom: 1px solid var(--border); }
   .inline-form { flex-direction: column; align-items: stretch; }
 }
+
+/* models (native Ollama) */
+.wide-pad { max-width: 1100px; width: 100%; margin: 0 auto; }
+h2.section { font-size: 15px; margin: 24px 0 8px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+.banner { padding: 12px 16px; border-radius: var(--radius); border: 1px solid var(--border); background: var(--panel); display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.banner p { margin: 0; flex-basis: 100%; }
+.ok-banner { border-color: color-mix(in srgb, #3ecf8e 45%, var(--border)); }
+.ok-banner > span:first-child { color: #3ecf8e; font-weight: 600; }
+.warn-banner { border-color: var(--accent); background: var(--accent-soft); }
+.card .banner { margin: 8px 0; }
+.cmd { display: flex; gap: 8px; align-items: center; flex-basis: 100%; }
+.cmd code { flex: 1; font-family: var(--mono); font-size: 13px; background: var(--code-bg); padding: 8px 10px; border-radius: 8px; overflow-x: auto; white-space: nowrap; }
+.install-log { flex-basis: 100%; max-height: 180px; overflow: auto; background: var(--code-bg); border-radius: 8px; padding: 8px 10px; font-size: 12px; margin: 0; }
+.pull { width: 100%; min-width: 200px; }
+.pull-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.small-btn { padding: 2px 10px; font-size: 13px; }
+.pull-slot { margin-top: auto; }
+.downloads { display: grid; gap: 8px; }
+.downloads .card { margin: 0; }
+.chip-btn { border: 1px solid var(--border); background: var(--panel); color: var(--muted); border-radius: 999px; padding: 5px 14px; cursor: pointer; }
+.chip-btn:hover { color: var(--text); border-color: var(--accent); }
+.chip-btn.on { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+.catalog { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; margin-top: 10px; }
+.model-card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; display: flex; flex-direction: column; gap: 6px; }
+.model-card:hover { border-color: color-mix(in srgb, var(--accent) 50%, var(--border)); }
+.model-card p { margin: 0; flex: 1; }
+.model-card code { font-family: var(--mono); color: var(--accent); }
+.mc-head { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+.mc-foot { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-bottom: 4px; }
+.mc-foot .chip { padding: 1px 8px; font-size: 12px; }
+.badge { font-size: 11px; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+.badge.fit { background: color-mix(in srgb, #3ecf8e 18%, transparent); color: #3ecf8e; }
+.badge.nofit { background: var(--panel-2); color: var(--muted); }
+.installed .model-row b { font-weight: 600; }
