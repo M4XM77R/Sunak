@@ -511,9 +511,10 @@ async function send() {
 async function sendNow() {
   let text = promptEl.value.trim();
   if (!text && !state.attachments.length) return;
-  if (!state.attachments.length && !agentOn()) {
-    const ask = await pictureIntent(text);
-    if (ask && await pictureRequest(text, ask.subject)) return;
+  if (!state.attachments.length) {
+    const ask = await pictureIntent(text, agentOn());
+    if (ask && agentOn()) toast('This looks like a request for a picture, but agent mode is on, so the agent gets it. Switch agent mode off (+ menu) to have it painted.');
+    else if (ask && await pictureRequest(text, ask.subject)) return;
   }
   if (!currentModel()) { toast('Install or connect a model first'); show('settings'); return; }
   if (state.attachments.some((a) => a.loading)) { toast('Still reading your files…'); return; }
@@ -659,21 +660,21 @@ function genFigure(m) {
 // A chat model cannot paint. When the message asks for a picture ("generate an image of …", "mach ein Bild von …",
 // "mal mir eine Katze"), Sunak makes it with the image generator by itself: the chat model improves the description
 // first. The server decides (sunak/intent.py: rules, and for unclear messages the chat model).
-async function pictureIntent(text) {
+async function pictureIntent(text, quick) {  // quick: rules only, never ask the chat model
   if (text.length > 600) return null;
   const ctrl = new AbortController(), timer = setTimeout(() => ctrl.abort(), 30000);
   $('#sendBtn').disabled = true;
   try {
-    const r = await api('/api/imagine/intent', { method: 'POST', body: { text, model: currentModel() || '' }, signal: ctrl.signal });
+    const r = await api('/api/imagine/intent', { method: 'POST', body: { text, model: currentModel() || '', quick: !!quick }, signal: ctrl.signal });
     return r.image ? r : null;
   } catch (e) { return null; } // no answer: it is a normal chat message
   finally { clearTimeout(timer); $('#sendBtn').disabled = false; }
 }
 async function pictureRequest(text, subject) {
   if (!imagineReady()) {
-    // not set up (yet): ask before leaving the chat, the message may not have meant a picture at all
-    if (!confirm(tr('This looks like a request for a picture, but pictures are not set up yet. OK shows what is missing, Cancel sends it as a normal chat message.'))) return false;
-    if (!(await imagineSetup())) return true;
+    // not set up (yet): say what is missing (and where to fix it), then let the chat model answer as usual
+    if (state.settings.image_status?.problem === 'choose') { if (!(await imagineSetup())) return false; }
+    else { await imagineSetup(); return false; }
   }
   if (!state.session) {
     try {

@@ -1970,14 +1970,16 @@ class Handler(BaseHTTPRequestHandler):
         out = {"image": verdict == "yes", "subject": intent.subject(text) if verdict != "no" else "", "via": "rules"}
         s = self.app.settings()
         ready = s["image_gen"] != "off" and not sdcpp.status(self.app.data_dir, s)["problem"]
-        if verdict == "maybe" and ready:
+        if verdict == "maybe" and ready and not self.flag(d, "quick"):
             try:
                 prov, model = self.app.resolve(d.get("model") or s["default_model"])
                 out["image"] = intent.parse(providers.chat_once(prov, model, intent.messages(text), {"temperature": 0}))
                 out["via"] = "model"
             except (providers.ProviderError, ValueError, OSError) as e:
                 log_image.info("Picture request check by the chat model failed (%s), treated as a normal message", str(e)[:150])
-        log_image.debug("Picture request check: %s (%s)", out["image"], out["via"] if verdict != "no" else "no rule applies")
+        if verdict != "no":
+            log_image.info("Picture request check: %s (%s%s)", "recognised" if out["image"] else "not a picture request", out["via"],
+                           "" if ready else ", pictures are not set up")
         self.send_json(out)
 
     def imagine(self):

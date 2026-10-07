@@ -837,7 +837,6 @@
 "Ready: picture mode is on. Describe a picture in the message box.": "Bereit: der Bildmodus ist an. Beschreibe ein Bild im Eingabefeld.",
 "Next step: download an image model below. Without one the program cannot make pictures.": "Nächster Schritt: lade unten ein Bildmodell herunter. Ohne eines kann das Programm keine Bilder machen.",
 "This looks like a request for a picture. OK makes it with your image generator, Cancel sends it as a normal chat message.": "Das sieht nach einer Bild-Anfrage aus. OK erzeugt es mit deinem Bildgenerator, Abbrechen schickt es als normale Chat-Nachricht.",
-"This looks like a request for a picture, but pictures are not set up yet. OK shows what is missing, Cancel sends it as a normal chat message.": "Das sieht nach einer Bild-Anfrage aus, aber Bilder sind noch nicht eingerichtet. OK zeigt, was fehlt, Abbrechen schickt es als normale Chat-Nachricht.",
 "No image generator is set up. Set up Sunak’s own image program on the Models page under Image models, or connect ComfyUI or Automatic1111 in Settings.": "Kein Bildgenerator eingerichtet. Richte Sunaks eigenes Bildprogramm auf der Modelle-Seite unter „Bildmodelle“ ein oder verbinde ComfyUI oder Automatic1111 in den Einstellungen.",
 "More options: knowledge base, web search, pictures, tools, voice": "Mehr Optionen: Wissensbasis, Websuche, Bilder, Werkzeuge, Sprache",
 "Web search": "Websuche",
@@ -902,5 +901,6 @@
 "No GitHub token is saved.": "Es ist kein GitHub-Token gespeichert.",
 "That does not look like a GitHub token (letters, digits and _ only, no spaces)": "Das sieht nicht wie ein GitHub-Token aus (nur Buchstaben, Ziffern und _, keine Leerzeichen)",
 "The token must be text": "Das Token muss Text sein",
-"error_reports must be one of: off, ask, auto": "error_reports muss eines von off, ask, auto sein"
+"error_reports must be one of: off, ask, auto": "error_reports muss eines von off, ask, auto sein",
+"This looks like a request for a picture, but agent mode is on, so the agent gets it. Switch agent mode off (+ menu) to have it painted.": "Das sieht nach einer Bild-Anfrage aus, aber der Agent-Modus ist an, deshalb bekommt der Agent sie. Schalte den Agent-Modus aus (+ Menü), damit das Bild gemalt wird."
 } };

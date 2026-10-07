@@ -92,6 +92,13 @@ class EndpointTest(unittest.TestCase):
         with mock.patch("sunak.server.providers.chat_once", side_effect=providers.ProviderError("down")):
             self.assertFalse(self.ask("Mal einen Drachen")["image"])  # no answer: a normal chat message
 
+    def test_quick_check_never_asks_the_model(self):
+        self.call("PUT", "/api/settings", {"image_gen": "automatic1111", "image_gen_url": "http://127.0.0.1:9"})
+        with mock.patch("sunak.server.providers.chat_once", side_effect=AssertionError("not asked")):
+            r = self.call("POST", "/api/imagine/intent", {"text": "Mal einen Drachen", "quick": True})
+            self.assertFalse(r["image"])
+            self.assertTrue(self.call("POST", "/api/imagine/intent", {"text": "generiere mir ein bild von einem Fuchs", "quick": True})["image"])
+
     def test_unclear_cases_are_chat_messages_when_pictures_are_not_set_up(self):
         self.call("PUT", "/api/settings", {"image_gen": "off"})
         with mock.patch("sunak.server.providers.chat_once", side_effect=AssertionError("not asked")):
