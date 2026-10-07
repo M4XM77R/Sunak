@@ -22,6 +22,18 @@ class InstallerTest(unittest.TestCase):
         update = sh[sh.index("  update)"):sh.index("    exit ;;")]
         self.assertIn('export SUNAK_HOME="$HOME_DIR"', update)
 
+    def test_update_shows_the_changelog_first_and_stops_when_declined(self):
+        sh = (ROOT / "install.sh").read_text(encoding="utf-8")
+        update = sh[sh.index("  update)"):sh.index("    exit ;;")]
+        self.assertLess(update.index("sunak changelog"), update.index("git -C"))
+        self.assertIn("-eq 3 ] && exit 0", update)
+        self.assertIn('--confirm --yes', update)
+        ps = (ROOT / "install.ps1").read_text(encoding="ascii")
+        block = ps[ps.index('if /I "%~1"=="update" ('):]
+        self.assertLess(block.index("sunak changelog %SUNAK_ASK%"), block.index("update.ps1"))
+        self.assertIn("if errorlevel 3 exit /b 0", block)
+        self.assertIn("--confirm --yes", ps)
+
     def test_git_pull_in_update_ps1_does_not_stop_on_stderr(self):
         ps = (ROOT / "install.ps1").read_text(encoding="ascii")
         block = ps[ps.index("git -C $src pull") - 200:ps.index("git -C $src pull")]

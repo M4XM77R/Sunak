@@ -93,7 +93,12 @@ if defined SUNAK_HELP (
   $pyCmd -m sunak help update
   exit /b
 )
+set "SUNAK_ASK=--confirm"
+if /I "%~1"=="update" if /I "%~2"=="-y" set "SUNAK_ASK=--confirm --yes"
+if /I "%~1"=="update" if /I "%~2"=="--yes" set "SUNAK_ASK=--confirm --yes"
 if /I "%~1"=="update" (
+  $pyCmd -m sunak changelog %SUNAK_ASK%
+  if errorlevel 3 exit /b 0
   $pyCmd -m sunak stop >nul 2>&1
   powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0update.ps1"
   echo Updated. Start Sunak again with the desktop icon or: sunak

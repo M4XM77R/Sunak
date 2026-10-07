@@ -3062,12 +3062,28 @@ async function checkUpdate() {
   try { u = await api('/api/update'); } catch (e) { return; } // no hint is better than an error here
   if (u.result) toast(u.result.ok ? tr('Update installed ✓ (Sunak {version})', { version: state.status?.version || '' }) : tr('Update failed: {error}', { error: u.result.error }));
   if ($('#updateBtn').disabled) return; // an update is running
+  state.update = u;
   $('#updateNote').classList.toggle('hidden', !u.available);
   $('#updateText').textContent = `${tr('Update available')}${u.behind > 1 ? ` (${tr('{n} changes', { n: u.behind })})` : ''}`;
   $('#updateBtn').classList.toggle('hidden', !u.can_update);
   $('#updateNote').title = u.can_update ? '' : 'Run “git pull” and the installer in your Sunak folder to update.';
 }
-$('#updateBtn').onclick = async () => {
+// the entries of CHANGELOG.md between the installed and the new version, shown before anything is installed
+function changelogView(entries) {
+  const box = el('div', { class: 'changelog' });
+  if (!entries?.length) { box.append(el('p', { class: 'muted' }, tr('No changelog available'))); return box; }
+  for (const e of entries) box.append(el('h4', {}, e.date ? `${e.version} · ${e.date}` : e.version), el('div', { class: 'md', html: md(e.body) }));
+  return box;
+}
+$('#updateBtn').onclick = () => {
+  const u = state.update || {};
+  $('#changelogTitle').textContent = u.version ? tr('Update to Sunak {version}', { version: u.version }) : tr('Update Sunak');
+  $('#changelogBody').replaceChildren(changelogView(u.changelog));
+  $('#changelogDlg').showModal();
+};
+$('#changelogCancel').onclick = () => $('#changelogDlg').close();
+$('#changelogInstall').onclick = () => { $('#changelogDlg').close(); installUpdate(); };
+async function installUpdate() {
   const btn = $('#updateBtn');
   if (state.busy && !confirm('Sunak is still answering. Update and restart anyway?')) return;
   btn.disabled = true;
@@ -3086,7 +3102,7 @@ $('#updateBtn').onclick = async () => {
   }
   $('#updateText').textContent = 'Sunak did not come back. Start it with the Sunak icon or “sunak”.';
   btn.classList.add('hidden');
-};
+}
 
 // Settings → Updates → "Check for updates now": same check as the hint, but at once and with the reason when it fails
 const UPDATE_ERRORS = {
@@ -3095,8 +3111,8 @@ const UPDATE_ERRORS = {
   no_upstream: 'The clone has no branch to compare with.',
 };
 $('#checkNow').onclick = async () => {
-  const btn = $('#checkNow'), out = $('#checkResult'), install = $('#installNow');
-  btn.disabled = true; install.classList.add('hidden'); out.textContent = tr('Checking…');
+  const btn = $('#checkNow'), out = $('#checkResult'), install = $('#installNow'), log = $('#checkChangelog');
+  btn.disabled = true; install.classList.add('hidden'); log.replaceChildren(); out.textContent = tr('Checking…');
   try {
     const r = await api('/api/update/check', { method: 'POST' });
     if (!r.known) out.textContent = tr('Check failed: {reason}', { reason: tr(UPDATE_ERRORS[r.error] || 'Unknown reason.') });
@@ -3106,12 +3122,13 @@ $('#checkNow').onclick = async () => {
         : tr('An update is available ({n} changes)', { n: r.behind });
       install.classList.toggle('hidden', !r.can_update);
       if (!r.can_update) out.textContent += ` ${tr('Run “git pull” and the installer in your Sunak folder to update.')}`;
+      log.replaceChildren(changelogView(r.changelog));
     }
     checkUpdate(); // the hint at the top follows the same result
   } catch (e) { out.textContent = tr('Check failed: {reason}', { reason: e.message }); }
   btn.disabled = false;
 };
-$('#installNow').onclick = () => $('#updateBtn').click();
+$('#installNow').onclick = installUpdate; // the changes are shown right above it
 
 // Settings → Error reports: errors that wait for the user's OK (or were sent), the GitHub token, a sample report
 async function loadReports(call) {
