@@ -827,5 +827,13 @@
 "Ask AI: “make it shorter”, “fix grammar”, “continue writing”…  (select text to edit only that)": "KI fragen: „kürzer“, „Grammatik korrigieren“, „weiterschreiben“…  (Text markieren, um nur ihn zu bearbeiten)",
 "Reading (IMAP) works": "Lesen (IMAP) funktioniert",
 "Sending (SMTP) works": "Senden (SMTP) funktioniert",
-"Your own emoji (optional)": "Eigenes Emoji (optional)"
+"Your own emoji (optional)": "Eigenes Emoji (optional)",
+"The image program is not set up. Set it up on the Models page under Image models.": "Das Bildprogramm ist nicht eingerichtet. Richte es auf der Modelle-Seite unter „Bildmodelle“ ein.",
+"The image program is ready, but no image model is downloaded yet. Download one on the Models page under Image models (SD-Turbo is small and fast).": "Das Bildprogramm ist bereit, aber es ist noch kein Bildmodell geladen. Lade eins auf der Modelle-Seite unter „Bildmodelle“ herunter (SD-Turbo ist klein und schnell).",
+"An admin profile has to set up pictures first (Models page, Image models).": "Ein Admin-Profil muss Bilder zuerst einrichten (Modelle-Seite, Bildmodelle).",
+"Pictures are not set up yet. See Settings → Image generation.": "Bilder sind noch nicht eingerichtet. Siehe Einstellungen → Bildgenerierung.",
+"Pictures need one more step: click to see which": "Für Bilder fehlt noch ein Schritt: klicke, um zu sehen, welcher",
+"Image program installed ✓ Next: download an image model below.": "Bildprogramm installiert ✓ Als Nächstes: lade unten ein Bildmodell herunter.",
+"Ready: picture mode is on. Describe a picture in the message box.": "Bereit: der Bildmodus ist an. Beschreibe ein Bild im Eingabefeld.",
+"Next step: download an image model below. Without one the program cannot make pictures.": "Nächster Schritt: lade unten ein Bildmodell herunter. Ohne eines kann das Programm keine Bilder machen."
 } };

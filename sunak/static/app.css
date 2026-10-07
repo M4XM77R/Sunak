@@ -562,3 +562,6 @@ input.emoji { width: 52px; min-width: 0; flex: none; text-align: center; }
 #imageEngine .banner p { margin: 0; }
 #imageEngine select { max-width: 100%; }
 .chip.on { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+
+.kb-toggle.needs-setup { opacity: .55; border: 1px dashed var(--border); }
+.next-step { margin: 6px 0 0; color: var(--accent); font-weight: 600; }

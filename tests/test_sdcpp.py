@@ -195,7 +195,8 @@ class SdCppTest(unittest.TestCase):
         self.assertEqual(names("Linux", "arm64"), [])
 
     def test_install_download_and_generate(self):
-        # nothing is set up yet
+        # nothing is set up yet: the picture button stays away, nothing is "missing"
+        self.assertEqual(self.call("GET", "/api/settings")["image_status"], {"problem": "", "model": ""})
         local = self.call("GET", "/api/imagegen/local")
         self.assertEqual(local["engine"], {"installed": False})
         self.assertEqual([m["id"] for m in local["models"]], [m["id"] for m in sdcpp.CATALOG])
@@ -210,6 +211,8 @@ class SdCppTest(unittest.TestCase):
         self.assertEqual(ev[-1]["type"], "done", ev)
         self.assertTrue(ev[-1]["engine"]["installed"])
         self.assertTrue(self.call("GET", "/api/imagegen/local")["engine"]["installed"])
+        # the program alone cannot make pictures: Sunak says a model is missing (this was the reported dead end)
+        self.assertEqual(self.call("GET", "/api/settings")["image_status"], {"problem": "no_model", "model": ""})
         # a model: the download breaks off and continues with Range on the next click
         Fake.cut_after = 300_000
         ev = self.call("POST", "/api/imagegen/models/pull", {"id": "sd-turbo"})
@@ -226,10 +229,13 @@ class SdCppTest(unittest.TestCase):
         with open(path, "rb") as f:
             self.assertEqual(f.read(), MODEL)
         self.assertEqual(self.error("POST", "/api/imagegen/models/pull", {"id": "../../etc"})[0], 400)
+        # program and model are there but pictures are still off: choose the model for the user
+        self.assertEqual(self.call("GET", "/api/settings")["image_status"], {"problem": "choose", "model": "sd-turbo"})
         if os.name == "nt":
             return  # the stand-in program is a Python script, which Windows cannot start by itself
         # make a picture with the model's own settings (SD-Turbo: 4 steps, cfg 1, 512 px)
-        self.call("PUT", "/api/settings", {"image_gen": "local", "image_gen_model": "sd-turbo"})
+        st = self.call("PUT", "/api/settings", {"image_gen": "local", "image_gen_model": "sd-turbo"})["image_status"]
+        self.assertEqual(st, {"problem": "", "model": "sd-turbo"})
         s = self.call("POST", "/api/sessions", {})
         ev = self.call("POST", "/api/imagine", {"session_id": s["id"], "prompt": "a red boat", "negative": "fog",
                                                  "aspect": "portrait", "seed": 7})
@@ -251,9 +257,13 @@ class SdCppTest(unittest.TestCase):
         self.call("PUT", "/api/settings", {"image_gen_model": "sdxl"})
         ev = self.call("POST", "/api/imagine", {"session_id": s["id"], "prompt": "x"})
         self.assertIn("is not downloaded yet", ev[-1]["error"])
+        self.assertEqual(self.call("GET", "/api/settings")["image_status"], {"problem": "choose", "model": "sd-turbo"})
         # delete
         self.call("POST", "/api/imagegen/models/delete", {"id": "sd-turbo"})
         self.assertFalse(os.path.exists(path))
+        self.assertEqual(self.call("GET", "/api/settings")["image_status"]["problem"], "no_model")
+        self.call("POST", "/api/imagegen/engine/remove")
+        self.assertEqual(self.call("GET", "/api/settings")["image_status"]["problem"], "no_engine")
 
     def test_model_from_the_search(self):
         res = self.call("GET", "/api/models/search?q=dreamy&kind=image")

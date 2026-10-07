@@ -604,20 +604,42 @@ async function runChat(payload, localUserMsg) {
 
 /* ---------------- Image generation ----------------
    The picture button sends the message as a picture description to Automatic1111 or ComfyUI (see sunak/imagegen.py). */
-const imagineReady = () => (state.settings?.image_gen || 'off') !== 'off';
+// image_status.problem: what is missing for Sunak's own program ('' = nothing), see sdcpp.status
+const imageProblem = () => state.settings?.image_status?.problem || '';
+const imagineVisible = () => (state.settings?.image_gen || 'off') !== 'off' || !!imageProblem();
+const imagineReady = () => (state.settings?.image_gen || 'off') !== 'off' && !imageProblem();
 const imagineOn = () => imagineReady() && store.get('sunak-imagine') === '1';
+const IMAGE_PROBLEMS = {
+  no_engine: 'The image program is not set up. Set it up on the Models page under Image models.',
+  no_model: 'The image program is ready, but no image model is downloaded yet. Download one on the Models page under Image models (SD-Turbo is small and fast).',
+};
+// the picture button while something is missing: say what, and go there
+async function imagineSetup() {
+  const p = imageProblem(), st = state.settings.image_status;
+  if (p === 'choose') {  // program and model are there, only the choice was never made
+    await useImageModel(st.model);
+    if (imagineReady()) { store.set('sunak-imagine', '1'); renderAgentToggle(); promptEl.focus(); }
+    return;
+  }
+  if (!isAdmin()) { toast('An admin profile has to set up pictures first (Models page, Image models).'); return; }
+  toast(IMAGE_PROBLEMS[p] || 'Pictures are not set up yet. See Settings → Image generation.', { label: 'Open', fn: () => show('models') });
+}
 function renderImagineToggle() {
   const b = $('#imagineToggle');
-  b.classList.toggle('hidden', !imagineReady());
+  b.classList.toggle('hidden', !imagineVisible());
+  b.classList.toggle('needs-setup', !!imageProblem());
   b.setAttribute('aria-pressed', String(imagineOn()));
-  b.title = imagineOn() ? 'Picture mode on: your message describes a picture' : 'Make a picture with your image generator';
+  b.title = imageProblem() ? 'Pictures need one more step: click to see which' : imagineOn() ? 'Picture mode on: your message describes a picture' : 'Make a picture with your image generator';
   $('#imagineBar').classList.toggle('hidden', !imagineOn());
   if (imagineOn()) {
     $('#agentBar').classList.add('hidden');
     promptEl.placeholder = tr('Describe the picture, e.g. “a lighthouse at dusk, oil painting”');
   }
 }
-$('#imagineToggle').onclick = () => { store.set('sunak-imagine', imagineOn() ? '0' : '1'); renderAgentToggle(); promptEl.focus(); };
+$('#imagineToggle').onclick = () => {
+  if (imageProblem()) { imagineSetup(); return; }
+  store.set('sunak-imagine', imagineOn() ? '0' : '1'); renderAgentToggle(); promptEl.focus();
+};
 $('#imagineAspect').value = store.get('sunak-imagine-aspect', 'square');
 $('#imagineAspect').onchange = (e) => store.set('sunak-imagine-aspect', e.target.value);
 function genFigure(m) {
@@ -1866,11 +1888,17 @@ function fillImageSlot(wrap) {
   }
   wrap.append(el('button', { class: 'btn primary', type: 'button', onclick: () => {
     if (key === 'engine') {
-      imgDownload('engine', '/api/imagegen/engine/install', { name: wrap._sel.value }, () => toast('Image program installed ✓'));
+      imgDownload('engine', '/api/imagegen/engine/install', { name: wrap._sel.value }, async () => {
+        await refreshImageStatus();
+        if (imageProblem() === 'choose') { await useImageModel(state.settings.image_status.model); return; }
+        toast('Image program installed ✓ Next: download an image model below.');
+        $('#imageCatalog').scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
     } else {
       imgDownload(key, '/api/imagegen/models/pull', wrap._body, (r) => {
         toast('Image model ready ✓');
-        if (state.settings?.image_gen !== 'local' || !state.settings?.image_gen_model) useImageModel(r.id);
+        if (state.settings?.image_gen !== 'local' || !state.settings?.image_gen_model || imageProblem()) useImageModel(r.id);
+        else refreshImageStatus();
       });
     }
   } }, icon('download'), wrap.dataset.label));
@@ -2105,11 +2133,13 @@ function renderImageModels() {
   const eng = L.engine;
   if (eng.installed) {
     box.append(el('div', { class: 'banner' }, el('div', {}, icon('image'), `${tr('Image program installed')}: stable-diffusion.cpp ${eng.tag || ''}`,
-      el('span', { class: 'muted small', 'data-no-i18n': '' }, ` · ${eng.kind || ''}`)),
+      el('span', { class: 'muted small', 'data-no-i18n': '' }, ` · ${eng.kind || ''}`),
+      L.models.some((m) => m.installed) ? null : el('p', { class: 'next-step small' }, icon('info'),
+        'Next step: download an image model below. Without one the program cannot make pictures.')),
       el('button', { class: 'btn small-btn', type: 'button', onclick: async () => {
         if (!confirm('Remove the image program? Your image models stay.')) return;
         await api('/api/imagegen/engine/remove', { method: 'POST' }).catch((e) => toast(e.message));
-        loadLocalImages();
+        refreshImageStatus();
       } }, 'Remove')));
   } else box.append(engineSetup());
   const items = L.models.filter(catMatch);
@@ -2126,7 +2156,7 @@ function renderImageModels() {
           el('button', { class: 'btn danger', type: 'button', title: 'Delete from disk', onclick: async () => {
             if (!confirm(tr('Delete {name} from disk?', { name: m.title }))) return;
             try { await api('/api/imagegen/models/delete', { method: 'POST', body: { id: m.id } }); } catch (e) { toast(e.message); }
-            loadLocalImages();
+            refreshImageStatus();
           } }, icon('trash', 'solo')))
         : imagePullButton({ id: m.id }, m.id, m.partial ? 'Continue download' : 'Download')));
   }
@@ -2149,11 +2179,17 @@ function engineSetup() {
   box.append(intro, state.imgPulls.engine ? imagePullButton(null, 'engine') : go, el('p', { class: 'muted small' }, 'Downloaded from github.com/leejet/stable-diffusion.cpp. With a graphics card a picture takes seconds, on the processor alone one to several minutes.'));
   return box;
 }
+async function refreshImageStatus() {  // the settings carry what is missing for pictures
+  try { state.settings = await api('/api/settings'); } catch (e) { /* keep the old state */ }
+  renderAgentToggle();
+  loadLocalImages();
+}
 async function useImageModel(id) {
   try { state.settings = await api('/api/settings', { method: 'PUT', body: { image_gen: 'local', image_gen_model: id } }); }
   catch (e) { toast(e.message); return; }
+  store.set('sunak-imagine', '1');  // picture mode is on right away
   renderAgentToggle();
-  toast('Ready: switch on the picture button next to the message box');
+  toast('Ready: picture mode is on. Describe a picture in the message box.');
   renderImageModels();
 }
 $('#pullForm').onsubmit = (e) => {

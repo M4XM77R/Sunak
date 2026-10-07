@@ -345,6 +345,31 @@ def listing(data_dir, ram_gb=None, gpu_info=None):
     return out
 
 
+def status(data_dir, settings):
+    """What stops the picture button from working with Sunak's own program: {problem, model}. problem is '' when all is fine (or
+    another image generator is chosen), 'setup' (nothing set up yet), 'no_engine' (chosen, but the program is
+    gone), 'no_model' (no usable model chosen or downloaded), or 'choose' (program and a model are there but
+    the generator is still off; `model` is the one to use)."""
+    kind = settings.get("image_gen", "off")
+    if kind not in ("off", "local"):
+        return {"problem": "", "model": ""}
+    eng = engine_info(data_dir)["installed"]
+    mid = settings.get("image_gen_model", "") if kind == "local" else ""
+    chosen = find(data_dir, mid) if mid else None
+    ready = [m for m in CATALOG + custom_models(data_dir) if model_state(data_dir, m)["installed"]]
+    if kind == "off":
+        if not eng and not ready:
+            return {"problem": "", "model": ""}  # nobody asked for pictures yet: stay quiet
+        if eng and ready:
+            return {"problem": "choose", "model": ready[0]["id"]}
+        return {"problem": "no_model" if eng else "no_engine", "model": ""}
+    if not eng:
+        return {"problem": "no_engine", "model": ""}
+    if not chosen or not model_state(data_dir, chosen)["installed"]:
+        return {"problem": "choose", "model": ready[0]["id"]} if ready else {"problem": "no_model", "model": ""}
+    return {"problem": "", "model": mid}
+
+
 def hf_url(repo, path):
     return f"{HF}/{repo}/resolve/main/{urllib.parse.quote(path)}"
 
@@ -463,8 +488,11 @@ def generate(data_dir, mid, prompt, negative, aspect_dims, seed, progress=None, 
             time.sleep(POLL)
         reader.join(5)
         if proc.returncode != 0 or not out_file.is_file():
-            last = next((t for t in reversed(tail) if "error" in t.lower() or "fail" in t.lower()), tail[-1] if tail else "")
-            raise SdError(f"The image program failed{': ' + last[:300] if last else ''}")
+            # the program's own words: its error lines, else its last lines (a missing library, too little memory, …)
+            lines = [t for t in tail if re.search(r"error|fail|cannot|can't|not found|out of memory|unknown|invalid", t, re.I)]
+            last = " | ".join((lines or tail)[-3:])
+            hint = " Try a smaller model or picture size, or the CPU build of the image program." if re.search(r"memory|alloc|cuda|vulkan", last, re.I) else ""
+            raise SdError(f"The image program failed (exit code {proc.returncode}){': ' + last[:500] if last else ''}.{hint}")
         data = out_file.read_bytes()
     finally:
         if proc.poll() is None:

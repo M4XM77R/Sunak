@@ -948,6 +948,7 @@ class Handler(BaseHTTPRequestHandler):
         s["mcp_servers"] = [mcp.public(c) for c in self.app.mcp_servers()]  # without environment values and tokens
         s["profile"] = self.profile_public(self.profile)
         s["profiles_count"] = len(self.app.profiles())
+        s["image_status"] = sdcpp.status(self.app.data_dir, s)  # what is missing for pictures with Sunak's own program
         self.send_json(s)
 
     def put_settings(self):
