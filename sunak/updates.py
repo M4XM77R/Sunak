@@ -74,16 +74,25 @@ def installed_commit(root, repo):
     return commit if re.fullmatch(r"[0-9a-f]{40,64}", commit) else "HEAD"
 
 
-def check(root=desktop.PKG_ROOT):
-    """Number of new commits on the remote (0 = up to date), or None when that cannot be found out."""
+def inspect(root=desktop.PKG_ROOT):
+    """The update check with details: {"behind": new commits (0 = up to date, None = unknown), "version": the
+    version on the remote ("" when unknown), "error": why it could not be found out ("" when it could)}."""
     repo = repo_dir(root)
-    if repo is None or _git(repo, "fetch", "--quiet") is None:
-        return None
+    if repo is None:
+        return {"behind": None, "version": "", "error": "no_clone"}
+    if _git(repo, "fetch", "--quiet") is None:
+        return {"behind": None, "version": "", "error": "no_remote"}
     for base in dict.fromkeys((installed_commit(root, repo), "HEAD")):
         count = _git(repo, "rev-list", "--count", f"{base}..@{{u}}", timeout=20)
         if count is not None and count.isdigit():
-            return int(count)
-    return None
+            m = re.search(r'^__version__\s*=\s*"([^"]+)"', _git(repo, "show", "@{u}:sunak/__init__.py", timeout=20) or "", re.M)
+            return {"behind": int(count), "version": m.group(1) if m else "", "error": ""}
+    return {"behind": None, "version": "", "error": "no_upstream"}
+
+
+def check(root=desktop.PKG_ROOT):
+    """Number of new commits on the remote (0 = up to date), or None when that cannot be found out."""
+    return inspect(root)["behind"]
 
 
 def launcher(root=desktop.PKG_ROOT):

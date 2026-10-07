@@ -61,6 +61,21 @@ class UpdateCheckTest(unittest.TestCase):
         self.assertEqual(updates.check(self.clone), 1)
         self.assertEqual(updates.update_command(self.clone)[-2:], ["pull", "--ff-only"])
 
+    def test_inspect_names_the_remote_version_and_the_reason(self):
+        r = updates.inspect(self.clone)
+        self.assertEqual((r["behind"], r["version"], r["error"]), (0, "", ""))
+        (self.other / "sunak").mkdir()
+        (self.other / "sunak" / "__init__.py").write_text('"""x"""\n__version__ = "9.8.7"\n', encoding="utf-8")
+        git(self.other, "add", "-A")
+        git(self.other, "commit", "-q", "-m", "version")
+        git(self.other, "push", "-q", "origin", "main")
+        r = updates.inspect(self.clone)
+        self.assertEqual((r["behind"], r["version"], r["error"]), (1, "9.8.7", ""))
+        self.assertEqual(updates.inspect(Path(self.tmp.name) / "nothing")["error"], "no_clone")
+        git(self.clone, "remote", "set-url", "origin", str(Path(self.tmp.name) / "gone.git"))
+        r = updates.inspect(self.clone)
+        self.assertEqual((r["behind"], r["error"]), (None, "no_remote"))
+
     def test_installed_copy_uses_remembered_clone_and_commit(self):
         home = Path(self.tmp.name) / "home"
         app = home / "app"
@@ -176,6 +191,19 @@ class UpdateApiTest(unittest.TestCase):
         self.assertEqual(u["result"], {"ok": False, "error": "no network"})
         self.assertFalse(u["can_update"])
         self.assertIn("instance", self.call("GET", "/api/status"))
+
+    def test_check_now_works_even_when_the_hint_is_off(self):
+        self.call("PUT", "/api/settings", {"check_updates": False})
+        ok = {"behind": 2, "version": "9.9.9", "error": ""}
+        with unittest.mock.patch.object(updates, "inspect", return_value=ok), \
+                unittest.mock.patch.object(updates, "update_command", return_value=["true"]):
+            r = self.call("POST", "/api/update/check")
+        self.assertEqual((r["available"], r["known"], r["behind"], r["version"], r["can_update"]), (True, True, 2, "9.9.9", True))
+        self.assertEqual(r["current"], __import__("sunak").__version__)
+        bad = {"behind": None, "version": "", "error": "no_remote"}
+        with unittest.mock.patch.object(updates, "inspect", return_value=bad):
+            r = self.call("POST", "/api/update/check")
+        self.assertEqual((r["known"], r["available"], r["error"]), (False, False, "no_remote"))
 
     def test_failed_check_is_silent(self):
         with unittest.mock.patch.object(updates, "check", return_value=None):

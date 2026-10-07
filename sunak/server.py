@@ -274,6 +274,23 @@ class App:
                 self._checking = False
         threading.Thread(target=run, daemon=True).start()
 
+    def check_updates_now(self):
+        """The "Check for updates" button: look right now (whatever the hint setting says) and say why when
+        it did not work. Uses the same check as the background hint and refreshes its result."""
+        with self._update_lock:
+            if self._checking:
+                raise ValueError("A check is already running. Try again in a moment.")
+            self._checking = True
+        try:
+            r = updates.inspect()
+        finally:
+            self._checking = False
+        checked = time.time() if r["behind"] is not None else time.time() - updates.CHECK_EVERY + updates.RETRY_AFTER
+        self.update = {"behind": r["behind"], "checked": checked}
+        return {"behind": r["behind"] or 0, "available": bool(r["behind"]), "known": r["behind"] is not None,
+                "version": r["version"], "current": __version__, "error": r["error"],
+                "can_update": updates.update_command() is not None}
+
     def update_info(self):
         """State for the "Update available" hint, plus the outcome of the last update (shown once)."""
         enabled = self.settings()["check_updates"]
@@ -877,6 +894,10 @@ class Handler(BaseHTTPRequestHandler):
     def update_get(self):
         """GET /api/update: is a newer version available? (checked with git in the background)"""
         self.send_json(self.app.update_info())
+
+    def update_check(self):
+        """POST /api/update/check: look for a newer version now and report: behind, version, error."""
+        self.send_json(self.app.check_updates_now())
 
     def update_apply(self):
         """POST /api/update: stop this server; a helper process installs the update and starts Sunak again."""
@@ -2327,6 +2348,7 @@ ROUTES = [
     (r"/api/settings", "PUT", Handler.put_settings),
     (r"/api/update", "GET", Handler.update_get),
     (r"/api/update", "POST", Handler.update_apply),
+    (r"/api/update/check", "POST", Handler.update_check),
     (r"/api/models", "GET", Handler.get_models),
     (r"/api/models/pull", "POST", Handler.pull),
     (r"/api/models/delete", "POST", Handler.delete_model),
@@ -2407,7 +2429,7 @@ ROUTES = [
 
 # what only admin profiles may do: things that change the installation or reach beyond one profile's data
 ADMIN_ONLY = {(m, p) for p, m, _ in ROUTES if (m, p) in {
-    ("POST", r"/api/profiles"), ("DELETE", r"/api/profiles/([a-z0-9]{1,16})"), ("POST", r"/api/update"),
+    ("POST", r"/api/profiles"), ("DELETE", r"/api/profiles/([a-z0-9]{1,16})"), ("POST", r"/api/update"), ("POST", r"/api/update/check"),
     ("POST", r"/api/models/pull"), ("POST", r"/api/models/delete"), ("POST", r"/api/ollama/start"),
     ("POST", r"/api/ollama/install"), ("POST", r"/api/lan"), ("POST", r"/api/agent"), ("POST", r"/api/agent/confirm"),
     ("POST", r"/api/mcp/test"), ("POST", r"/api/imagegen/test"), ("GET", r"/api/imagegen/engine"),

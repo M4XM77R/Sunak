@@ -3088,6 +3088,31 @@ $('#updateBtn').onclick = async () => {
   btn.classList.add('hidden');
 };
 
+// Settings → Updates → "Check for updates now": same check as the hint, but at once and with the reason when it fails
+const UPDATE_ERRORS = {
+  no_clone: 'This Sunak was not installed from a git clone, so there is nothing to compare with.',
+  no_remote: 'Sunak could not reach the update source (no network or no access).',
+  no_upstream: 'The clone has no branch to compare with.',
+};
+$('#checkNow').onclick = async () => {
+  const btn = $('#checkNow'), out = $('#checkResult'), install = $('#installNow');
+  btn.disabled = true; install.classList.add('hidden'); out.textContent = tr('Checking…');
+  try {
+    const r = await api('/api/update/check', { method: 'POST' });
+    if (!r.known) out.textContent = tr('Check failed: {reason}', { reason: tr(UPDATE_ERRORS[r.error] || 'Unknown reason.') });
+    else if (!r.available) out.textContent = tr('Sunak {version} is up to date ✓', { version: r.current });
+    else {
+      out.textContent = r.version && r.version !== r.current ? tr('New version {version} available (you have {current})', { version: r.version, current: r.current })
+        : tr('An update is available ({n} changes)', { n: r.behind });
+      install.classList.toggle('hidden', !r.can_update);
+      if (!r.can_update) out.textContent += ` ${tr('Run “git pull” and the installer in your Sunak folder to update.')}`;
+    }
+    checkUpdate(); // the hint at the top follows the same result
+  } catch (e) { out.textContent = tr('Check failed: {reason}', { reason: e.message }); }
+  btn.disabled = false;
+};
+$('#installNow').onclick = () => $('#updateBtn').click();
+
 /* ---------------- Profiles ----------------
    Each profile has its own chats, documents, notes, knowledge base, mail, calendar and preferences
    (see App.view). Installation settings (providers, agent, tools, password …) belong to admin profiles. */
