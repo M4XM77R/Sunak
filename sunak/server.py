@@ -1476,14 +1476,18 @@ class Handler(BaseHTTPRequestHandler):
                      "current information for the user's latest message. Use the earlier messages only to "
                      "resolve references like 'it' or 'there'. Reply with the query only, no quotes."},
                     {"role": "user", "content": convo}], {"temperature": 0})
-                q = (q.strip().splitlines() or [""])[0].strip(" \"'`*")
-                query = q[:300] or query
+                query = research.clean_queries(q, query, limit=1)[0][:300]
             except providers.ProviderError:
                 pass
         self.emit({"type": "status", "t": f"Searching the web: {query}"})
         try:
             pages = research.gather(query)
-        except Exception as e:  # noqa: BLE001 - offline, blocked, …: answer without the web
+        except research.SearchError as e:
+            log_app.warning("Web search failed: %s", e)
+            self.emit({"type": "status", "t": f"Web search failed ({e}), answering without it."})
+            return None
+        except Exception as e:  # noqa: BLE001 - anything else: answer without the web
+            log_app.warning("Web search failed: %s", type(e).__name__)
             self.emit({"type": "status", "t": f"Web search failed ({type(e).__name__}), answering without it."})
             return None
         if not pages:
@@ -1675,25 +1679,47 @@ class Handler(BaseHTTPRequestHandler):
         self.start_stream()
         try:
             self.emit({"type": "status", "t": "Planning search queries…"})
-            plan = providers.chat_once(prov, model, [
-                {"role": "system", "content": "Return 3 short web search queries (one per line, no numbering, "
-                                              "no quotes) that together answer the user's question."},
-                {"role": "user", "content": question},
-            ], {"temperature": 0.2})
-            queries = [re.sub(r"^[\s\-*\d.)\"']+|[\"']+$", "", q).strip() for q in plan.splitlines()]
-            queries = [q for q in queries if q][:3] or [question]
-            results, seen = [], set()
-            for qy in queries:
+            try:
+                plan = providers.chat_once(prov, model, [
+                    {"role": "system", "content": "Return 3 short web search queries (one per line, no numbering, "
+                                                  "no quotes) that together answer the user's question."},
+                    {"role": "user", "content": question},
+                ], {"temperature": 0.2})
+            except providers.ProviderError as e:
+                log_app.warning("Research: the model could not plan queries (%s), searching for the question itself", str(e)[:150])
+                plan = ""
+            plain = " ".join(question.split())[:200]
+            queries = research.clean_queries(plan, question)
+            log_app.info("Research: %d search queries (model answer: %d characters%s)", len(queries), len(plan),
+                         ", used the question itself" if queries == [plain] else "")
+            fallback = plain not in queries  # last resort when the model's queries find nothing
+            if fallback:
+                queries.append(plain)
+            results, seen, problems, answered = [], set(), [], False
+            for i, qy in enumerate(queries):
+                if fallback and results and i == len(queries) - 1:
+                    break
                 self.emit({"type": "status", "t": f"Searching: {qy}"})
                 try:
-                    for r in research.search(qy, limit=4):
+                    found = research.search(qy, limit=4)
+                    answered = True
+                    for r in found:
                         if r["url"] not in seen:
                             seen.add(r["url"])
                             results.append(r)
-                except Exception as e:  # noqa: BLE001
+                except research.SearchError as e:
+                    problems.append(str(e))
                     self.emit({"type": "status", "t": f"Search failed ({e})"})
+                except Exception as e:  # noqa: BLE001
+                    problems.append(type(e).__name__)
+                    self.emit({"type": "status", "t": f"Search failed ({type(e).__name__})"})
             if not results:
-                return self.emit({"type": "error", "error": "Web search returned no results (offline?)."})
+                if answered:
+                    log_app.info("Research: the search engines answered but found nothing")
+                    return self.emit({"type": "error", "error": "The web search found nothing for this question. Try asking it differently."})
+                log_app.warning("Research: no search engine usable: %s", (problems or ["?"])[0][:300])
+                return self.emit({"type": "error", "error": "The web search is not working: " + (problems or ["no answer"])[0]
+                                  + ". Check the internet connection, or set SEARXNG_URL to your own search server."})
             sources = []
             for r in results[:8]:
                 self.emit({"type": "status", "t": f"Reading {r['url']}"})
@@ -1997,7 +2023,7 @@ class Handler(BaseHTTPRequestHandler):
             raise ValueError(f"Hugging Face is not reachable ({e})") from None
 
     def imagine_intent(self):
-        """POST /api/imagine/intent {text, model, quick}: does this chat message ask for a picture? Answer: {image, subject, via}.
+        """POST /api/imagine/intent {text, model, quick, where}: does this chat message ask for a picture? Answer: {image, subject, via}.
         A clear request (rules "yes") is painted without asking anyone. Any other message is put to the chat model when pictures
         are set up (and `ai_image_detect` is on): a short YES/NO question about the last message only (`via` "model"); only
         YES makes a picture. Without that, or when the model does not answer in time, is busy with other requests or fails,
@@ -2013,9 +2039,9 @@ class Handler(BaseHTTPRequestHandler):
             if answer is not None:
                 out.update(image=answer, via="model")
         out["subject"] = intent.subject(text) if out["image"] else ""
-        if out["image"] or verdict != "no" or out["via"] == "model":
-            log_image.info("Picture request check: %s (%s%s)", "recognised" if out["image"] else "not a picture request", out["via"],
-                           "" if ready else ", pictures are not set up")
+        where = self.text(d, "where").strip()[:20] or "chat"
+        log_image.info("Picture request check (%s): %s (%s%s)", where, "recognised" if out["image"] else "not a picture request", out["via"],
+                       "" if ready else ", pictures are not set up")
         self.send_json(out)
 
     def imagine(self):

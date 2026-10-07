@@ -512,7 +512,7 @@ async function sendNow() {
   let text = promptEl.value.trim();
   if (!text && !state.attachments.length) return;
   if (!state.attachments.length) {
-    const ask = await pictureIntent(text, agentOn());
+    const ask = await pictureIntent(text, agentOn(), agentOn() ? 'agent' : 'chat');
     if (ask && agentOn()) toast('This looks like a request for a picture, but agent mode is on, so the agent gets it. Switch agent mode off (+ menu) to have it painted.');
     else if (ask && await pictureRequest(text, ask.subject)) return;
   }
@@ -660,12 +660,12 @@ function genFigure(m) {
 // A chat model cannot paint. When the message asks for a picture ("generate an image of …", "mach ein Bild von …",
 // "mal mir eine Katze"), Sunak makes it with the image generator by itself: the chat model improves the description
 // first. The server decides (sunak/intent.py: rules, and for unclear messages the chat model).
-async function pictureIntent(text, quick) {  // quick: rules only, never ask the chat model
+async function pictureIntent(text, quick, where) {  // quick: rules only, never ask the chat model; where: chat/research (for the log)
   if (text.length > 600) return null;
   const ctrl = new AbortController(), timer = setTimeout(() => ctrl.abort(), 30000);
   $('#sendBtn').disabled = true;
   try {
-    const r = await api('/api/imagine/intent', { method: 'POST', body: { text, model: currentModel() || '', quick: !!quick }, signal: ctrl.signal });
+    const r = await api('/api/imagine/intent', { method: 'POST', body: { text, model: currentModel() || '', quick: !!quick, where: where || 'chat' }, signal: ctrl.signal });
     return r.image ? r : null;
   } catch (e) { return null; } // no answer: it is a normal chat message
   finally { clearTimeout(timer); $('#sendBtn').disabled = false; }
@@ -685,6 +685,15 @@ async function pictureRequest(text, subject) {
   promptEl.value = ''; autosize();
   sending = false; // from here on state.busy guards against a second send
   await runImagine({ prompt: text, improve: true, model: currentModel() || '', fallback: subject || text, aspect: 'auto' });
+  return true;
+}
+// A picture request typed in another view (Deep Research): paint it in a new chat instead of searching the web for it.
+async function divertPicture(text, where) {
+  const ask = await pictureIntent(text, false, where);
+  if (!ask) return false;
+  if (!imagineReady() && state.settings.image_status?.problem !== 'choose') { await imagineSetup(); return false; }
+  newChat();
+  if (!(await pictureRequest(text, ask.subject))) promptEl.value = text, autosize();
   return true;
 }
 async function runImagine(body) {
@@ -2270,6 +2279,7 @@ $('#researchForm').onsubmit = async (e) => {
   e.preventDefault();
   const q = $('#researchQ').value.trim();
   if (!q) return;
+  if (await divertPicture(q, 'research')) return;
   const log = $('#researchStatus'), src = $('#researchSources'), rep = $('#researchReport');
   log.innerHTML = ''; src.innerHTML = ''; rep.innerHTML = ''; researchText = '';
   $('#researchActions').classList.add('hidden');
