@@ -154,12 +154,12 @@ class ResearchEndpointTest(unittest.TestCase):
 
     def test_chat_web_query_from_noisy_model(self):
         s = self.call("POST", "/api/sessions", {"use_web": True})
-        self.call("POST", "/api/chat", {"session_id": s["id"], "model": "ollama::tiny:1b", "content": "Hallo"})
         seen = []
         with mock.patch.object(research, "search", side_effect=lambda q, limit=6: seen.append(q) or []), \
                 mock.patch("sunak.server.providers.chat_once", return_value="<think>x</think>\n**\"Wetter Berlin\"**\nzweite Zeile"):
+            self.call("POST", "/api/chat", {"session_id": s["id"], "model": "ollama::tiny:1b", "content": "Hallo"})  # first message: searched as asked
             self.call("POST", "/api/chat", {"session_id": s["id"], "model": "ollama::tiny:1b", "content": "und morgen?"})
-        self.assertEqual(seen, ["Wetter Berlin"])
+        self.assertEqual(seen, ["Hallo", "Wetter Berlin"])
 
 
 class PictureEverywhereTest(unittest.TestCase):
