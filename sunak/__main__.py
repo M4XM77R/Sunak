@@ -90,7 +90,7 @@ OPTIONS = (  # options for starting Sunak
     ("--version", "Print the version", "sunak --version"),
 )
 ENV_VARS = ("SUNAK_PORT", "SUNAK_HOST", "SUNAK_DATA", "SUNAK_PASSWORD", "SUNAK_NO_BROWSER", "SUNAK_DEBUG",
-            "SUNAK_ALLOWED_HOSTS", "SUNAK_MODEL_SLOTS", "OLLAMA_BASE_URL", "ANTHROPIC_API_KEY", "SEARXNG_URL", "NO_COLOR")
+            "SUNAK_ALLOWED_HOSTS", "SUNAK_MODEL_SLOTS", "SUNAK_REPORT_REPO", "OLLAMA_BASE_URL", "ANTHROPIC_API_KEY", "SEARXNG_URL", "NO_COLOR")
 START_OPTIONS = ("--port", "--host", "--data-dir", "--no-browser", "--version", "--help", "-h")
 
 
@@ -296,6 +296,11 @@ def main(argv=None):
         return 0
 
     log_file = log.setup(args.data_dir)
+
+    def thread_crashed(info):  # a background thread died: log it (with its traceback) instead of printing it alone
+        if info.exc_type is not SystemExit and not issubclass(info.exc_type, (BrokenPipeError, ConnectionError)):
+            log.get("app").error("A background thread crashed", exc_info=(info.exc_type, info.exc_value, info.exc_traceback))
+    threading.excepthook = thread_crashed
     srv = None
     for port in range(args.port, args.port + 10):
         try:

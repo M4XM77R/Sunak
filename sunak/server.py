@@ -28,7 +28,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, quote, urlparse
 
 from . import (__version__, agent, cal, extract, gpu, imagegen, images, jobqueue, knowledge, log, mail, mcp, memory, modelsearch,
-               ollama, providers, qr, research, sdcpp, speech, updates)
+               ollama, providers, qr, reports, research, sdcpp, speech, updates)
 from .db import DB, new_id
 
 log_http = log.get("http")
@@ -60,13 +60,14 @@ DEFAULT_SETTINGS = {
     "image_gen_model": "",   # checkpoint ("" = the program's current one / ComfyUI's first)
     "image_gen_size": 512,   # side of a square picture: 512 (SD 1.5), 768, 1024 (SDXL, Flux)
     "image_gen_steps": 25,
+    "error_reports": "off",  # unexpected errors as GitHub issues (reports.py): "off", "ask" (the user sends each one), "auto"
     "mail_notify": True,     # 📬 look for new mail every few minutes while Sunak is open, and say so
 }
 INT_PREFS = {"agent_timeout": (5, 3600), "agent_max_steps": (1, 200), "image_gen_size": (512, 1024),
              "image_gen_steps": (1, imagegen.MAX_STEPS)}  # allowed ranges
 # Settings of the whole installation (only admin profiles change them); all other prefs are per profile.
 GLOBAL_PREFS = {"check_updates", "agent_enabled", "agent_timeout", "agent_max_steps", "speech_input", "whisper_url", "whisper_model",
-                "image_gen", "image_gen_url", "image_gen_model", "image_gen_size", "image_gen_steps"}
+                "image_gen", "image_gen_url", "image_gen_model", "image_gen_size", "image_gen_steps", "error_reports"}
 GLOBAL_KEYS = GLOBAL_PREFS | {"providers", "mcp_servers", "password"}
 MAX_PROFILES = 20
 
@@ -171,6 +172,8 @@ def _check_pref(key, value, default):
         value = value.strip()
     if key == "whisper_url" and value:
         speech.endpoint(value)
+    if key == "error_reports" and value not in ("off", "ask", "auto"):
+        raise ValueError("error_reports must be one of: off, ask, auto")
     if key == "image_gen" and value not in ("off", "local", *imagegen.BACKENDS):
         raise ValueError("image_gen must be one of: off, local, " + ", ".join(imagegen.BACKENDS))
     if key in ("image_gen_url", "image_gen_model"):
@@ -247,6 +250,9 @@ class App:
         self._update_lock = threading.Lock()
         self._checking = False
         self.agents = agent.Registry()
+        self.reports = reports.Reports(self)
+        if self.reports.token():
+            log.add_secret(self.reports.token())
         self.mcp = mcp.Manager()  # MCP servers start when a chat first needs their tools
         self.mcp.configure(self.mcp_servers())
         self.host, self.port, self.handler = None, None, None  # set by make_server
@@ -944,6 +950,43 @@ class Handler(BaseHTTPRequestHandler):
         """POST /api/update/check: look for a newer version now and report: behind, version, error."""
         self.send_json(self.app.check_updates_now())
 
+    # error reports (admin profiles only) -----------------------------
+    def reports_get(self):
+        """GET /api/reports: mode, whether a token is saved (never the token), waiting and sent reports."""
+        self.send_json(self.app.reports.state())
+
+    def reports_token(self):
+        """POST /api/reports/token {token}: save the GitHub token ("" removes it)."""
+        d = self.body()
+        if not isinstance(d, dict):
+            raise ValueError("Invalid request")
+        self.app.reports.set_token(d.get("token"))
+        self.send_json(self.app.reports.state())
+
+    def reports_check(self):
+        """POST /api/reports/check: can the saved token read the issues of the repository?"""
+        token = self.app.reports.token()
+        if not token:
+            raise ValueError("No GitHub token is saved.")
+        reports.check_token(token)
+        self.send_json({"ok": True, "repo": reports.REPO})
+
+    def reports_send(self):
+        """POST /api/reports/send {id}: send one waiting report as a GitHub issue (or a comment on it)."""
+        d = self.body()
+        self.send_json(self.app.reports.send(str(d.get("id", "")) if isinstance(d, dict) else ""))
+
+    def reports_dismiss(self):
+        """POST /api/reports/dismiss {id}: throw a waiting report away without sending it."""
+        d = self.body()
+        self.app.reports.dismiss(str(d.get("id", "")) if isinstance(d, dict) else "")
+        self.send_json(self.app.reports.state())
+
+    def reports_sample(self):
+        """POST /api/reports/sample: add a harmless made-up report, to see what a report looks like."""
+        self.app.reports.sample()
+        self.send_json(self.app.reports.state())
+
     def update_apply(self):
         """POST /api/update: stop this server; a helper process installs the update and starts Sunak again."""
         if updates.update_command() is None:
@@ -1017,6 +1060,8 @@ class Handler(BaseHTTPRequestHandler):
         s["profile"] = self.profile_public(self.profile)
         s["profiles_count"] = len(self.app.profiles())
         s["image_status"] = sdcpp.status(self.app.data_dir, s)  # what is missing for pictures with Sunak's own program
+        if self.profile.get("admin"):
+            s["reports_pending"] = self.app.reports.pending_count()
         self.send_json(s)
 
     def put_settings(self):
@@ -2451,6 +2496,12 @@ ROUTES = [
     (r"/api/update", "GET", Handler.update_get),
     (r"/api/update", "POST", Handler.update_apply),
     (r"/api/update/check", "POST", Handler.update_check),
+    (r"/api/reports", "GET", Handler.reports_get),
+    (r"/api/reports/token", "POST", Handler.reports_token),
+    (r"/api/reports/check", "POST", Handler.reports_check),
+    (r"/api/reports/send", "POST", Handler.reports_send),
+    (r"/api/reports/dismiss", "POST", Handler.reports_dismiss),
+    (r"/api/reports/sample", "POST", Handler.reports_sample),
     (r"/api/models", "GET", Handler.get_models),
     (r"/api/models/pull", "POST", Handler.pull),
     (r"/api/models/delete", "POST", Handler.delete_model),
@@ -2532,6 +2583,8 @@ ROUTES = [
 # what only admin profiles may do: things that change the installation or reach beyond one profile's data
 ADMIN_ONLY = {(m, p) for p, m, _ in ROUTES if (m, p) in {
     ("POST", r"/api/profiles"), ("DELETE", r"/api/profiles/([a-z0-9]{1,16})"), ("POST", r"/api/update"), ("POST", r"/api/update/check"),
+    ("GET", r"/api/reports"), ("POST", r"/api/reports/token"), ("POST", r"/api/reports/check"), ("POST", r"/api/reports/send"),
+    ("POST", r"/api/reports/dismiss"), ("POST", r"/api/reports/sample"),
     ("POST", r"/api/models/pull"), ("POST", r"/api/models/delete"), ("POST", r"/api/ollama/start"),
     ("POST", r"/api/ollama/install"), ("POST", r"/api/lan"), ("POST", r"/api/agent"), ("POST", r"/api/agent/confirm"),
     ("POST", r"/api/mcp/test"), ("POST", r"/api/imagegen/test"), ("GET", r"/api/imagegen/engine"),
@@ -2542,6 +2595,7 @@ ADMIN_ONLY = {(m, p) for p, m, _ in ROUTES if (m, p) in {
 def make_server(host, port, data_dir):
     """Create a threaded HTTP server bound to host:port with its own App for `data_dir`."""
     app = App(data_dir)
+    reports.attach(app)
     handler = type("BoundHandler", (Handler,), {"app": app})
     srv = Server((host, port), handler)
     app.host, app.port, app.handler = host, srv.server_address[1], handler

@@ -106,6 +106,7 @@ Die Daten liegen dann im Ordner `data/` neben der Compose-Datei (Ollama-Modelle 
 | 🎨 **Themes** | Acht Themes und eigene Akzentfarben, als App installierbar (PWA) |
 | 🌍 **Sprachen** | Oberfläche auf Deutsch oder Englisch |
 | 👥 **Profile** | Mehrere Personen an einem Sunak, mit eigenen Daten und optionaler PIN |
+| 🐞 **Fehlerberichte** | Optional: unerwartete Fehler werden als GitHub-Issue gemeldet, ohne Chats, Prompts oder Schlüssel (standardmäßig aus) |
 | 📱 **Handy-Zugriff** | Im WLAN per QR-Code |
 | 🔒 **Sicherheit** | Standardmäßig nur auf `localhost`, optionales Passwort, Daten in einer SQLite-Datei |
 
@@ -240,8 +241,22 @@ Mehrere Personen an einem Sunak: Jedes Profil hat eigene Chats, Dokumente, Notiz
 
 - **Anlegen:** Settings → Profile → „Add profile“: Name, optional ein eigenes Emoji, optional PIN (mindestens 4 Zeichen) und ob das Profil Admin sein soll. Beim nächsten Öffnen fragt Sunak „Who is using Sunak?“; gewechselt wird über den Namen oben links.
 - Das erste Profil ist das Hauptprofil mit allen bisherigen Daten, es bleibt immer Admin und lässt sich nicht löschen.
-- **Rechte:** Nur Admin-Profile ändern Anbieter, Modelle, Agent, Werkzeuge, Bildgenerierung, Spracheingabe, Updates, Handy-Zugriff, Passwort und Profile.
+- **Rechte:** Nur Admin-Profile ändern Anbieter, Modelle, Agent, Werkzeuge, Bildgenerierung, Spracheingabe, Updates, Fehlerberichte, Handy-Zugriff, Passwort und Profile.
 - Eine PIN trennt die Profile in der App, schützt aber nicht vor jemandem, der am Computer die Dateien unter `~/.sunak` öffnen kann. Das Passwort (Security) gilt für die ganze Installation.
+
+### Fehlerberichte
+
+Damit Fehler gefunden und behoben werden können, kann Sunak unerwartete Fehler als **Issue auf GitHub** melden (Repository `M4XM77R/Sunak`, mit dem Label `auto-report`). Das ist **standardmäßig aus** und nur für Admin-Profile unter Settings → Error reports (Fehlerberichte) einstellbar:
+
+- **Off:** nichts wird gesammelt oder gesendet.
+- **Ask me first:** Fehler warten in den Einstellungen. Du siehst mit „Show what would be sent“ den ganzen Bericht und sendest ihn oder verwirfst ihn („Dismiss“). Nach dem Start weist ein Hinweis darauf hin, wenn Berichte warten.
+- **Send automatically:** Sunak sendet jeden neuen Fehler sofort. Das geht nur, wenn ein Token gespeichert ist; ohne Token warten die Berichte wie bei „Ask me first“.
+
+**Was im Bericht steht:** Sunak-Version, Betriebssystem, Python-Version, Fehlerart und Fehlertext, der Stacktrace (Dateien und Funktionen von Sunak mit ihren Codezeilen, keine Variablenwerte) und die letzten 30 Logzeilen. **Nie:** Chats, Prompts, Antworten, Inhalte von Mails oder Dateien, API-Schlüssel, Passwörter oder das Token. Benutzernamen in Pfaden, Rechnername, E-Mail-Adressen und IP-Adressen werden vorher unkenntlich gemacht. Der Fehlertext kommt aus der Fehlermeldung selbst; wer sichergehen will, nutzt „Ask me first“ und liest den Bericht vor dem Senden.
+
+**Das Token:** Lege auf GitHub unter Settings → Developer settings → Personal access tokens → Fine-grained tokens ein Token an, das **nur dieses Repository** und nur die Berechtigung „Issues: Read and write“ hat, und speichere es unter „Save token“. Es bleibt auf deinem Computer (nur in der Datenbank, nie im Log, im Backup oder im Browser). „Check access“ prüft, ob es funktioniert. **Ohne Token** öffnet „Open on GitHub“ ein vorausgefülltes Issue im Browser, das du selbst abschickst.
+
+**Doppelte und Menge:** Jeder Fehler hat einen Fingerabdruck (Fehlerart plus die beteiligten Funktionen, ohne Zeilennummern). Gibt es dazu schon ein offenes Issue, bekommt es nur einen kurzen Kommentar („Seen again“, höchstens einen pro Tag); ein bereits geschlossenes Issue wird nicht geöffnet, sondern es entsteht ein neues, das darauf verweist. Pro Stunde entstehen höchstens drei neue Issues. „Create a sample report“ legt einen harmlosen Beispielbericht an, mit dem du die Vorschau und das Senden ausprobieren kannst.
 
 ### Handy und Tablet
 
@@ -291,6 +306,7 @@ Alles Wichtige stellst du in der Oberfläche ein (Settings). Optional per Umgebu
 | `SUNAK_PASSWORD` | – | Passwort beim Start setzen |
 | `SUNAK_NO_BROWSER` | – | Auf einen beliebigen Wert setzen: Browser nicht öffnen |
 | `SUNAK_DEBUG` | – | Auf einen beliebigen Wert setzen: ausführlicheres Log (Stufe DEBUG: auch jede lesende Anfrage, Seiten und Abfragen im Hintergrund). Nie Inhalte von Chats, Prompts oder Schlüssel |
+| `SUNAK_REPORT_REPO` | `M4XM77R/Sunak` | GitHub-Repository (`besitzer/name`), in dem Fehlerberichte als Issues landen, zum Beispiel für einen eigenen Fork |
 | `SUNAK_MODEL_SLOTS` | `1` | Wie viele Anfragen ein lokales Modell (Ollama auf diesem Rechner oder im LAN) gleichzeitig bearbeitet; weitere warten in der Reihe. Modelle im Internet (Claude, OpenAI) nehmen vier gleichzeitig |
 | `SUNAK_ALLOWED_HOSTS` | – | Weitere Hostnamen, unter denen Sunak erreichbar ist, kommagetrennt (`*` für alle). Erlaubt sind sonst `localhost`, IP-Adressen, Namen ohne Punkt und `*.local` (Schutz gegen DNS-Rebinding) |
 | `SUNAK_GPU` | – | Nur für Docker: `nvidia` oder `amd`, damit die CPU-Warnung auch dort greift (setzen die GPU-Compose-Dateien selbst) |
@@ -356,6 +372,7 @@ Ohne Terminal wird nichts davon gelöscht. Zweimal ausführen schadet nicht.
 | Antworten kommen sehr langsam | Wahrscheinlich läuft das Modell auf dem Prozessor: `sunak gpu` und die Models-Seite zeigen es. Ein kleineres Modell wählen |
 | Ein Bildwunsch im Chat wird nicht gemalt, sondern es kommt eine Rückfrage | Die Bildgenerierung ist noch nicht eingerichtet; „OK“ nennt den fehlenden Schritt (Programm oder Modell) |
 | „Waiting in the queue: place n“ | Das Modell beantwortet gerade andere Anfragen; deine kommt der Reihe nach dran. **Stop** zieht sie zurück |
+| Fehlerbericht lässt sich nicht senden („GitHub refused the token“) | Das Token braucht „Issues: Read and write“ für das Repository `M4XM77R/Sunak` (oder deinen `SUNAK_REPORT_REPO`) und darf nicht abgelaufen sein; „Check access“ prüft es. Ohne Token hilft „Open on GitHub“ |
 | Handy erreicht Sunak nicht | Passwort gesetzt? Selbes WLAN? Firewall des Computers: Python erlauben |
 | Mail-Anmeldung abgelehnt | App-Passwort statt normalem Passwort nutzen, bei GMX/WEB.DE IMAP freischalten; Microsoft-Konten gehen oft nur mit OAuth, das Sunak nicht kann |
 | Mikrofon tut nichts | Es geht nur auf `localhost` oder mit https, nicht über den Handy-Zugriff |

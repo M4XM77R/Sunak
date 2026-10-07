@@ -2779,6 +2779,8 @@ function renderSettings() {
   $('#mailNotify').checked = s.mail_notify;
   renderMailDesktop();
   $('#checkUpdates').checked = s.check_updates;
+  $('#reportMode').value = s.error_reports || 'off';
+  if (isAdmin()) loadReports();
   $('#agentEnabled').checked = s.agent_enabled;
   $('#agentTimeout').value = s.agent_timeout;
   $('#agentSteps').value = s.agent_max_steps;
@@ -2937,6 +2939,7 @@ $('#saveSettings').onclick = async () => {
     const install = !isAdmin() ? {} : {
       ...(mcpChanged ? { mcp_servers: draftMcp.map(mcpBody) } : {}),
       providers: draftProviders.filter((p) => p.base_url.trim()), check_updates: $('#checkUpdates').checked,
+      error_reports: $('#reportMode').value,
       agent_enabled: $('#agentEnabled').checked, agent_timeout: Number($('#agentTimeout').value),
       agent_max_steps: Number($('#agentSteps').value),
       speech_input: $('#speechInput').value, whisper_url: $('#whisperUrl').value, whisper_model: $('#whisperModel').value,
@@ -3095,6 +3098,54 @@ $('#checkNow').onclick = async () => {
 };
 $('#installNow').onclick = () => $('#updateBtn').click();
 
+// Settings → Error reports: errors that wait for the user's OK (or were sent), the GitHub token, a sample report
+async function loadReports(call) {
+  try { renderReports(await (call || api('/api/reports'))); } catch (e) { toast(e.message); }
+}
+function renderReports(r) {
+  $('#reportTokenInfo').textContent = tr(r.token_set ? 'A token is saved on this computer.' : 'No token saved yet.');
+  const list = $('#reportList');
+  list.replaceChildren();
+  if (!r.pending.length) list.append(el('p', { class: 'muted small' }, tr('No error reports are waiting.')));
+  for (const p of r.pending) {
+    const send = el('button', { class: 'btn primary', type: 'button' }, 'Send');
+    send.onclick = async () => {
+      send.disabled = true;
+      try {
+        const res = await api('/api/reports/send', { method: 'POST', body: { id: p.fp } });
+        toast(tr(res.action === 'created' ? 'Report sent: issue #{n}' : 'Added to the existing issue #{n}', { n: res.number }));
+        loadReports();
+      } catch (e) { toast(e.message); send.disabled = false; }
+    };
+    const dismiss = el('button', { class: 'btn', type: 'button' }, 'Dismiss');
+    dismiss.onclick = () => loadReports(api('/api/reports/dismiss', { method: 'POST', body: { id: p.fp } }));
+    list.append(el('div', { class: 'card report' },
+      el('strong', { 'data-no-i18n': '' }, p.title),
+      el('div', { class: 'muted small', 'data-no-i18n': '' }, `${tr('Seen {n}×', { n: p.count })} · ${new Date(p.last * 1000).toLocaleString()}`),
+      el('details', {}, el('summary', {}, 'Show what would be sent'), el('pre', { class: 'report-body', 'data-no-i18n': '' }, p.body)),
+      el('div', { class: 'row' }, r.token_set ? send : null,
+        el('a', { class: 'btn', href: p.url, target: '_blank', rel: 'noopener' }, 'Open on GitHub'), dismiss)));
+  }
+  if (r.sent.length) {
+    list.append(el('p', { class: 'muted small' }, tr('Sent reports')),
+      el('ul', { class: 'report-sent' }, r.sent.map((x) => el('li', {},
+        el('a', { href: x.url, target: '_blank', rel: 'noopener', 'data-no-i18n': '' }, `#${x.number}`), ' ', el('span', { class: 'muted small', 'data-no-i18n': '' }, x.title)))));
+  }
+}
+$('#reportTokenSave').onclick = () => {
+  const input = $('#reportToken');
+  loadReports(api('/api/reports/token', { method: 'POST', body: { token: input.value } }).then((r) => { input.value = ''; return r; }));
+};
+$('#reportTokenCheck').onclick = async () => {
+  const out = $('#reportTokenInfo');
+  out.textContent = tr('Checking…');
+  try {
+    const r = await api('/api/reports/check', { method: 'POST' });
+    out.textContent = tr('Access works ✓ (repository {repo})', { repo: r.repo });
+  } catch (e) { out.textContent = tr('Check failed: {reason}', { reason: e.message }); }
+};
+$('#reportSample').onclick = () => loadReports(api('/api/reports/sample', { method: 'POST' }));
+
 /* ---------------- Profiles ----------------
    Each profile has its own chats, documents, notes, knowledge base, mail, calendar and preferences
    (see App.view). Installation settings (providers, agent, tools, password …) belong to admin profiles. */
@@ -3240,6 +3291,9 @@ async function refreshAll(poll = false) {
   renderKbToggle(); renderWebToggle();
   renderAgentToggle();
   renderMic();
+  if (state.settings.reports_pending && state.settings.error_reports !== 'off') {
+    toast(tr('{n} error report(s) waiting: Settings → Error reports', { n: state.settings.reports_pending }));
+  }
   renderPersonaSelect();
   await Promise.all([refreshAll(), loadSessions()]);
   renderMessages();

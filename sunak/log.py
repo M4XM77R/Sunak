@@ -16,6 +16,7 @@ import re
 import sys
 import threading
 import time
+from collections import deque
 from pathlib import Path
 
 LOG_NAME = "sunak.log"
@@ -90,6 +91,30 @@ class _SafeFileHandler(logging.handlers.RotatingFileHandler):
         return stream
 
 
+class _Ring(logging.Handler):
+    """The last log lines in memory (for error reports, see reports.py)."""
+
+    def __init__(self, size=80):
+        super().__init__()
+        self.lines = deque(maxlen=size)
+        self.setFormatter(_Formatter())
+
+    def emit(self, record):
+        try:
+            self.lines.append(self.format(record).split("\n")[0])  # one line per event, no traceback
+        except Exception:  # noqa: BLE001 - logging must never break the program
+            pass
+
+
+_ring = _Ring()
+_ring._sunak = True
+
+
+def recent(n=30):
+    """The last `n` log lines since Sunak started (secrets masked), oldest first."""
+    return list(_ring.lines)[-n:]
+
+
 def get(part):
     """The logger of one part of Sunak: log.get("queue") → sunak.queue."""
     return logging.getLogger(f"{ROOT}.{part}")
@@ -112,6 +137,7 @@ def setup(data_dir, debug=None, stream=None, max_bytes=MAX_BYTES, backups=BACKUP
         if getattr(h, "_sunak", False):
             root.removeHandler(h)
             h.close()
+    _ring.lines.clear()
     root.setLevel(logging.DEBUG if debug else logging.INFO)
     root.propagate = False
     out = stream or sys.stderr
@@ -119,6 +145,7 @@ def setup(data_dir, debug=None, stream=None, max_bytes=MAX_BYTES, backups=BACKUP
     console.setFormatter(_Formatter(color=bool(getattr(out, "isatty", lambda: False)()) and not os.environ.get("NO_COLOR")))
     console._sunak = True
     root.addHandler(console)
+    root.addHandler(_ring)
     path = None
     try:
         log_dir(data_dir).mkdir(parents=True, exist_ok=True)
