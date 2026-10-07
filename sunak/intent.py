@@ -29,6 +29,10 @@ DRAW_START = re.compile(
 REQUEST = re.compile(r"\b(?:ich (?:hätte|brauche|möchte|will|wünsche|wäre|würde)|zeig\w*|gib|hol|show|give|get|"
                      r"i (?:want|need|would like|d like)|bitte|please)\b", F)
 LEAD_NOUN = re.compile(rf"^\W*{NOUN}\s*(?:[:\-–,]|\s(?:von|vom|of|mit|with|showing)\b)", F)
+# short forms without a verb: "a picture of: a snowy landscape", "Bild von einem Fuchs", "image of a cat"
+LEAD_SHORT = re.compile(rf"^\W*(?:(?:a|an|the|ein|eine|einen|das|ein)\s+)?{NOUN}\s*(?:[:\-–]|\s(?:von|vom|of|mit|with|showing)\b)\W*\w[\s\S]{{2,}}$", F)
+# a direct order to draw: "draw a cat", "zeichne einen Drachen", "mal mir eine Katze"
+DRAW_DIRECT = re.compile(r"^\W*(?:(?:bitte|please)\s+)?(?:(?:draw|paint|sketch)\s+(?:me\s+)?(?:an?|the|some)\b|zeichne\w*\s+(?:mir\s+)?(?:ein\w*|den|die|das)\b|skizzier\w*\s+(?:mir\s+)?ein\w*|male?\s+mir\b|mal\s+mir\b)", F)
 MAX_LENGTH = 600
 
 
@@ -43,6 +47,8 @@ def classify(text):
     unsure = QUESTION.search(t) or TECH.search(t) or FIRST_PERSON.search(t)
     if STRONG.search(t):
         return "maybe" if unsure else "yes"
+    if not unsure and (LEAD_SHORT.search(t) or DRAW_DIRECT.search(t)):
+        return "yes"
     if AFTER.search(t) and POLITE.search(t) and not unsure:  # "Kannst du ein Bild von einem Hund generieren?"
         return "yes"
     if draw or AFTER.search(t) or LEAD_NOUN.search(t) or (len(t) < 200 and HAS_NOUN.search(t) and REQUEST.search(t)):
@@ -66,7 +72,7 @@ def parse(answer):
     return bool(re.match(r"^\W*(?:yes|ja|oui|sí|si|true|1)\b", (answer or "").strip(), F))
 
 
-_SUBJECT = re.compile(rf"\b{NOUN}\s*(?:von|vom|mit|of|showing|with|:|,|-)?\s+([\s\S]{{3,}})$", F)
+_SUBJECT = re.compile(rf"\b{NOUN}\s*(?:(?:von|vom|mit|of|showing|with)\b)?\s*[:,\-–]?\s+([\s\S]{{3,}})$", F)
 _TAIL = re.compile(r"[\s,.!?]*\b(?:generier\w*|erzeug\w*|erstell\w*|mal\w*|zeichn\w*|generate|create|make|draw|paint|bitte|please)[\s.!?]*$", F)
 _HEAD = re.compile(r"^\W*(?:(?:bitte|please|kannst du(?: mir)?|can you)\s+)?(?:mal(?:e|st)?|zeichn\w*|skizzier\w*|draw|paint|sketch)\s+(?:mir\s+|me\s+)?", F)
 
