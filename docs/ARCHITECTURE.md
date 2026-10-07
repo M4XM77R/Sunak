@@ -15,7 +15,7 @@ Browser (sunak/static)  ──HTTP/JSON, NDJSON-Streams──▶  sunak/server.p
 
 | Datei | Aufgabe |
 |---|---|
-| `sunak/__main__.py` | Kommandozeile (`python -m sunak`): öffnet ein bereits laufendes Sunak im Browser, sonst sucht es einen freien Port, startet den Server und öffnet den Browser. Befehle `stop`, `status`, `gpu`, `autostart on\|off\|status`, `shortcut`, `version`, `uninstall`, `help`. Alle stehen mit Gruppe, Kurztext und Beispiel in `COMMANDS`; daraus entstehen `sunak -h`, `sunak <befehl> -h` und der Hinweis „Did you mean …?“ bei Tippfehlern. Farben nur im Terminal und ohne `NO_COLOR` |
+| `sunak/__main__.py` | Kommandozeile (`python -m sunak`): öffnet ein bereits laufendes Sunak im Browser, sonst sucht es einen freien Port, startet den Server und öffnet den Browser. Befehle `status`, `stop`, `update`, `version`, `gpu`, `mail-selftest`, `autostart on\|off\|status`, `shortcut`, `uninstall`, `help`; Startoptionen `--port`, `--host`, `--data-dir`, `--no-browser`, `--version`. Alle stehen mit Gruppe, Kurztext und Beispiel in `COMMANDS`; daraus entstehen `sunak -h`, `sunak <befehl> -h` und der Hinweis „Did you mean …?“ bei Tippfehlern. Farben nur im Terminal und ohne `NO_COLOR` |
 | `sunak/gpu.py` | GPU-Erkennung ohne Zusatzpakete: `nvidia-smi`, `/sys/class/drm` (Linux), Registry (Windows), Apple Silicon; Auswertung von Ollamas `/api/ps` und Warnung bei CPU-Betrieb |
 | `sunak/updates.py` | Update-Prüfung per git (neue Commits im Klon, aus dem installiert wurde) und Hilfsprozess für den Update-Knopf: wartet auf das Ende des Servers, installiert das Update, startet Sunak neu |
 | `sunak/desktop.py` | Desktop-Integration: laufendes Sunak erkennen (`/api/status` mit `Server: Sunak/…`) und beenden, Autostart-Datei und Desktop-Icon je Betriebssystem |
@@ -40,9 +40,8 @@ Browser (sunak/static)  ──HTTP/JSON, NDJSON-Streams──▶  sunak/server.p
 | `sunak/knowledge.py` | Wissensbasis: Abschnitte bilden, suchen, passende Abschnitte für den Chat auswählen |
 | `sunak/memory.py` | Automatisches Gedächtnis: Fakten über den Nutzer aus dem letzten Austausch, ohne Geheimnisse und Duplikate |
 | `sunak/static/` | Oberfläche: `index.html`, `app.js` (gesamte Logik), `app.css` (inklusive Themes), `theme.js` (setzt das Theme vor dem ersten Zeichnen), `icons.js` (eigene Icons), `i18n.js` und `lang-de.js` (Sprachen), `login.html`, Icon, PWA-Manifest |
-| `tests/test_server.py` | End-to-End-Tests gegen simulierte Backends |
-| `tests/test_mail.py` | E-Mail gegen simulierte IMAP- und SMTP-Server, dazu der Selbsttest |
-| `tests/test_extract.py` | Tests für Textauslese und Wissensbasis (die Testdateien werden im Test erzeugt) |
+| `tests/` | Tests, eine Datei je Bereich (siehe Abschnitt Tests) |
+| `.github/workflows/test.yml` | CI: die Tests auf Linux, macOS und Windows bei jedem Push und Pull Request |
 | `install.sh`, `install.ps1` | Installer für macOS/Linux und Windows |
 | `sunak/uninstall.py`, `uninstall.sh`, `uninstall.ps1` | Deinstallation (`sunak uninstall`); die Skripte finden das installierte Sunak oder laden es herunter und rufen dasselbe Python-Modul auf |
 | `Dockerfile`, `docker-compose*.yml` | Container mit Ollama: nur CPU (`docker-compose.yml`), NVIDIA (`+ docker-compose.gpu.yml`) oder AMD/ROCm (`+ docker-compose.amd.yml`) |
@@ -81,6 +80,7 @@ Alle Endpunkte liegen unter `/api/`. Schreibende Anfragen brauchen den Header `X
 | `POST /api/models/pull` | Ollama-Modell herunterladen; Fortschritt aller Layer summiert | NDJSON `progress` (`completed`, `total` in Bytes) |
 | `POST /api/models/delete` | Ollama-Modell löschen | JSON |
 | `GET`/`POST /api/sessions`, `GET`/`PATCH`/`DELETE /api/sessions/<id>` | Chats (`use_kb`, `use_web`, `persona`, Titel, Modell, Systemprompt) | JSON |
+| `POST /api/sessions/<id>/remember` | Automatisches Gedächtnis ohne Body: das Modell des Chats zieht dauerhafte Fakten aus der letzten Frage und Antwort; Antwort `{added: [Notizen]}` (bei Modellfehler zusätzlich `error`) (siehe Datenfluss, Schritt 7) | JSON |
 | `GET /api/search?q=` | Chats, deren Titel oder Nachrichten alle Wörter enthalten (ohne Denkprozess), mit Textausschnitt und `message_id` | JSON |
 | `GET /api/sessions/<id>/export?format=md\|json` | Chat als Download; Markdown ohne Denkprozess | Datei |
 | `GET /api/export` | Backup aller Chats, Dokumente, Notizen, Wissensbasis und Einstellungen, ohne API-Keys und Passwort | Datei (JSON) |
@@ -286,7 +286,7 @@ Hochgeladene Dateien gehen den Weg `extract.extract_text` → `knowledge.chunk` 
 
 - **Prüfung** (`sunak/updates.py`, `App.check_updates`): beim Start und danach höchstens alle 6 Stunden (nach einem Fehlschlag erneut nach 30 Minuten) läuft im Hintergrund `git fetch` im Klon, aus dem Sunak stammt: der App-Ordner selbst, wenn er ein Git-Klon ist, sonst der vom Installer gemerkte Klon (`~/.sunak/source`, Windows `source.txt`). Gezählt werden die Commits zwischen der installierten Version und dem Upstream-Branch (`git rev-list --count <installiert>..@{u}`). Die installierte Version schreibt der Installer nach `.commit` im App-Ordner, daher fällt auch ein Klon auf, der schon gepullt, aber noch nicht neu installiert wurde.
 - **Still scheitern:** ohne git, ohne Netz, ohne Klon, ohne Upstream-Branch oder bei Passwortabfragen (`GIT_TERMINAL_PROMPT=0`, kein Terminal, unter Windows `GCM_INTERACTIVE=never`) gibt es einfach keinen Hinweis.
-- **Oberfläche:** `GET /api/update` beim Laden, nach 20 Sekunden und dann stündlich. Gibt es neue Commits, erscheint oben in der Seitenleiste „Update available“ mit dem Knopf **Update**. Abschaltbar in Settings → Updates (`check_updates`).
+- **Oberfläche:** `GET /api/update` beim Laden, nach 20 Sekunden und dann stündlich. Gibt es neue Commits, erscheint oben in der Seitenleiste „Update available“ mit dem Knopf **Update**. Abschaltbar in Settings → Updates (`check_updates`); der Knopf „Check for updates now“ dort ruft `POST /api/update/check` und nennt bei einem Fehlschlag den Grund.
 - **Update-Knopf:** `POST /api/update` startet `python -m sunak.updates` als eigenständigen Prozess und beendet den Server. Der Hilfsprozess wartet, bis der alte Server weg ist, führt `git pull --ff-only` (App-Ordner ist ein Klon) oder den installierten Befehl `sunak update` aus, schreibt das Ergebnis nach `update-result.json` im Datenordner, protokolliert nach `update.log` und startet Sunak mit gleichem Host, Port und Datenordner neu. Die Seite erkennt den Neustart an der geänderten `instance` in `/api/status`, lädt neu und zeigt das Ergebnis einmal an. Ohne Klick wird nie etwas installiert.
 
 ## Datenhaltung
@@ -300,7 +300,7 @@ Alle Daten liegen in einer SQLite-Datei: `~/.sunak/sunak.db`, der Ordner lässt 
 | `kb_files`, `kb_chunks`, `kb_fts` | Wissensbasis: Dateien, ihre Textabschnitte und der Volltextindex |
 | `documents` | Markdown-Dokumente |
 | `notes` | Notizen; `is_memory = 1` bedeutet „im Gedächtnis“, `source` ist die Chat-ID, wenn Sunak sie selbst angelegt hat |
-| `settings` | Schlüssel-Wert-Paare als JSON: `prefs` (u. a. Theme, Sprache, Bildgenerierung), `providers`, `personas` (fehlt der Eintrag, gelten `DEFAULT_PERSONAS`), `mail_accounts`, `calendars`, `mcp_servers`, `password_hash`, `secret` |
+| `settings` | Schlüssel-Wert-Paare als JSON: `prefs` (u. a. Theme, Sprache, Bildgenerierung), `providers`, `personas` (fehlt der Eintrag, gelten `DEFAULT_PERSONAS`), `mail_accounts`, `calendars`, `mcp_servers`, `profiles` (nur Hauptdatenbank), `lan_access`, `password_hash`, `secret` |
 | `calendar_events` | Sunaks eigener Kalender: `uid`, iCalendar-Text, Änderungszeit |
 
 Jedes weitere Profil hat eine eigene Datei mit denselben Tabellen unter `profiles/<id>/` (siehe Profile).
@@ -380,9 +380,9 @@ Der Quelltext ist englisch. Jede weitere Sprache ist eine Datei `static/lang-<co
 
 ## Konfiguration
 
-Installer-Optionen: `install.sh --yes --no-ollama --no-start --no-shortcut --autostart`; unter Windows entsprechend `SUNAK_YES`, `SUNAK_NO_START`, `SUNAK_NO_SHORTCUT`, `SUNAK_AUTOSTART`, `SUNAK_NO_OLLAMA` als Umgebungsvariablen.
+Installer-Optionen: `install.sh --yes --no-ollama --no-start --no-shortcut --autostart`; unter Windows entsprechend die Umgebungsvariablen `SUNAK_YES`, `SUNAK_NO_OLLAMA`, `SUNAK_NO_START`, `SUNAK_NO_SHORTCUT`, `SUNAK_AUTOSTART`, jeweils auf `1` gesetzt. Beide kennen außerdem `SUNAK_HOME` (Ordner des Installers), `SUNAK_REPO` und `SUNAK_BRANCH` (Quelle des Updates).
 
-Umgebungsvariablen: `SUNAK_HOST`, `SUNAK_PORT`, `SUNAK_DATA`, `SUNAK_PASSWORD`, `SUNAK_NO_BROWSER`, `SUNAK_DEBUG` (Zugriffslog), `OLLAMA_BASE_URL`, `SEARXNG_URL`. Alles Weitere wird in der Oberfläche eingestellt und in der Datenbank gespeichert.
+Umgebungsvariablen von Sunak selbst: `SUNAK_HOST`, `SUNAK_PORT`, `SUNAK_DATA`, `SUNAK_PASSWORD`, `SUNAK_NO_BROWSER`, `SUNAK_DEBUG` (Zugriffslog), `SUNAK_ALLOWED_HOSTS` (weitere erlaubte Hostnamen, kommagetrennt, `*` für alle; Schutz gegen DNS-Rebinding in `Handler.host_allowed`), `SUNAK_GPU` (nur Docker, `nvidia` oder `amd`), `OLLAMA_BASE_URL`, `ANTHROPIC_API_KEY`, `SEARXNG_URL`, `NO_COLOR`. Docker Compose liest zusätzlich `APP_BIND` (Standard `127.0.0.1`) und `APP_PORT` (Standard `7000`). Alles Weitere wird in der Oberfläche eingestellt und in der Datenbank gespeichert.
 
 ## Tests
 
@@ -390,7 +390,29 @@ Umgebungsvariablen: `SUNAK_HOST`, `SUNAK_PORT`, `SUNAK_DATA`, `SUNAK_PASSWORD`, 
 python3 -m unittest discover tests -v
 ```
 
-Die Tests starten Sunak und einen simulierten Server, der die Ollama-, Anthropic- und OpenAI-API nachbildet. Abgedeckt sind Chat, Spracheingabe (simulierter Whisper-Server beider Arten: Felder und Datei im Multipart, Modellname, Adressformen, Prüfung der Einstellungen, keine WAV-Datei, kaputte Daten, unerwartete Antwort, Server nicht erreichbar), Sprachen (alle Texte der Seiten und `tr()`-Aufrufe übersetzt, Platzhalter, keine doppelte Übersetzung, Prüfung der Einstellung), Handy-Zugriff (nur mit Passwort, zweiter Server erreichbar und mit Login, Passwort entfernen schließt ihn, Wiederherstellen beim Start, QR-Matrizen gleich der Referenzbibliothek), Web-Suche im Chat (Schalter pro Chat, Quellen im Prompt und in der Antwort, umformulierte Folgefrage, Suche offline oder ohne lesbare Seiten), Bilder (Format je Backend, Dateisignatur, Größen- und Anzahlgrenze, Modell ohne Bildverständnis wird vor dem Speichern abgelehnt, nur die letzten drei Bildnachrichten, Bearbeiten behält Bilder, Aufräumen, Agent-Modus lehnt ab), Personas, Robustheit (feindliche PDFs mit überlappenden Objekt-Offsets oder ohne `endstream`, falsche Datentypen in Anfragen, Login bleibt nach Neustart mit `SUNAK_PASSWORD` gültig, API-Keys werden bei Weiterleitung auf einen anderen Host nicht mitgeschickt, Beenden über einen Reverse-Proxy nur angemeldet), Installer (`install.ps1` nur ASCII, damit Windows PowerShell 5.1 es lesen kann; `sunak update` bleibt im gewählten `SUNAK_HOME`), Deinstallation (Programm weg, Daten bleiben ohne `--purge`, Fragen stehen auf „behalten“, zweiter Lauf harmlos, fremde Dateien gleichen Namens bleiben, nie der Home-Ordner, Docker-Container einzeln nach Ja, Ollama nur nach Ja oder `--with-ollama` mit den Befehlen je Installationsweg, Modelle nur nach Ja oder `--with-models`, Windows-PATH per simulierter Registry), Themes (gleiche Namen in CSS, JavaScript und Server, Kontrast aller Farben, Prüfung der Einstellungen), GPU-Erkennung (simulierte `nvidia-smi`-Ausgabe, sysfs-Bäume, Windows-Registry, Apple Silicon, `/api/ps`, Warnung, Katalog und Empfehlung), Update-Prüfung (echte Git-Repositories mit lokalem Remote, installierte Kopie, Fehlerfälle, Update-Knopf), Kommandozeile (bereits laufend, `status`, `stop`) und Autostart-Dateien, E-Mail (simulierter IMAP- und SMTP-Server: Konto anlegen ohne Passwort-Rückgabe, Verbindungstest, Nicht-ASCII-Passwort, Ordner mit UTF-7-Namen, Liste, Suche mit Umlauten, nur lesender Zugriff, HTML-Mail, Anhang, Senden mit Bcc und Kopie in Gesendet, Entwurf, KI-Antwort, eigene und weitergeleitete Anhänge samt Grenzen, Verschieben, Löschen über den Papierkorb und endgültig, Server ohne `MOVE`/`UIDPLUS`, neue Mail, Selbsttest von Anfang bis Aufräumen), Chat-Suche und Export, Wissensbasis (Hochladen, Suche, Auszüge im Prompt, Quellen), Textauslese aus PDF, Word, OpenDocument und PowerPoint, Datenbank-Migration, Neu generieren, Denkprozess, Gedächtnis, Compare, Research (mit gestubbter Suche), Dokumente, Modell-Download mit Fortschritt, Ollama-Status und Katalog, Claude (Streaming, Header, Denkprozess, Ablehnung, falscher Key, Key-Maskierung), Agent-Modus (Ordnergrenze mit `..`, absoluten Pfaden und Symlinks, verbotene Ordner, Lesen, Suchen, Bearbeiten mit Diff und Windows-Zeilenenden, Befehle mit Zeitlimit, Ausgabelimit und Abbruch, Tool-Calling mit Claude, Ollama und OpenAI-kompatibel, Textprotokoll, Freigeben, Ablehnen, „für diesen Chat“, Stop, Zugriff von anderen Geräten), Kalender (Wiederholungen mit Ausnahmen und verschobenen Terminen über die Sommerzeitumstellung, Zeitzone aus der Datenbank, aus Windows-Namen und aus `VTIMEZONE` gleich, Schaltjahr, Monatsende, n-ter Wochentag, `UNTIL`, kaputte Termine, Schreiben mit Zeilenumbruch und Sonderzeichen, Ändern erhält Erinnerungen und Gäste, simulierter CalDAV-Server mit Weiterleitung, Suche, Zeitraum, ETags, Konflikt, Löschen, falsches Passwort, Passwort des Mail-Kontos, fremde Termin-Links abgelehnt, ICS-Abo nur lesbar, Termin aus der Antwort eines simulierten Modells), MCP-Werkzeuge (simulierter stdio-Server als Python-Programm und simulierter HTTP-Server mit JSON und Server-Sent Events: Werkzeuglisten über mehrere Seiten, Aufrufe, `isError`, Umgebungsvariablen, Token und Session-Header, Stop, Absturz und Neustart, Einstellungen ohne Geheimnisse im Browser, Geheimnisse nur bei gleichem Befehl behalten, Test-Knopf, Chat mit Freigabe pro Werkzeug, Ablehnen, fehlende Argumente, zusammen mit dem Agent-Modus, Zugriff von anderen Geräten), Login, CSRF-Schutz und Pfad-Traversal. GitHub Actions führt sie auf Linux, macOS und Windows aus (`.github/workflows/test.yml`).
+Die Tests starten Sunak und simulierte Server, die die Ollama-, Anthropic- und OpenAI-API (sowie IMAP, SMTP, CalDAV, MCP, Whisper, Automatic1111, ComfyUI und GitHub) nachbilden; nichts geht ins echte Netz. Installer lassen sich nur statisch prüfen. GitHub Actions führt alles auf Linux, macOS und Windows aus (`.github/workflows/test.yml`).
+
+| Datei | Prüft |
+|---|---|
+| `test_server.py` | Ende-zu-Ende: Chat, Streaming, Denkprozess, Neu generieren, Gedächtnis-Notizen, Compare, Research, Dokumente, Modell-Download, Ollama-Status und Katalog, Claude (Streaming, Header, Ablehnung, Key-Maskierung), Chat-Suche und Export, Wissensbasis, Datenbank-Migration, Login, CSRF-Schutz, Pfad-Traversal |
+| `test_robustness.py` | Feindliche PDFs, falsche Datentypen in Anfragen, Login nach Neustart mit `SUNAK_PASSWORD`, API-Keys bei Weiterleitung auf andere Hosts, Beenden über Reverse-Proxy |
+| `test_extract.py` | Textauslese aus PDF, Word, OpenDocument, PowerPoint und die Wissensbasis (Testdateien entstehen im Test) |
+| `test_agent.py` | Agent-Modus: Ordnergrenze (`..`, absolute Pfade, Symlinks, verbotene Ordner), Werkzeuge, Befehle mit Zeit- und Ausgabelimit, Tool-Calling je Backend, Textprotokoll, Freigaben, Stop |
+| `test_mcp.py` | MCP: simulierter stdio- und HTTP-Server, Werkzeuglisten, Aufrufe, Geheimnisse, Absturz und Neustart, Freigaben im Chat |
+| `test_mail.py` | E-Mail gegen simulierten IMAP- und SMTP-Server (auch ohne `MOVE`/`UIDPLUS`), Anhänge, Verschieben, Löschen, neue Mail, Selbsttest |
+| `test_calendar.py` | iCalendar, Wiederholungen über die Sommerzeit, Zeitzonen, Schreiben, simulierter CalDAV-Server, ICS-Abos, Termin aus Text |
+| `test_memory.py` | Automatisches Gedächtnis: Fakten, Geheimnisse und Duplikate, ausdrückliches „merk dir“ |
+| `test_profiles.py` | Profile: Auswahl mit PIN, getrennte Daten, eigene Einstellungen, Admin-Rechte |
+| `test_vision.py` | Bilder im Chat: Prüfungen, Ablage, Format je Backend, Modelle ohne Bildverständnis |
+| `test_websearch.py` | Web-Suche im Chat: Schalter, Quellen, umformulierte Folgefrage, Fehlerfälle |
+| `test_imagegen.py`, `test_sdcpp.py` | Bildgenerierung (Automatic1111, ComfyUI, eigenes Bildprogramm) und Modellsuche gegen simulierte Server |
+| `test_speech.py` | Spracheingabe an einen simulierten Whisper-Server beider Arten |
+| `test_gpu.py` | GPU-Erkennung mit simulierter Ausgabe, sysfs-Bäumen, Registry, Warnung, Empfehlung |
+| `test_lan.py` | Handy-Zugriff (nur mit Passwort, zweiter Server, QR-Matrizen) |
+| `test_themes.py`, `test_i18n.py`, `test_icons.py` | Oberfläche: Themes (gleiche Namen, Kontrast), Sprachen (alle Texte übersetzt), Icons ohne Emojis |
+| `test_cli.py`, `test_desktop.py` | Hilfe und Tippfehler-Hinweise, `status`, `stop`, Autostart-Dateien |
+| `test_updates.py` | Update-Prüfung und Update-Knopf mit echten Git-Repositories |
+| `test_installers.py`, `test_uninstall.py` | Installer (statisch) und `sunak uninstall` |
 
 ## Erweitern
 
