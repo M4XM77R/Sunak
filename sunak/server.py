@@ -28,8 +28,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlparse
 
-from . import (__version__, agent, cal, extract, gpu, imagegen, images, intent, jobqueue, knowledge, log, mail, mcp, memory, modelsearch,
-               ollama, providers, qr, reports, research, sdcpp, speech, updates, usage)
+from . import (__version__, cal, extract, gpu, imagegen, images, intent, jobqueue, knowledge, log, mail, mcp, memory, modelsearch,
+               ollama, providers, qr, reports, research, sdcpp, speech, toolrun, updates, usage)
 from .db import DB, new_id
 
 log_http = log.get("http")
@@ -50,9 +50,6 @@ DEFAULT_SETTINGS = {
     "theme": "dark",
     "language": "",     # "" = the browser's language; else one of LANGUAGES
     "check_updates": True,
-    "agent_enabled": False,  # agent mode (agentic coding): off until the user switches it on
-    "agent_timeout": 120,    # seconds a command of the agent may run
-    "agent_max_steps": 30,   # tool calls per answer
     "speech_input": "local", # 🎤: "local" (Whisper server or the browser's on-device recognition), "browser", "off"
     "whisper_url": "",       # local Whisper server for speech input, see speech.py
     "whisper_model": "",     # model name for OpenAI-compatible Whisper servers ("" = whisper-1)
@@ -65,10 +62,10 @@ DEFAULT_SETTINGS = {
     "error_reports": "off",  # unexpected errors as GitHub issues (reports.py): "off", "ask" (the user sends each one), "auto"
     "mail_notify": True,     # 📬 look for new mail every few minutes while Sunak is open, and say so
 }
-INT_PREFS = {"agent_timeout": (5, 3600), "agent_max_steps": (1, 200), "image_gen_size": (512, 1024),
+INT_PREFS = {"image_gen_size": (512, 1024),
              "image_gen_steps": (1, imagegen.MAX_STEPS)}  # allowed ranges
 # Settings of the whole installation (only admin profiles change them); all other prefs are per profile.
-GLOBAL_PREFS = {"check_updates", "agent_enabled", "agent_timeout", "agent_max_steps", "speech_input", "whisper_url", "whisper_model",
+GLOBAL_PREFS = {"check_updates", "speech_input", "whisper_url", "whisper_model",
                 "image_gen", "image_gen_url", "image_gen_model", "image_gen_size", "image_gen_steps", "error_reports", "ai_image_detect"}
 GLOBAL_KEYS = GLOBAL_PREFS | {"providers", "mcp_servers", "password"}
 MAX_PROFILES = 20
@@ -251,7 +248,7 @@ class App:
         self.update = {"behind": None, "checked": 0.0}
         self._update_lock = threading.Lock()
         self._checking = False
-        self.agents = agent.Registry()
+        self.tool_runs = toolrun.Registry()
         self.reports = reports.Reports(self)
         if self.reports.token():
             log.add_secret(self.reports.token())
@@ -325,7 +322,7 @@ class App:
         main_prefs = self.main.get_setting("prefs", {})
         own = main_prefs if self.db is self.main else self.db.get_setting("prefs", {})
         s.update({k: v for k, v in main_prefs.items() if k in GLOBAL_PREFS})
-        s.update({k: v for k, v in own.items() if k not in GLOBAL_PREFS})
+        s.update({k: v for k, v in own.items() if k not in GLOBAL_PREFS and k in DEFAULT_SETTINGS})  # old keys are ignored
         stored = self.main.get_setting("providers")
         s["providers"] = providers.default_providers() if stored is None else stored  # [] = all removed
         personas = self.db.get_setting("personas")
@@ -679,7 +676,7 @@ class App:
 
 class ProfileView(App):
     """The App for one profile other than the main one: its own database and image folder, everything else
-    (settings of the installation, running agents, MCP servers, phone access) shared with the root App."""
+    (settings of the installation, running tool answers, MCP servers, phone access) shared with the root App."""
     _OWN = ("root", "profile", "db", "user_dir")
 
     def __init__(self, root, pid, db, user_dir):  # noqa: super().__init__ is not called on purpose
@@ -738,7 +735,7 @@ def file_name(title, ext):
 
 
 # What a model request is counted as (usage.py), by the path of the request that made it.
-USAGE_KINDS = ((r"/api/chat", "chat"), (r"/api/agent", "agent"), (r"/api/research", "research"), (r"/api/compare", "compare"),
+USAGE_KINDS = ((r"/api/chat", "chat"), (r"/api/tools", "tools"), (r"/api/research", "research"), (r"/api/compare", "compare"),
                (r"/api/documents/ai", "document"), (r"/api/mail/ai", "mail"), (r"/api/calendar/parse", "calendar"),
                (r"/api/imagine/intent", "image_check"), (r"/api/imagine", "image_prompt"),
                (rf"/api/sessions/[^/]+/remember", "memory"))
@@ -1360,7 +1357,7 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def prepare_chat(self, d, allow_images=False):
-        """Shared start of /api/chat and /api/agent: check the request, apply truncate_from, store the
+        """Shared start of /api/chat and /api/tools: check the request, apply truncate_from, store the
         user message (with new `images` [{name, data}] and kept `image_refs`), update
         model/persona/use_kb/title of the chat. Returns (session, provider, model, model id, title),
         or None when an error was already sent."""
@@ -1382,7 +1379,7 @@ class Handler(BaseHTTPRequestHandler):
         refs = images.existing(self.app.user_dir, d.get("image_refs"))
         if d.get("images") or refs:
             if not allow_images:
-                raise ValueError("Agent mode and tools (MCP) cannot look at images yet. Switch them off to ask about the image.")
+                raise ValueError("Tools (MCP) cannot look at images yet. Switch them off to ask about the image.")
             if self.app.vision(prov, model) is False:
                 raise ValueError(f"{model} cannot see images. Pick a model with vision: on the Models page e.g. "
                                  "qwen2.5vl, gemma3 or llama3.2-vision, or Claude.")
@@ -1524,81 +1521,60 @@ class Handler(BaseHTTPRequestHandler):
         self.emit({"type": "web", "query": query, "sources": sources})
         return research.web_context(query, pages, time.strftime("%Y-%m-%d")), {"query": query, "sources": sources}
 
-    # agent mode -------------------------------------------------------
-    def agent_allowed(self):
-        """Agent mode must be switched on, and from other devices it needs a password: it can change
-        files and run commands on this computer. Sends the error and returns False otherwise."""
-        if not self.app.settings()["agent_enabled"]:
-            self.error("Agent mode is off. Switch it on in Settings → Agent.", 403)
-            return False
-        if not self.is_direct_local() and not self.app.auth_required():
-            self.error("Agent mode from another device needs a password. Set one in Settings → Security.", 403)
-            return False
-        return True
-
+    # tools (MCP) in the chat ------------------------------------------
     def tools_allowed(self):
-        """MCP servers run programs on this computer: from other devices they need a password, like agent
-        mode. Sends the error and returns False otherwise."""
+        """MCP servers run programs on this computer: from other devices they need a password.
+        Sends the error and returns False otherwise."""
         if not self.is_direct_local() and not self.app.auth_required():
             self.error("Tools (MCP) from another device need a password. Set one in Settings → Security.", 403)
             return False
         return True
 
-    def agent_chat(self):
-        """POST /api/agent: like /api/chat, but the model works with tools (see sunak/agent.py): in `folder`
-        (agent mode), with the tools of the enabled MCP servers (`mcp`: true), or both.
+    def tools_chat(self):
+        """POST /api/tools: like /api/chat, but the model works with the tools of the enabled MCP servers
+        (see sunak/toolrun.py).
 
-        Events: start (with `run`), think, text, step, confirm (answer with /api/agent/confirm),
-        step_done, notice, ping, done | error. The answer is stored with its steps in meta.agent."""
+        Events: start (with `run`), think, text, step, confirm (answer with /api/tools/confirm),
+        step_done, notice, ping, done | error. The answer is stored with its steps in meta.tools."""
         d = self.body()
-        use_mcp = self.flag(d, "mcp")
-        if d.get("folder") or not use_mcp:
-            if not self.agent_allowed():
-                return
-            folder = agent.check_folder(d.get("folder"), self.app.data_dir)
-        else:
-            if not self.tools_allowed():
-                return
-            folder = ""
-            if not any(c.get("enabled") for c in self.app.mcp_servers()):
-                raise ValueError("No MCP server is switched on. Add one in Settings → Tools (MCP).")
+        if not self.tools_allowed():
+            return
+        if not any(c.get("enabled") for c in self.app.mcp_servers()):
+            raise ValueError("No MCP server is switched on. Add one in Settings → Tools (MCP).")
         prepared = self.prepare_chat(d)
         if not prepared:
             return
         session, prov, model, model_id, title = prepared
-        sid, db, s = session["id"], self.app.db, self.app.settings()
-        allowed = self.app.agents.allowed(sid, folder)
+        sid, db = session["id"], self.app.db
+        allowed = self.app.tool_runs.allowed(sid)
 
         def save():
             if run and run.parts:
                 try:
-                    db.add_message(sid, "assistant", run.text(), model_id, {"agent": {"folder": folder, "parts": run.parts}})
+                    db.add_message(sid, "assistant", run.text(), model_id, {"tools": {"parts": run.parts}})
                 except sqlite3.IntegrityError:
                     pass
 
         run = None
-        run_id = agent.new_run_id()
+        run_id = toolrun.new_run_id()
         try:
             self.start_stream()
-            self.emit({"type": "start", "title": title, "model": model_id, "run": run_id, "folder": folder,
-                       "allowed": sorted(allowed)})
-            tools = []
-            if use_mcp:
-                tools, errors = self.app.mcp.tools(
-                    self.app.mcp_servers(), lambda name: self.emit({"type": "notice", "t": f"Starting MCP server {name} …"}))
-                for name, err in errors.items():
-                    self.emit({"type": "notice", "t": f"MCP server {name}: {err}"})
-                if not tools and not folder:
-                    return self.emit({"type": "error", "error": "None of the MCP servers is available."})
-            run = agent.AgentRun(prov, model, self.app.build_messages(session, session["messages"]), folder, self.emit,
-                                 self.app.options(), allowed, s["agent_timeout"], s["agent_max_steps"], tools, run_id)
-            self.app.agents.add(run)
+            self.emit({"type": "start", "title": title, "model": model_id, "run": run_id, "allowed": sorted(allowed)})
+            tools, errors = self.app.mcp.tools(
+                self.app.mcp_servers(), lambda name: self.emit({"type": "notice", "t": f"Starting MCP server {name} …"}))
+            for name, err in errors.items():
+                self.emit({"type": "notice", "t": f"MCP server {name}: {err}"})
+            if not tools:
+                return self.emit({"type": "error", "error": "None of the MCP servers is available."})
+            run = toolrun.ToolRun(prov, model, self.app.build_messages(session, session["messages"]), self.emit,
+                                  self.app.options(), allowed, tools, run_id)
+            self.app.tool_runs.add(run)
             run.run()
         except (BrokenPipeError, ConnectionResetError):  # the browser went away
             if run:
                 run.cancel()
             return save()
-        except agent.Cancelled:
+        except toolrun.Cancelled:
             pass
         except Exception as e:  # noqa: BLE001 - keep what was done and tell the browser
             save()
@@ -1609,33 +1585,33 @@ class Handler(BaseHTTPRequestHandler):
             return self.emit({"type": "error", "error": str(e)})
         finally:
             if run:
-                self.app.agents.remove(run)
+                self.app.tool_runs.remove(run)
         save()
         self.emit({"type": "done", "stopped": run.cancelled.is_set()})
 
-    def agent_confirm(self):
-        """POST /api/agent/confirm: {run, id, decision: allow | always | deny} for a waiting step."""
+    def tools_confirm(self):
+        """POST /api/tools/confirm: {run, id, decision: allow | always | deny} for a waiting step."""
         if not self.tools_allowed():
             return
         d = self.body()
         decision = self.text(d, "decision")
         if decision not in ("allow", "always", "deny"):
             raise ValueError("decision must be allow, always or deny")
-        run = self.app.agents.get(self.text(d, "run"))
+        run = self.app.tool_runs.get(self.text(d, "run"))
         if not run or not run.decide(self.text(d, "id"), decision):
             return self.error("Nothing is waiting for this answer any more", 404)
         self.send_json({"ok": True})
 
-    def agent_cancel(self):
-        """POST /api/agent/cancel: {run} stops the agent (a running command is killed)."""
-        run = self.app.agents.get(self.text(self.body(), "run"))
+    def tools_cancel(self):
+        """POST /api/tools/cancel: {run} stops the answer with tools."""
+        run = self.app.tool_runs.get(self.text(self.body(), "run"))
         if run:
             run.cancel()
         self.send_json({"ok": True})
 
-    def agent_revoke(self):
-        """POST /api/agent/revoke: {session_id} forgets "Allow for this chat" for that chat."""
-        self.app.agents.revoke(self.text(self.body(), "session_id"))
+    def tools_revoke(self):
+        """POST /api/tools/revoke: {session_id} forgets "Allow in this chat" for that chat."""
+        self.app.tool_runs.revoke(self.text(self.body(), "session_id"))
         self.send_json({"ok": True})
 
     def mcp_test(self):
@@ -1851,14 +1827,14 @@ class Handler(BaseHTTPRequestHandler):
         """POST /api/sessions/<id>/remember: after an answer, let the chat's model pick lasting facts about
         the user from the last exchange and store them as memory notes (see memory.py). Runs when memory
         is on and either automatic memory is on or the user asked for something to be remembered; not
-        after agent runs or pictures. Returns {added: [notes]} (and `error` when the model failed)."""
+        after tool runs or pictures. Returns {added: [notes]} (and `error` when the model failed)."""
         db, s = self.app.db, self.app.settings()
         session = db.get_session(sid)
         if not session:
             return self.error("Session not found", 404)
         msgs = session["messages"]
         if (not s["use_memory"] or len(msgs) < 2 or msgs[-1]["role"] != "assistant" or msgs[-2]["role"] != "user"
-                or msgs[-1]["meta"].get("agent") or msgs[-1]["meta"].get("imagegen")):
+                or msgs[-1]["meta"].get("tools") or msgs[-1]["meta"].get("agent") or msgs[-1]["meta"].get("imagegen")):
             return self.send_json({"added": []})
         history = [{"role": m["role"], "content": ATTACHED_RE.sub("", m["content"]).strip() if m["role"] == "user"
                     else m["content"]} for m in msgs[-3:]]
@@ -2632,10 +2608,10 @@ ROUTES = [
     (r"/api/lan", "GET", Handler.lan_get),
     (r"/api/lan", "POST", Handler.lan_set),
     (r"/api/images/([a-f0-9]{16}\.(?:png|jpg|gif|webp))", "GET", Handler.get_image),
-    (r"/api/agent", "POST", Handler.agent_chat),
-    (r"/api/agent/confirm", "POST", Handler.agent_confirm),
-    (r"/api/agent/cancel", "POST", Handler.agent_cancel),
-    (r"/api/agent/revoke", "POST", Handler.agent_revoke),
+    (r"/api/tools", "POST", Handler.tools_chat),
+    (r"/api/tools/confirm", "POST", Handler.tools_confirm),
+    (r"/api/tools/cancel", "POST", Handler.tools_cancel),
+    (r"/api/tools/revoke", "POST", Handler.tools_revoke),
     (r"/api/mcp/test", "POST", Handler.mcp_test),
     (r"/api/compare", "POST", Handler.compare),
     (r"/api/research", "POST", Handler.research),
@@ -2699,7 +2675,7 @@ ADMIN_ONLY = {(m, p) for p, m, _ in ROUTES if (m, p) in {
     ("GET", r"/api/reports"), ("POST", r"/api/reports/token"), ("POST", r"/api/reports/check"), ("POST", r"/api/reports/send"),
     ("POST", r"/api/reports/dismiss"), ("POST", r"/api/reports/sample"),
     ("POST", r"/api/models/pull"), ("POST", r"/api/models/delete"), ("POST", r"/api/ollama/start"),
-    ("POST", r"/api/ollama/install"), ("POST", r"/api/lan"), ("POST", r"/api/agent"), ("POST", r"/api/agent/confirm"),
+    ("POST", r"/api/ollama/install"), ("POST", r"/api/lan"), ("POST", r"/api/tools"), ("POST", r"/api/tools/confirm"),
     ("POST", r"/api/mcp/test"), ("POST", r"/api/imagegen/test"), ("GET", r"/api/imagegen/engine"),
     ("POST", r"/api/imagegen/engine/install"), ("POST", r"/api/imagegen/engine/remove"),
     ("POST", r"/api/imagegen/models/pull"), ("POST", r"/api/imagegen/models/delete")}}

@@ -1,22 +1,14 @@
-"""Agent mode ("agentic coding"): the model works in one project folder the user picked.
+"""Tool runs: the model calls the tools of the MCP servers (sunak/mcp.py) in a loop.
 
-It may list, read and search files there on its own. Writing a file, editing a file and running a
-shell command each need the user's click ("Allow", or "Allow for this chat"). Every path is checked
-against the folder after resolving `..` and symlinks, so the model cannot reach anything outside.
+Every call needs the user's click ("Allow", or "Allow in this chat").
 
 Tool calling uses the native format of each backend (Claude tool use, Ollama `tools`, OpenAI
 `tools`). Models without tool support fall back to a small text protocol (```tool blocks).
 Pure standard library."""
 
-import difflib
 import http.client
 import json
-import os
-import platform
 import secrets
-import signal
-import subprocess
-import sys
 import threading
 import time
 import urllib.parse
@@ -24,67 +16,12 @@ import urllib.parse
 from . import jobqueue, mcp, providers, usage
 from .providers import ProviderError
 
-SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", ".mypy_cache", ".pytest_cache", ".tox",
-             ".idea", ".next", ".cache"}
-MAX_FILE = 2 * 1024 * 1024        # largest file the agent reads or edits
-READ_LINES = 2000                 # lines per read_file call
+MAX_STEPS = 30                    # model rounds per answer (a round is one answer with its tool calls)
 MAX_RESULT = 30_000               # characters of one tool result sent to the model
-MAX_WRITE = 2_000_000             # characters written by one write_file call
-LIST_MAX = 500                    # entries of list_files
-SEARCH_HITS = 200                 # matching lines of search
-SEARCH_FILES = 5000               # files looked at by one search
-OUT_HEAD, OUT_TAIL = 20_000, 30_000  # bytes of command output kept (start and end)
 CONFIRM_TIMEOUT = 1800            # an unanswered question counts as "deny" after 30 minutes
 PING_EVERY = 15                   # keep-alive while waiting, also notices a closed browser tab
 UI_OUTPUT = 4000                  # characters of a tool result shown in the browser and stored
 UI_DIFF = 20_000
-
-TOOLS = [
-    {"name": "list_files",
-     "description": "List files and folders in the project. Folders end with /. Paths are relative to the project root.",
-     "parameters": {"type": "object", "properties": {
-         "path": {"type": "string", "description": "Folder to list, default '.' (the project root)"},
-         "recursive": {"type": "boolean", "description": "Also list subfolders (skips .git, node_modules and similar)"}},
-         "required": []}},
-    {"name": "read_file",
-     "description": f"Read a text file of the project. Returns at most {READ_LINES} lines; use start_line to read further.",
-     "parameters": {"type": "object", "properties": {
-         "path": {"type": "string", "description": "File path relative to the project root"},
-         "start_line": {"type": "integer", "description": "First line to return (1-based), default 1"},
-         "end_line": {"type": "integer", "description": "Last line to return (inclusive)"}},
-         "required": ["path"]}},
-    {"name": "search",
-     "description": "Search all text files of the project (or one folder) for a text. Returns file:line: text for each match.",
-     "parameters": {"type": "object", "properties": {
-         "pattern": {"type": "string", "description": "Text to find (case-insensitive), or a regular expression when regex is true"},
-         "path": {"type": "string", "description": "Folder or file to search in, default '.'"},
-         "regex": {"type": "boolean", "description": "Treat pattern as a Python regular expression"}},
-         "required": ["pattern"]}},
-    {"name": "write_file",
-     "description": "Create a file or replace its whole content. Missing folders are created. "
-                    "The user must approve it. For small changes to an existing file use edit_file.",
-     "parameters": {"type": "object", "properties": {
-         "path": {"type": "string", "description": "File path relative to the project root"},
-         "content": {"type": "string", "description": "The complete new content of the file"}},
-         "required": ["path", "content"]}},
-    {"name": "edit_file",
-     "description": "Replace an exact piece of text in a file. old_text must match the file exactly (including "
-                    "indentation) and occur only once unless replace_all is true. The user must approve it.",
-     "parameters": {"type": "object", "properties": {
-         "path": {"type": "string", "description": "File path relative to the project root"},
-         "old_text": {"type": "string", "description": "Exact text to replace; include enough lines to make it unique"},
-         "new_text": {"type": "string", "description": "Replacement text"},
-         "replace_all": {"type": "boolean", "description": "Replace every occurrence"}},
-         "required": ["path", "old_text", "new_text"]}},
-    {"name": "run_command",
-     "description": "Run a shell command in the project folder and return its exit code and output. "
-                    "There is no input (stdin is empty) and a time limit. The user must approve it.",
-     "parameters": {"type": "object", "properties": {
-         "command": {"type": "string", "description": "The command line, e.g. 'python -m pytest -q'"}},
-         "required": ["command"]}},
-]
-TOOL_NAMES = {t["name"] for t in TOOLS}
-_TYPES = {"string": str, "boolean": bool, "integer": int}
 
 
 class ToolError(Exception):
@@ -92,169 +29,11 @@ class ToolError(Exception):
 
 
 class Cancelled(Exception):
-    """The user stopped the agent."""
+    """The user stopped the run."""
 
 
 class ToolsUnsupported(Exception):
     """The backend rejected the request because the model cannot call tools."""
-
-
-# folder checks --------------------------------------------------------------------------------
-
-def _norm(p):
-    return os.path.normcase(os.path.realpath(p))
-
-
-def _inside(path, root):
-    """True when `path` (resolved) is `root` or lies below it."""
-    try:
-        return os.path.commonpath([_norm(path), _norm(root)]) == _norm(root)
-    except ValueError:  # different drives on Windows
-        return False
-
-
-def check_folder(folder, data_dir):
-    """Validate the project folder chosen by the user and return its resolved absolute path.
-    Raises ValueError. Not allowed: a drive root, the home folder itself, and any folder that
-    contains Sunak's data folder (API keys, password hash) or lies inside it."""
-    if not isinstance(folder, str) or not folder.strip() or "\x00" in folder:
-        raise ValueError("Choose a project folder for the agent")
-    path = os.path.expanduser(folder.strip())
-    if not os.path.isabs(path):
-        raise ValueError("Enter the full path of the project folder, e.g. /home/me/project or C:\\Users\\me\\project")
-    real = os.path.realpath(path)
-    if not os.path.isdir(real):
-        raise ValueError(f"Folder not found: {folder.strip()}")
-    if os.path.dirname(real) == real:
-        raise ValueError("The agent cannot work on a whole drive. Choose a project folder.")
-    if _norm(real) == _norm(os.path.expanduser("~")):
-        raise ValueError("The agent cannot work on your whole home folder. Choose a project folder.")
-    if _inside(data_dir, real) or _inside(real, data_dir):
-        raise ValueError("This folder contains Sunak's own data (keys, chats). Choose another folder.")
-    return real
-
-
-class Workspace:
-    """The project folder. Every path from the model goes through `path()`."""
-
-    def __init__(self, root):
-        self.root = os.path.realpath(root)
-
-    def path(self, rel):
-        """Resolve a model-given path (relative to the root) and make sure it stays inside."""
-        if not isinstance(rel, str) or "\x00" in rel:
-            raise ToolError("Invalid path")
-        rel = rel.strip() or "."
-        full = os.path.realpath(os.path.join(self.root, rel))
-        if not _inside(full, self.root):
-            raise ToolError(f"{rel} is outside the project folder. Only paths inside the project are allowed.")
-        return full
-
-    def rel(self, full):
-        r = os.path.relpath(full, self.root)
-        return "." if r == "." else r.replace(os.sep, "/")
-
-    # read-only tools ------------------------------------------------------------------------
-    def list_files(self, path=".", recursive=False):
-        top = self.path(path)
-        if not os.path.isdir(top):
-            raise ToolError(f"{path} is not a folder")
-        out, more = [], False
-        for cur, dirs, files in os.walk(top):
-            dirs[:] = sorted(d for d in dirs if not (recursive and d in SKIP_DIRS))
-            prefix = "" if not recursive or self.rel(cur) == "." else self.rel(cur) + "/"
-            for n in [d + "/" for d in dirs] + sorted(files):
-                if len(out) >= LIST_MAX:
-                    more = True
-                    break
-                p = os.path.join(cur, n.rstrip("/"))
-                if os.path.islink(p):
-                    n = n.rstrip("/") + "@"  # symlinks are listed but never followed
-                elif not n.endswith("/"):
-                    try:
-                        n += f"  ({os.path.getsize(p)} bytes)"
-                    except OSError:
-                        pass
-                out.append(prefix + n)
-            if not recursive or more:
-                break
-        if not out:
-            return "(empty folder)"
-        return "\n".join(out) + (f"\n… more than {LIST_MAX} entries, list a subfolder" if more else "")
-
-    def read_text(self, full):
-        """File content as text with its own line endings. Raises ToolError for binary or huge files."""
-        if not os.path.isfile(full):
-            raise ToolError(f"{self.rel(full)} is not a file")
-        if os.path.getsize(full) > MAX_FILE:
-            raise ToolError(f"{self.rel(full)} is larger than {MAX_FILE // 1024 // 1024} MB")
-        with open(full, "rb") as f:
-            data = f.read()
-        if b"\x00" in data[:8192]:
-            raise ToolError(f"{self.rel(full)} is a binary file")
-        try:
-            return data.decode("utf-8")
-        except UnicodeDecodeError:
-            raise ToolError(f"{self.rel(full)} is not UTF-8 text") from None
-
-    def read_file(self, path, start_line=1, end_line=None):
-        full = self.path(path)
-        lines = self.read_text(full).replace("\r\n", "\n").split("\n")
-        if lines and lines[-1] == "":
-            lines.pop()
-        total = len(lines)
-        start = max(1, start_line or 1)
-        end = min(total, end_line or total, start + READ_LINES - 1)
-        if total == 0:
-            return f"{self.rel(full)} is empty"
-        if start > total:
-            raise ToolError(f"{self.rel(full)} has only {total} lines")
-        body = "\n".join(lines[start - 1:end])
-        head = f"{self.rel(full)} (lines {start}-{end} of {total})" if (start, end) != (1, total) else self.rel(full)
-        return f"{head}:\n{body}"
-
-    def search(self, pattern, path=".", regex=False):
-        import re
-        if not pattern:
-            raise ToolError("pattern is empty")
-        try:
-            rx = re.compile(pattern if regex else re.escape(pattern), re.I)
-        except re.error as e:
-            raise ToolError(f"Invalid regular expression: {e}") from None
-        top = self.path(path)
-        if os.path.isfile(top):
-            files = [top]
-        else:
-            files = []
-            for cur, dirs, names in os.walk(top):
-                dirs[:] = sorted(d for d in dirs if d not in SKIP_DIRS and not os.path.islink(os.path.join(cur, d)))
-                files += [os.path.join(cur, n) for n in sorted(names)]
-                if len(files) > SEARCH_FILES:
-                    break
-        hits = []
-        for f in files[:SEARCH_FILES]:
-            if os.path.islink(f) and not _inside(f, self.root):
-                continue
-            try:
-                if os.path.getsize(f) > MAX_FILE // 2:
-                    continue
-                text = self.read_text(f)
-            except (ToolError, OSError):
-                continue
-            for no, line in enumerate(text.splitlines(), 1):
-                if rx.search(line):
-                    hits.append(f"{self.rel(f)}:{no}: {line.strip()[:300]}")
-                    if len(hits) >= SEARCH_HITS:
-                        return "\n".join(hits) + f"\n… stopped after {SEARCH_HITS} matches, search more precisely"
-        return "\n".join(hits) or "No matches"
-
-
-def _diff(rel, old, new):
-    """Unified diff for the user; `old` is None for a new file."""
-    a = (old or "").replace("\r\n", "\n").splitlines(keepends=True)
-    b = new.replace("\r\n", "\n").splitlines(keepends=True)
-    d = "".join(difflib.unified_diff(a, b, "a/" + rel if old is not None else "/dev/null", "b/" + rel, n=3))
-    return d or "(no change)"
 
 
 def _clip(text, limit, keep_end=False):
@@ -267,190 +46,11 @@ def _clip(text, limit, keep_end=False):
 
 
 class Action:
-    """A prepared tool call. `kind` is None (runs at once), "write" or "run" (needs approval);
-    `preview` is what the user sees before approving; `run()` does it and returns the result text."""
+    """A prepared tool call. `kind` is "tool:<name>" (needs approval); `preview` is what the user sees
+    before approving; `run()` does it and returns the result text."""
 
     def __init__(self, run, kind=None, preview=None):
         self.run, self.kind, self.preview = run, kind, preview or {}
-
-
-def describe(name, args):
-    """Short human-readable title of a tool call."""
-    args = args if isinstance(args, dict) else {}
-    target = args.get("command") if name == "run_command" else args.get("path") or args.get("pattern") or ""
-    if name == "search" and args.get("path"):
-        target = f"{args.get('pattern', '')}  in {args['path']}"
-    return f"{name} {str(target)[:200]}".strip()
-
-
-def _check_args(name, args):
-    spec = next((t["parameters"] for t in TOOLS if t["name"] == name), None)
-    if spec is None:
-        raise ToolError(f"Unknown tool {name}. Available tools: {', '.join(sorted(TOOL_NAMES))}")
-    if not isinstance(args, dict):
-        raise ToolError("Tool arguments must be a JSON object")
-    for key in spec["required"]:
-        if key not in args:
-            raise ToolError(f"{name} needs the argument {key}")
-    clean = {}
-    for key, val in args.items():
-        prop = spec["properties"].get(key)
-        if prop is None or val is None:
-            continue  # unknown or empty optional arguments are ignored
-        want = _TYPES[prop["type"]]
-        if want is int and isinstance(val, float) and val.is_integer():
-            val = int(val)
-        if not isinstance(val, want) or (want is int and isinstance(val, bool)):
-            raise ToolError(f"{name}: {key} must be a {prop['type']}")
-        clean[key] = val
-    return clean
-
-
-# shell commands -------------------------------------------------------------------------------
-
-def _env():
-    env = dict(os.environ)
-    env.pop("SUNAK_PASSWORD", None)
-    env["GIT_TERMINAL_PROMPT"] = "0"  # never hang on a password prompt
-    env.setdefault("PYTHONUNBUFFERED", "1")
-    return env
-
-
-def _kill(proc):
-    """Stop a command together with everything it started."""
-    try:
-        if os.name == "nt":
-            subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)], capture_output=True, timeout=10)
-        else:
-            os.killpg(proc.pid, signal.SIGKILL)
-    except (OSError, subprocess.SubprocessError):
-        pass
-    try:
-        proc.kill()
-        proc.wait(5)
-    except (OSError, subprocess.SubprocessError):
-        pass
-
-
-def run_command(command, cwd, timeout, cancelled):
-    """Run `command` in a shell in `cwd`. Returns (exit code or None, output, note).
-    Kills the whole process group on timeout or when `cancelled` (threading.Event) is set;
-    in that case raises Cancelled."""
-    kw = {"start_new_session": True} if os.name != "nt" else {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
-    proc = subprocess.Popen(command, shell=True, cwd=cwd, env=_env(), stdin=subprocess.DEVNULL,
-                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, **kw)
-    head, tail, dropped = bytearray(), bytearray(), [0]
-
-    def reader():
-        for chunk in iter(lambda: proc.stdout.read1(4096) if hasattr(proc.stdout, "read1") else proc.stdout.read(4096), b""):
-            room = OUT_HEAD - len(head)
-            if room > 0:
-                head.extend(chunk[:room])
-                chunk = chunk[room:]
-            tail.extend(chunk)
-            if len(tail) > OUT_TAIL:
-                dropped[0] += len(tail) - OUT_TAIL
-                del tail[:len(tail) - OUT_TAIL]
-
-    t = threading.Thread(target=reader, daemon=True)
-    t.start()
-    deadline = time.monotonic() + timeout
-    note = ""
-    try:
-        while True:
-            try:
-                proc.wait(0.2)
-                break
-            except subprocess.TimeoutExpired:
-                pass
-            if cancelled.is_set():
-                _kill(proc)
-                raise Cancelled
-            if time.monotonic() > deadline:
-                _kill(proc)
-                note = f"Stopped: the command ran longer than {timeout} seconds."
-                break
-    finally:
-        t.join(5)  # a detached grandchild may keep the pipe open; don't wait for it forever
-        try:
-            proc.stdout.close()
-        except OSError:
-            pass
-    out = bytes(head)
-    if dropped[0]:
-        out += f"\n… [{dropped[0]} bytes of output left out] …\n".encode()
-    out += bytes(tail)
-    text = out.decode("utf-8", "replace")
-    return (None if note else proc.returncode), text, note
-
-
-# preparing tool calls -------------------------------------------------------------------------
-
-def prepare(ws, name, args, timeout, cancelled):
-    """Validate a tool call and return an Action. Raises ToolError."""
-    args = _check_args(name, args)
-    if name == "list_files":
-        return Action(lambda: ws.list_files(args.get("path", "."), args.get("recursive", False)))
-    if name == "read_file":
-        return Action(lambda: ws.read_file(args["path"], args.get("start_line", 1), args.get("end_line")))
-    if name == "search":
-        return Action(lambda: ws.search(args["pattern"], args.get("path", "."), args.get("regex", False)))
-    if name in ("write_file", "edit_file"):
-        full = ws.path(args["path"])
-        rel = ws.rel(full)
-        if os.path.isdir(full):
-            raise ToolError(f"{rel} is a folder")
-        exists = os.path.exists(full)
-        old = ws.read_text(full) if exists else None
-        if name == "write_file":
-            new = args["content"]
-            if len(new) > MAX_WRITE:
-                raise ToolError("content is too large")
-            if old is not None and "\r\n" in old and "\r\n" not in new:
-                new = new.replace("\n", "\r\n")  # keep the file's Windows line endings
-        else:
-            if old is None:
-                raise ToolError(f"{rel} does not exist. Use write_file to create it.")
-            o, n = args["old_text"], args["new_text"]
-            if not o:
-                raise ToolError("old_text is empty")
-            if o not in old and "\r\n" in old:
-                o, n = o.replace("\r\n", "\n").replace("\n", "\r\n"), n.replace("\r\n", "\n").replace("\n", "\r\n")
-            count = old.count(o)
-            if count == 0:
-                raise ToolError(f"old_text was not found in {rel}. Read the file again and copy the text exactly.")
-            if count > 1 and not args.get("replace_all"):
-                raise ToolError(f"old_text occurs {count} times in {rel}. Include more surrounding lines "
-                                "or set replace_all to true.")
-            new = old.replace(o, n)
-        if new == old:
-            raise ToolError("This would not change the file")
-
-        def write():
-            now = ws.read_text(full) if os.path.exists(full) else None
-            if now != old:
-                raise ToolError(f"{rel} was changed by someone else meanwhile. Read it again.")
-            os.makedirs(os.path.dirname(full), exist_ok=True)
-            if not _inside(full, ws.root):  # a folder on the way was replaced by a symlink
-                raise ToolError(f"{rel} is outside the project folder")
-            with open(full, "w", encoding="utf-8", newline="") as f:
-                f.write(new)
-            lines = new.count("\n") + (0 if new.endswith("\n") or not new else 1)
-            return f"{'Updated' if exists else 'Created'} {rel} ({lines} line{'' if lines == 1 else 's'})"
-
-        return Action(write, "write", {"path": rel, "new_file": not exists, "diff": _diff(rel, old, new)})
-    if name == "run_command":
-        cmd = args["command"].strip()
-        if not cmd:
-            raise ToolError("command is empty")
-
-        def run():
-            code, out, note = run_command(cmd, ws.root, timeout, cancelled)
-            status = note or f"Exit code: {code}"
-            return f"{status}\n{_clip(out, MAX_RESULT - 200, keep_end=True)}".rstrip()
-
-        return Action(run, "run", {"command": cmd})
-    raise ToolError(f"Unknown tool {name}")
 
 
 # backends -------------------------------------------------------------------------------------
@@ -796,62 +396,41 @@ class TextTurns:
 TURNS = {"anthropic": ClaudeTurns, "ollama": OllamaTurns, "openai": OpenAITurns}
 
 
-# the agent loop -------------------------------------------------------------------------------
+# the tool loop --------------------------------------------------------------------------------
 
-def system_prompt(root, timeout):
-    if not root:
-        return ("You can use tools of the user's connected MCP servers (a tool's name starts with its server). "
-                "Every tool call needs the user's approval. If the user denies a call, do not try the same thing "
-                "another way; explain or ask instead. Never print secrets such as API keys.")
-    shell = "cmd.exe" if os.name == "nt" else "sh"
-    return (
-        f"You are working as a coding agent in the project folder \"{os.path.basename(root)}\" on "
-        f"{platform.system() or sys.platform}. All paths are relative to that folder; you cannot access anything "
-        "outside it. Look at the relevant files before you change them, prefer edit_file for small changes, "
-        "and check your work (for example by running the tests) when that is useful. "
-        f"Commands run with {shell} in the project folder, without input, and stop after {timeout} seconds. "
-        "Writing files and running commands need the user's approval. If the user denies an action, do not try "
-        "the same thing another way; explain or ask instead. Never print secrets such as API keys. "
-        "When you are done, briefly tell the user what you changed.")
-
-
-MCP_NOTE = ("Tools whose name starts with an MCP server's name come from the user's connected MCP servers; "
-            "each of their calls needs the user's approval.")
+SYSTEM_PROMPT = ("You can use tools of the user's connected MCP servers (a tool's name starts with its server). "
+                 "Every tool call needs the user's approval. If the user denies a call, do not try the same thing "
+                 "another way; explain or ask instead. Never print secrets such as API keys.")
 
 
 def new_run_id():
     return secrets.token_hex(8)
 
 
-class AgentRun:
-    """One agent answer: alternate model turns and tool calls until the model stops calling tools.
+class ToolRun:
+    """One answer with tools: alternate model turns and tool calls until the model stops calling tools.
 
     `emit(event)` sends NDJSON events to the browser: think/text chunks, step (a tool call starts),
     confirm (waiting for the user), step_done, notice, ping. `parts` collects text and steps in order
     for storing the answer."""
 
-    def __init__(self, prov, model, messages, folder, emit, options=None, allowed=None, timeout=120,
-                 max_steps=30, mcp_tools=None, run_id=None):
-        """`folder` may be empty when only MCP tools are used; `mcp_tools` is [(exposed name, server, tool)]."""
+    def __init__(self, prov, model, messages, emit, options=None, allowed=None, mcp_tools=None, run_id=None):
+        """`mcp_tools` is [(exposed name, server, tool)]."""
         self.id = run_id or new_run_id()
         self.prov, self.model, self.emit = prov, model, emit
-        self.ws = Workspace(folder) if folder else None
         self.mcp = {name: (srv, tool) for name, srv, tool in mcp_tools or []}
-        self.tools = (TOOLS if self.ws else []) + [
+        self.tools = [
             {"name": name, "description": str(tool.get("description") or tool.get("title") or tool["name"])[:1024],
              "parameters": mcp.schema(tool)} for name, (srv, tool) in self.mcp.items()]
         self.options = options or {}
         self.allowed = allowed if allowed is not None else set()
-        self.timeout, self.max_steps = timeout, max_steps
         self.cancelled = threading.Event()
         self.pending = {}
         self.parts = []
         self.texts = []
         self._steps = 0
         msgs = [dict(m) for m in messages]
-        extra = system_prompt(folder, timeout)
-        if folder and self.mcp:
-            extra += " " + MCP_NOTE
+        extra = SYSTEM_PROMPT
         if msgs and msgs[0]["role"] == "system":
             msgs[0]["content"] += "\n\n" + extra
         else:
@@ -881,7 +460,7 @@ class AgentRun:
         ptype = self.prov["type"]
         turns = TURNS.get(ptype, TextTurns)(self.prov, self.model, self.messages, self.options, self.tools)
         first = True
-        for _ in range(self.max_steps):
+        for _ in range(MAX_STEPS):
             try:
                 calls = self._turn(turns)
             except ToolsUnsupported:
@@ -895,7 +474,7 @@ class AgentRun:
             if not calls:
                 return
             turns.add_results([self._step(c) for c in calls])
-        self.emit({"type": "notice", "t": f"Stopped after {self.max_steps} steps. Send a message to let the agent continue."})
+        self.emit({"type": "notice", "t": f"Stopped after {MAX_STEPS} steps. Send a message to let the model continue."})
 
     def _turn(self, turns):
         """One model call of the loop. It waits its turn when the backend is busy with other requests; the
@@ -939,7 +518,7 @@ class AgentRun:
         self._steps += 1
         sid = f"s{self._steps}"
         name, args = call["name"], call["args"]
-        title = f"{self.mcp[name][0].name} · {self.mcp[name][1]['name']}" if name in self.mcp else describe(name, args)
+        title = f"{self.mcp[name][0].name} · {self.mcp[name][1]['name']}" if name in self.mcp else name
         step = {"id": sid, "tool": name, "title": title, "status": "running"}
         self.parts.append({"step": step})
         self.emit({"type": "step", **step})
@@ -948,12 +527,10 @@ class AgentRun:
                 raise ToolError(call["error"])
             if name in self.mcp:
                 action = self._mcp_action(name, args)
-            elif self.ws is None:
-                raise ToolError(f"Unknown tool {name}. Available tools: {', '.join(sorted(self.mcp))}")
             else:
-                action = prepare(self.ws, name, args, self.timeout, self.cancelled)
-            step.update({k: (_clip(v, UI_DIFF) if k == "diff" else v) for k, v in action.preview.items()})
-            if action.kind and not self._approved(sid, action, step):
+                raise ToolError(f"Unknown tool {name}. Available tools: {', '.join(sorted(self.mcp))}")
+            step.update(action.preview)
+            if not self._approved(sid, action, step):
                 step["status"] = "denied"
                 result = ("The user denied this action. Do not try to do the same in another way; "
                           "continue without it or ask the user.")
@@ -1019,7 +596,7 @@ class AgentRun:
 
 
 class Registry:
-    """Running agent answers (for confirm and cancel) and the per-chat "allow for this chat" choices.
+    """Running tool answers (for confirm and cancel) and the per-chat "allow for this chat" choices.
     The choices live in memory only, so they end when Sunak restarts."""
 
     def __init__(self):
@@ -1027,15 +604,14 @@ class Registry:
         self._allowed = {}
         self._lock = threading.Lock()
 
-    def allowed(self, session_id, folder):
-        """The kinds allowed for this chat and folder ("" when only MCP tools are used)."""
+    def allowed(self, session_id):
+        """The kinds allowed for this chat."""
         with self._lock:
-            return self._allowed.setdefault((session_id, _norm(folder) if folder else ""), set())
+            return self._allowed.setdefault(session_id, set())
 
     def revoke(self, session_id):
         with self._lock:
-            for key in [k for k in self._allowed if k[0] == session_id]:
-                del self._allowed[key]
+            self._allowed.pop(session_id, None)
 
     def add(self, run):
         self.runs[run.id] = run

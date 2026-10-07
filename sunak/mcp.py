@@ -1,9 +1,9 @@
-"""MCP (Model Context Protocol) client: tools of MCP servers for the chat (🔌) and agent mode.
+"""MCP (Model Context Protocol) client: tools of MCP servers for the chat (🔌).
 
 Two kinds of servers: "stdio" (Sunak starts the server as a program and speaks JSON-RPC lines over its
 stdin/stdout) and "http" (Streamable HTTP: JSON-RPC over POST, answers as JSON or server-sent events).
 Sunak uses only tools (tools/list, tools/call), and every call needs the user's approval in the chat
-(see agent.AgentRun). Pure standard library."""
+(see toolrun.ToolRun). Pure standard library."""
 
 import hashlib
 import json

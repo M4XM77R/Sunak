@@ -74,10 +74,8 @@
       <div class="messages" id="messages"></div>
       <form class="composer" id="composer">
         <div class="attachments" id="attachments"></div>
-        <div class="agent-bar hidden" id="agentBar">
-          <span id="agentLabel" title="The model reads files on its own and asks before it changes a file or runs a command"><i data-i="terminal"></i>Agent in</span>
-          <input id="agentFolder" placeholder="Project folder, e.g. /home/me/project or C:\Users\me\project" aria-label="Project folder for the agent" spellcheck="false" autocomplete="off">
-          <button class="btn small-btn" id="agentRevoke" type="button" title="Forget “Allow for this chat”: ask again before every change, command and tool">Ask again</button>
+        <div class="tools-bar hidden" id="toolsBar">
+          <button class="btn small-btn" id="toolsRevoke" type="button" title="Forget “Allow in this chat”: ask again before every tool call">Ask again</button>
         </div>
         <div class="composer-row">
           <label class="icon-btn" title="Attach files or images (text, PDF, Word, PowerPoint, PNG, JPEG…). You can also paste a screenshot."><i data-i="paperclip"></i><input type="file" id="fileInput" multiple hidden></label>
@@ -85,7 +83,6 @@
           <div class="opt-menu hidden" id="optMenu" role="menu">
             <button class="opt-item kb-toggle" id="kbToggle" type="button" role="menuitemcheckbox" aria-pressed="false" title="Answer with my knowledge base"><i data-i="book"></i><span class="opt-label">Knowledge base</span><span class="opt-state"></span></button>
             <button class="opt-item kb-toggle" id="webToggle" type="button" role="menuitemcheckbox" aria-pressed="false" title="Search the web for answers"><i data-i="globe"></i><span class="opt-label">Web search</span><span class="opt-state"></span></button>
-            <button class="opt-item kb-toggle hidden admin-only" id="agentToggle" type="button" role="menuitemcheckbox" aria-pressed="false" title="Agent mode: let the model work in a project folder"><i data-i="terminal"></i><span class="opt-label">Agent mode</span><span class="opt-state"></span></button>
             <button class="opt-item kb-toggle hidden admin-only" id="mcpToggle" type="button" role="menuitemcheckbox" aria-pressed="false" title="Tools (MCP): let the model use your MCP servers"><i data-i="plug"></i><span class="opt-label">Tools (MCP)</span><span class="opt-state"></span></button>
             <button class="opt-item mic-btn hidden" id="micBtn" type="button" role="menuitemcheckbox" aria-pressed="false" title="Speak instead of typing"><i data-i="mic"></i><span class="opt-label">Speak</span><span class="opt-state"></span></button>
           </div>
@@ -367,18 +364,9 @@
         <button class="btn" id="addCalSource" type="button"><i data-i="plus"></i>Add calendar</button>
 
         <div class="admin-only">
-        <h2>Agent</h2>
-        <p class="muted small">In agent mode (the terminal button next to the message box) the model works in a project folder you choose: it lists, reads and searches files on its own, and asks you before it writes a file or runs a command. It cannot reach files outside that folder.</p>
-        <label class="check"><input type="checkbox" id="agentEnabled"> Enable agent mode</label>
-        <p class="agent-warn small"><i data-i="alert"></i>Commands run on this computer with your user rights and are not sandboxed: a command can do anything you could do in a terminal. Read each command and change before you allow it, and use agent mode only with folders and models you trust. From other devices it only works with a password.</p>
-        <div class="row">
-          <label>Command time limit (seconds)<input type="number" id="agentTimeout" min="5" max="3600" step="1"></label>
-          <label>Steps per answer<input type="number" id="agentSteps" min="1" max="200" step="1"></label>
-        </div>
-
         <h2>Tools (MCP)</h2>
-        <p class="muted small">MCP servers give the model tools, e.g. for your files, web pages or other apps. Switch them on with the plug button next to the message box (they also work in agent mode). Sunak asks you before every tool call. Environment values and tokens stay on this computer and are never sent back to the browser.</p>
-        <p class="agent-warn small"><i data-i="alert"></i>A server of type “Program” runs on this computer with your user rights. Add only servers you trust. From other devices tools only work with a password.</p>
+        <p class="muted small">MCP servers give the model tools, e.g. for your files, web pages or other apps. Switch them on with the plug button next to the message box. Sunak asks you before every tool call. Environment values and tokens stay on this computer and are never sent back to the browser.</p>
+        <p class="tools-warn small"><i data-i="alert"></i>A server of type “Program” runs on this computer with your user rights. Add only servers you trust. From other devices tools only work with a password.</p>
         <div id="mcpList"></div>
         <div class="row">
           <button class="btn" id="addMcp" type="button"><i data-i="plus"></i>Add server</button>

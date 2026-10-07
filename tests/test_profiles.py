@@ -94,10 +94,10 @@ class ProfilesTest(unittest.TestCase):
         self.assertIs(kid_app.mcp, self.app.mcp)  # shared parts come from the installation
         # preferences: own theme and prompt, installation settings shared
         self.req("PUT", "/api/settings", {"theme": "ocean", "system_prompt": "Talk like a pirate", "language": "de"}, cookie=k)
-        self.req("PUT", "/api/settings", {"agent_timeout": 99, "theme": "retro"}, cookie=main)
+        self.req("PUT", "/api/settings", {"check_updates": False, "theme": "retro"}, cookie=main)
         sk, sm = self.req("GET", "/api/settings", cookie=k), self.req("GET", "/api/settings", cookie=main)
-        self.assertEqual((sk["theme"], sk["system_prompt"], sk["language"], sk["agent_timeout"]), ("ocean", "Talk like a pirate", "de", 99))
-        self.assertEqual((sm["theme"], sm["language"], sm["agent_timeout"]), ("retro", "", 99))
+        self.assertEqual((sk["theme"], sk["system_prompt"], sk["language"], sk["check_updates"]), ("ocean", "Talk like a pirate", "de", False))
+        self.assertEqual((sm["theme"], sm["language"], sm["check_updates"]), ("retro", "", False))
         self.assertEqual(sk["providers"], sm["providers"])
         self.assertEqual((sk["profile"]["name"], sk["profile"]["admin"], sk["profiles_count"]), ("Kid", False, 2))
         self.assertNotIn("Max", json.dumps(self.req("GET", "/api/export", cookie=k)["notes"]))
@@ -106,11 +106,11 @@ class ProfilesTest(unittest.TestCase):
         kid = self.make(name="Kid")
         partner = self.make(name="Partner", admin=True)
         main, k, pa = self.select("default"), self.select(kid["id"]), self.select(partner["id"])
-        for path, body in [("/api/settings", {"providers": []}), ("/api/settings", {"agent_enabled": True}),
+        for path, body in [("/api/settings", {"providers": []}), ("/api/settings", {"check_updates": False}),
                            ("/api/settings", {"password": "secret"}), ("/api/settings", {"mcp_servers": []})]:
             code, err = self.error("PUT", path, body, cookie=k)
             self.assertEqual((code, "admin" in err), (403, True), body)
-        for path, body in [("/api/models/pull", {"model": "x"}), ("/api/agent", {}), ("/api/lan", {"enabled": True}),
+        for path, body in [("/api/models/pull", {"model": "x"}), ("/api/tools", {}), ("/api/lan", {"enabled": True}),
                            ("/api/update", {}), ("/api/mcp/test", {}), ("/api/profiles", {"name": "X"})]:
             self.assertEqual(self.error("POST", path, body, cookie=k)[0], 403, path)
         self.assertEqual(self.error("DELETE", f"/api/profiles/{partner['id']}", cookie=k)[0], 403)
@@ -124,7 +124,7 @@ class ProfilesTest(unittest.TestCase):
         self.assertEqual(self.error("GET", "/api/settings", cookie=k)[0], 409)
         self.assertEqual(self.error("PATCH", f"/api/profiles/{kid['id']}", {"pin": "12"}, cookie=new_k)[0], 400)
         # an admin profile may do it all, except removing the main profile's rights or deleting it
-        self.req("PUT", "/api/settings", {"agent_timeout": 77}, cookie=pa)
+        self.req("PUT", "/api/settings", {"check_updates": True}, cookie=pa)
         self.assertEqual(self.error("PATCH", "/api/profiles/default", {"admin": False}, cookie=pa)[0], 400)
         self.assertEqual(self.error("DELETE", "/api/profiles/default", cookie=pa)[0], 400)
         self.assertEqual(self.error("DELETE", f"/api/profiles/{partner['id']}", cookie=pa)[0], 400)  # not the own one

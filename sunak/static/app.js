@@ -461,7 +461,7 @@ function messageEl(m, i, msgs) {
   else {
     if (m.meta?.sources) body.append(sourcesEl(m.meta.sources));
     if (m.meta?.web) body.append(webSourcesEl(m.meta.web));
-    if (m.meta?.agent) body.append(agentEl(m.meta.agent));
+    if (m.meta?.tools || m.meta?.agent) body.append(toolsEl(m.meta.tools || m.meta.agent)); // `agent`: chats stored before 0.13.0
     else if (m.meta?.imagegen || m.meta?.pending) body.append(genFigure(m));
     else body.append(el('div', { class: 'md', html: md(m.content) }));
   }
@@ -531,7 +531,7 @@ promptEl.addEventListener('keydown', (e) => {
 });
 $('#composer').onsubmit = (e) => { e.preventDefault(); state.busy ? stopBusy() : send(); };
 function stopBusy() {
-  if (state.agentRun) api('/api/agent/cancel', { method: 'POST', body: { run: state.agentRun } }).catch(() => {});
+  if (state.toolRun) api('/api/tools/cancel', { method: 'POST', body: { run: state.toolRun } }).catch(() => {});
   if (state.busy) state.busy.abort();
 }
 
@@ -547,15 +547,14 @@ async function sendNow() {
   let text = promptEl.value.trim();
   if (!text && !state.attachments.length) return;
   if (!state.attachments.length) {
-    const ask = await pictureIntent(text, agentOn(), agentOn() ? 'agent' : 'chat');
-    if (ask && agentOn()) toast('This looks like a request for a picture, but agent mode is on, so the agent gets it. Switch agent mode off (+ menu) to have it painted.');
+    const ask = await pictureIntent(text, mcpOn(), mcpOn() ? 'tools' : 'chat');
+    if (ask && mcpOn()) toast('This looks like a request for a picture, but tools (MCP) are on, so the model gets it. Switch tools off (+ menu) to have it painted.');
     else if (ask && await pictureRequest(text, ask.subject)) return;
   }
   if (!currentModel()) { toast('Install or connect a model first'); show('settings'); return; }
   if (state.attachments.some((a) => a.loading)) { toast('Still reading your files…'); return; }
-  if (agentOn() && !agentFolder()) { toast('Enter the project folder for the agent first'); $('#agentFolder').focus(); return; }
   const pics = state.attachments.filter((a) => a.image);
-  if (pics.length && (agentOn() || mcpOn())) { toast('Agent mode and tools (MCP) cannot look at images yet. Switch them off to ask about the image.'); return; }
+  if (pics.length && mcpOn()) { toast('Tools (MCP) cannot look at images yet. Switch them off to ask about the image.'); return; }
   const files = state.attachments.filter((a) => !a.image);
   if (files.length) {
     text = files.map((a) => `File \`${a.name}\`:\n\`\`\`\n${a.text}\n\`\`\``).join('\n\n') + (text ? `\n\n${text}` : '');
@@ -581,7 +580,7 @@ async function sendNow() {
 }
 
 async function runChat(payload, localUserMsg) {
-  if (agentOn() || mcpOn()) return runAgent(payload, localUserMsg);
+  if (mcpOn()) return runTools(payload, localUserMsg);
   const s = state.session;
   if (localUserMsg) s.messages.push(localUserMsg);
   const ans = { role: 'assistant', content: '', model: currentModel() };
@@ -766,80 +765,50 @@ async function runImagine(body) {
   $('#messages').scrollTop = $('#messages').scrollHeight;
 }
 
-/* ---------------- Agent mode ----------------
-   The model works in a project folder: steps (tool calls) appear between its text, writes and
-   commands wait for a click. See sunak/agent.py. */
-const agentFolder = () => $('#agentFolder').value.trim();
+/* ---------------- Tools (MCP) ----------------
+   The model calls the tools of the MCP servers: steps (tool calls) appear between its text and every
+   call waits for a click. See sunak/toolrun.py. */
 const isAdmin = () => !!state.settings?.profile?.admin;
-const agentOn = () => isAdmin() && !!state.settings?.agent_enabled && store.get('sunak-agent') === '1';
-// tools (plug button) of the MCP servers (Settings → Tools); every call asks first, like a change in agent mode
+// tools (plug button) of the MCP servers (Settings → Tools); every call asks first
 const mcpReady = () => isAdmin() && (state.settings?.mcp_servers || []).some((m) => m.enabled);
 const mcpOn = () => mcpReady() && store.get('sunak-mcp') === '1';
-function renderAgentToggle() {
-  const b = $('#agentToggle');
-  b.classList.toggle('hidden', !state.settings?.agent_enabled);
-  b.setAttribute('aria-pressed', String(agentOn()));
-  b.title = agentOn() ? 'Agent mode on: the model works in your project folder' : 'Agent mode: let the model work in a project folder';
+function renderToolsToggle() {
   const m = $('#mcpToggle');
   m.classList.toggle('hidden', !mcpReady());
   m.setAttribute('aria-pressed', String(mcpOn()));
   m.title = mcpOn() ? 'Tools (MCP) on: the model may use your MCP servers, after asking' : 'Tools (MCP): let the model use your MCP servers';
-  $('#agentBar').classList.toggle('hidden', !agentOn() && !mcpOn());
-  $('#agentLabel').classList.toggle('hidden', !agentOn());
-  $('#agentFolder').classList.toggle('hidden', !agentOn());
-  promptEl.placeholder = agentOn() ? 'Tell the agent what to do…' : 'Message Sunak…';
+  $('#toolsBar').classList.toggle('hidden', !mcpOn());
 }
-$('#agentToggle').onclick = () => {
-  store.set('sunak-agent', agentOn() ? '0' : '1');
-  renderAgentToggle();
-  if (agentOn() && !agentFolder()) $('#agentFolder').focus();
-};
 $('#mcpToggle').onclick = () => {
   store.set('sunak-mcp', mcpOn() ? '0' : '1');
-  renderAgentToggle();
+  renderToolsToggle();
 };
-$('#agentFolder').value = store.get('sunak-agent-folder', '');
-$('#agentFolder').onchange = () => store.set('sunak-agent-folder', agentFolder());
-$('#agentRevoke').onclick = async () => {
-  if (state.session?.id) await api('/api/agent/revoke', { method: 'POST', body: { session_id: state.session.id } }).catch((e) => toast(e.message));
-  toast('Sunak asks again before every change, command and tool in this chat');
+$('#toolsRevoke').onclick = async () => {
+  if (state.session?.id) await api('/api/tools/revoke', { method: 'POST', body: { session_id: state.session.id } }).catch((e) => toast(e.message));
+  toast('Sunak asks again before every tool call in this chat');
 };
 
 const STEP_ICONS = { running: 'clock', waiting: 'help', done: 'check-circle', error: 'alert', denied: 'hand', stopped: 'stop' };
-function diffEl(diff) {
-  return el('pre', { class: 'diff' }, diff.split('\n').map((line) => el('span', {
-    class: line.startsWith('@@') ? 'hunk' : /^\+(?!\+\+ )/.test(line) ? 'add' : /^-(?!-- )/.test(line) ? 'del' : '' }, line + '\n')));
-}
-// one tool call; with onDecide it is a question with Allow / Allow for this chat / Deny
+// one tool call; with onDecide it is a question with Allow / Allow in this chat / Deny
 function stepEl(st, onDecide) {
   const status = onDecide ? 'waiting' : st.status;
   const kids = [];
-  if (st.command) kids.push(el('pre', { class: 'cmd' }, `$ ${st.command}`));
   if (st.input) kids.push(el('pre', { class: 'cmd' }, st.input));
-  if (st.diff) kids.push(diffEl(st.diff));
   if (st.output && !onDecide) kids.push(el('pre', { class: 'step-out' }, st.output));
   const box = el('details', { class: `step ${status}`, open: !!onDecide || status === 'error' },
     el('summary', {}, el('span', { class: 'step-icon' }, icon(STEP_ICONS[status] || 'dot')), el('code', {}, st.title || st.tool)), kids);
-  if (onDecide && st.kind?.startsWith('tool:')) {
+  if (onDecide) {
     box.append(el('div', { class: 'row step-actions' },
       el('span', { class: 'muted small' }, 'Use this tool?'),
       el('button', { class: 'btn primary', type: 'button', onclick: () => onDecide('allow') }, 'Allow'),
       el('button', { class: 'btn', type: 'button', onclick: () => onDecide('always'),
         title: 'Don’t ask again in this chat until Sunak restarts or you click “Ask again”' }, tr('Allow {tool} in this chat', { tool: st.mcp_tool || st.tool })),
       el('button', { class: 'btn', type: 'button', onclick: () => onDecide('deny') }, 'Deny')));
-  } else if (onDecide) {
-    const run = st.kind === 'run';
-    box.append(el('div', { class: 'row step-actions' },
-      el('span', { class: 'muted small' }, run ? 'Run this command?' : st.new_file ? 'Create this file?' : 'Apply this change?'),
-      el('button', { class: 'btn primary', type: 'button', onclick: () => onDecide('allow') }, run ? 'Run' : 'Apply'),
-      el('button', { class: 'btn', type: 'button', onclick: () => onDecide('always'),
-        title: 'Don’t ask again in this chat until Sunak restarts or you click “Ask again”' }, run ? 'Allow commands in this chat' : 'Allow changes in this chat'),
-      el('button', { class: 'btn', type: 'button', onclick: () => onDecide('deny') }, 'Deny')));
   }
   return box;
 }
-function agentEl(a) {
-  const box = el('div', { class: 'agent' });
+function toolsEl(a) {
+  const box = el('div', { class: 'tools-run' });
   for (const p of a.parts || []) {
     if (p.step) box.append(stepEl(p.step));
     else if (p.text) box.append(el('div', { class: 'md', html: md(p.text) }));
@@ -847,16 +816,16 @@ function agentEl(a) {
   return box;
 }
 
-async function runAgent(payload, localUserMsg) {
+async function runTools(payload, localUserMsg) {
   const s = state.session;
   if (localUserMsg) s.messages.push(localUserMsg);
-  s.messages.push({ role: 'assistant', content: '', model: currentModel(), meta: { agent: { parts: [] } } });
+  s.messages.push({ role: 'assistant', content: '', model: currentModel(), meta: { tools: { parts: [] } } });
   const ctrl = new AbortController();
   state.busy = ctrl;
   $('#sendBtn').textContent = 'Stop';
   renderMessages();
   const box = $('#messages');
-  const target = box.lastElementChild.querySelector('.agent');
+  const target = box.lastElementChild.querySelector('.tools-run');
   target.classList.add('typing');
   const steps = {};
   let cur = null, pending = false, error = null, stopped = false, qnote = null;
@@ -866,7 +835,7 @@ async function runAgent(payload, localUserMsg) {
   const showStep = (st, ask) => {
     const node = stepEl(st, ask && (async (decision) => {
       node.querySelectorAll('.step-actions button').forEach((b) => (b.disabled = true));
-      try { await api('/api/agent/confirm', { method: 'POST', body: { run: state.agentRun, id: st.id, decision } }); }
+      try { await api('/api/tools/confirm', { method: 'POST', body: { run: state.toolRun, id: st.id, decision } }); }
       catch (e) { toast(e.message); }
     }));
     if (steps[st.id]) steps[st.id].replaceWith(node); else target.append(node);
@@ -874,8 +843,8 @@ async function runAgent(payload, localUserMsg) {
     if (ask) node.scrollIntoView({ block: 'nearest' }); else scroll();
   };
   try {
-    await stream('/api/agent', { session_id: s.id, model: currentModel(), persona: currentPersona(), folder: agentOn() ? agentFolder() : '', mcp: mcpOn(), ...payload }, (ev) => {
-      if (ev.type === 'start') { s.title = ev.title; $('#viewTitle').textContent = ev.title; state.agentRun = ev.run; }
+    await stream('/api/tools', { session_id: s.id, model: currentModel(), persona: currentPersona(), ...payload }, (ev) => {
+      if (ev.type === 'start') { s.title = ev.title; $('#viewTitle').textContent = ev.title; state.toolRun = ev.run; }
       else if (ev.type === 'think' || ev.type === 'text') {
         if (!cur) { cur = { raw: '', thinking: false, el: el('div', { class: 'md' }) }; target.append(cur.el); }
         if (ev.type === 'think' && !cur.thinking) { cur.raw += '<think>'; cur.thinking = true; }
@@ -898,7 +867,7 @@ async function runAgent(payload, localUserMsg) {
   }
   endText();
   state.busy = null;
-  state.agentRun = null;
+  state.toolRun = null;
   $('#sendBtn').textContent = 'Send';
   loadSessions();
   if (state.session !== s) return;
@@ -2254,7 +2223,7 @@ function engineSetup() {
 }
 async function refreshImageStatus() {  // the settings carry what is missing for pictures
   try { state.settings = await api('/api/settings'); } catch (e) { /* keep the old state */ }
-  renderAgentToggle();
+  renderToolsToggle();
   loadLocalImages();
 }
 async function useImageModel(id) {
@@ -2834,9 +2803,6 @@ function renderSettings() {
   $('#checkUpdates').checked = s.check_updates;
   $('#reportMode').value = s.error_reports || 'off';
   if (isAdmin()) loadReports();
-  $('#agentEnabled').checked = s.agent_enabled;
-  $('#agentTimeout').value = s.agent_timeout;
-  $('#agentSteps').value = s.agent_max_steps;
   $('#speechInput').value = s.speech_input;
   $('#whisperUrl').value = s.whisper_url;
   $('#whisperModel').value = s.whisper_model;
@@ -2994,8 +2960,6 @@ $('#saveSettings').onclick = async () => {
       ...(mcpChanged ? { mcp_servers: draftMcp.map(mcpBody) } : {}),
       providers: draftProviders.filter((p) => p.base_url.trim()), check_updates: $('#checkUpdates').checked,
       error_reports: $('#reportMode').value,
-      agent_enabled: $('#agentEnabled').checked, agent_timeout: Number($('#agentTimeout').value),
-      agent_max_steps: Number($('#agentSteps').value),
       speech_input: $('#speechInput').value, whisper_url: $('#whisperUrl').value, whisper_model: $('#whisperModel').value,
       ai_image_detect: $('#aiImageDetect').checked,
       image_gen: $('#imageGen').value, image_gen_url: $('#imageGenUrl').value,
@@ -3008,7 +2972,7 @@ $('#saveSettings').onclick = async () => {
     } });
     applyLook();
     renderPersonaSelect();
-    renderAgentToggle();
+    renderToolsToggle();
     renderMic();
     await loadModels();
     renderSettings();
@@ -3046,10 +3010,6 @@ $('#imageGenTest').onclick = async () => {
     out.textContent = r.models.length ? `✓ ${trn(r.models.length, '{n} model', '{n} models')}: ${r.models.join(', ')}` : tr('Connected, but the program has no model yet.');
   } catch (e) { out.replaceChildren(icon('alert'), e.message); }
   btn.disabled = false;
-};
-$('#agentEnabled').onchange = (e) => {
-  if (e.target.checked && !confirm('Enable agent mode?\n\nThe model can then change files in the folder you choose and run '
-    + 'commands on this computer, each time after you allowed it. Commands are not sandboxed.')) e.target.checked = false;
 };
 $('#savePassword').onclick = async () => {
   const pw = $('#password').value;
@@ -3209,7 +3169,7 @@ $('#reportSample').onclick = () => loadReports(api('/api/reports/sample', { meth
 
 /* ---------------- Profiles ----------------
    Each profile has its own chats, documents, notes, knowledge base, mail, calendar and preferences
-   (see App.view). Installation settings (providers, agent, tools, password …) belong to admin profiles. */
+   (see App.view). Installation settings (providers, tools, password …) belong to admin profiles. */
 const profileName = (p) => p.name || tr('Main profile');
 async function showProfilePicker(res) {
   if ($('#profilePicker')) return;
@@ -3261,7 +3221,7 @@ function profileForm(p, onSave, isNew) {
     el('div', { class: 'row' }, emoji, name),
     el('div', { class: 'row' }, pin,
       p.has_pin ? el('button', { class: 'btn', type: 'button', onclick: () => onSave({ pin: '' }) }, 'Remove PIN') : null),
-    isAdmin() ? el('label', { class: 'check' }, admin, 'Admin: may change providers, agent, tools, password and profiles') : null,
+    isAdmin() ? el('label', { class: 'check' }, admin, 'Admin: may change providers, tools, password and profiles') : null,
     el('div', { class: 'row' }, save, isNew ? el('button', { class: 'btn', type: 'button', onclick: () => renderProfile() }, 'Cancel') : null));
   form.onsubmit = (e) => {
     e.preventDefault();
@@ -3350,7 +3310,7 @@ async function refreshAll(poll = false) {
   applyLook();
   renderLook();
   renderKbToggle(); renderWebToggle();
-  renderAgentToggle();
+  renderToolsToggle();
   renderMic();
   if (state.settings.reports_pending && state.settings.error_reports !== 'off') {
     toast(tr('{n} error report(s) waiting: Settings → Error reports', { n: state.settings.reports_pending }));
