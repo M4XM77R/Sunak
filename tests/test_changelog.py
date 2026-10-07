@@ -16,7 +16,7 @@ Intro text, ignored.
 
 ## [0.3.0] – 2026-10-07
 
-### Neu
+### Added
 - three `code`
 
 ## [0.2.1]
@@ -49,7 +49,7 @@ class ParserTest(unittest.TestCase):
         entries = changelog.parse(SAMPLE)
         self.assertEqual([e["version"] for e in entries], ["0.3.0", "0.2.1", "0.2.0", "0.1.0"])
         self.assertEqual([e["date"] for e in entries], ["2026-10-07", "", "2026-10-06", ""])  # only real dates
-        self.assertEqual(entries[0]["body"], "### Neu\n- three `code`")
+        self.assertEqual(entries[0]["body"], "### Added\n- three `code`")
         self.assertEqual(entries[2]["body"], "- two")  # the second 0.2.0 is ignored
 
     def test_between(self):
@@ -71,7 +71,7 @@ class ParserTest(unittest.TestCase):
 
     def test_text_for_the_terminal(self):
         text = changelog.to_text(changelog.between(changelog.parse(SAMPLE), "0.2.0"))
-        self.assertEqual(text, "Sunak 0.3.0 (2026-10-07)\nNeu:\n- three code\n\nSunak 0.2.1\n- two point one")
+        self.assertEqual(text, "Sunak 0.3.0 (2026-10-07)\nAdded:\n- three code\n\nSunak 0.2.1\n- two point one")
 
     def test_the_changelog_of_this_repository(self):
         entries = changelog.parse((ROOT / "CHANGELOG.md").read_text(encoding="utf-8"))

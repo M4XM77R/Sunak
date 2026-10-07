@@ -295,8 +295,8 @@ Die Einstellung bleibt nach einem Neustart erhalten. Startest du Sunak mit `--ho
 | `sunak` | Sunak starten und im Browser öffnen (läuft es schon, wird nur der Browser geöffnet) |
 | `sunak status` | Läuft Sunak? Adresse und Autostart |
 | `sunak stop` | Das laufende Sunak beenden |
-| `sunak update` | Zeigt die Änderungen (Changelog), fragt nach, installiert dann die neueste Version und beendet ein laufendes Sunak (danach `sunak` starten); `--yes` fragt nicht |
-| `sunak changelog` | Was das nächste Update ändert, ohne etwas zu installieren |
+| `sunak update` | Shows the changes (changelog), asks, then installs the newest version and stops a running Sunak (then start `sunak`); `--yes` does not ask |
+| `sunak changelog` | What the next update changes, without installing anything |
 | `sunak version` | Installierte Version (auch `sunak --version`, und unten in den Settings) |
 | `sunak gpu` | Welche Grafikkarte Ollama nutzen kann |
 | `sunak logs [ZEILEN]` | Wo die Logdatei liegt, und ihre letzten Zeilen (Standard 40; `--data-dir PFAD` für einen anderen Datenordner) |
@@ -350,8 +350,8 @@ Beim Pipen hängt man Optionen mit `bash -s --` an: `curl -fsSL …/install.sh |
 ### Aktualisieren
 
 - **In der App:** Gibt es neue Versionen, erscheint oben links „Update available“. Ein Klick auf **Update** zeigt zuerst die Änderungen aus dem Changelog; erst **Install update** installiert und startet Sunak neu. Ohne Klick wird nie etwas installiert.
-- **Im Terminal:** `sunak update` zeigt zuerst die Änderungen und fragt „Install the update now? [y/N]“ (`j` und `ja` gehen auch). Bei Ja holt es die neueste Version und beendet ein laufendes Sunak, damit der nächste Start sie nutzt. `sunak update --yes` (oder `-y`) fragt nicht; ohne Terminal (Skripte, Autostart, der Update-Knopf) wird nie gefragt. Nur ansehen: `sunak changelog`. Ohne Installation (Klon): `git pull`.
-- **Changelog:** [`CHANGELOG.md`](CHANGELOG.md) im Hauptordner, ein Abschnitt je Version (`## [0.14.0] – 2026-10-07`, darunter kurze Punkte unter Neu, Geändert, Behoben, Entfernt). Bei der Update-Prüfung liest Sunak die Datei aus dem Stand auf dem Remote (`git show`) und zeigt die Abschnitte zwischen deiner und der neuen Version, noch bevor etwas installiert wird, in der App (Update-Knopf, Settings → Updates) und im Terminal. Fehlt die Datei oder ist sie kaputt, geht das Update trotzdem, mit dem Hinweis „No changelog available“. Jede Änderung an Sunak bekommt eine neue Version **und** einen Eintrag dort.
+- **Im Terminal:** `sunak update` first shows the changes and asks "Install the update now? [y/N]" (`j` and `ja` work too). On yes it fetches the newest version and stops a running Sunak, so the next start uses it. `sunak update --yes` (or `-y`) does not ask; without a terminal (scripts, autostart, the Update button) it never asks. To only look: `sunak changelog`. Without an installation (clone): `git pull`.
+- **Changelog:** [`CHANGELOG.md`](CHANGELOG.md) in the main folder, one section per version (`## [0.14.0] – 2026-10-07`, short points under Added, Changed, Fixed, Removed). During the update check, Sunak reads the file from the state on the remote (`git show`) and shows the sections between your version and the new one before anything is installed: in the app (Update button, Settings → Updates) and in the terminal. If the file is missing or broken, the update still works, with the note "No changelog available". Every change to Sunak gets a new version **and** an entry there.
 - **Jetzt prüfen:** Settings → Updates → „Check for updates now“ schaut sofort nach (auch wenn der Hinweis abgeschaltet ist) und zeigt „ist aktuell“, „Neue Version x.y.z verfügbar“ oder „Check failed“ mit dem Grund, warum die Prüfung nicht ging (kein Klon, kein Netz, kein Upstream-Branch). Gibt es eine neue Version, erscheinen darunter ihre Änderungen und daneben „Install update“.
 - **Prüfung:** Sunak schaut beim Start und danach alle 6 Stunden per `git fetch` nach, still und ohne Rückfragen; ohne Netz oder Klon gibt es einfach keinen Hinweis. Abschalten: Settings → Updates → Haken bei „Check for updates“ entfernen → Save settings.
 - Der Installer merkt sich den Klon, aus dem installiert wurde, und `sunak update` zieht dort per `git pull`. Für das öffentliche Repository braucht das keine Zugangsdaten (nur bei einem privaten Fork).

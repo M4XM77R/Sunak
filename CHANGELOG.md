@@ -1,142 +1,142 @@
 # Changelog
 
-Alle Änderungen an Sunak, neueste Version zuerst. Sunak zeigt die Einträge zwischen deiner und der neuen Version an, **bevor** du ein Update installierst: in der App (Update-Knopf, Settings → Updates) und im Terminal (`sunak update`, `sunak changelog`).
+All changes to Sunak, newest version first. Sunak shows the entries between your version and the new one **before** you install an update: in the app (Update button, Settings → Updates) and in the terminal (`sunak update`, `sunak changelog`).
 
-Format: ein Abschnitt je Version als `## [a.b.c] – JJJJ-MM-TT`, darunter kurze Punkte unter **Neu**, **Geändert**, **Behoben** oder **Entfernt**. Jede Änderung an Sunak bekommt eine neue Version und einen Eintrag hier.
+Format: one section per version, `## [a.b.c] – YYYY-MM-DD`, followed by short points under **Added**, **Changed**, **Fixed** or **Removed**. Every change to Sunak gets a new version and an entry here.
 
 ## [0.14.0] – 2026-10-07
 
-### Neu
-- Changelog: Vor dem Update zeigt Sunak, was sich ändert. In der App öffnet der Update-Knopf zuerst eine Liste der Änderungen (Installieren oder Abbrechen), und Settings → Updates zeigt sie unter „Check for updates now“.
-- `sunak update` zeigt die Änderungen und fragt „Install the update now? [y/N]“. Mit `--yes` (oder `-y`) und ohne Terminal (Skripte, Autostart, Update-Knopf) wird nicht gefragt.
-- `sunak changelog` zeigt die Änderungen des nächsten Updates, ohne etwas zu installieren; ist Sunak aktuell, die der installierten Version.
-- Fehlt die Datei `CHANGELOG.md` oder ist sie kaputt, geht das Update trotzdem, mit dem Hinweis „No changelog available“.
+### Added
+- Changelog: before an update, Sunak shows what changes. In the app, the Update button first opens the list of changes (install or cancel), and Settings → Updates shows it under "Check for updates now".
+- `sunak update` shows the changes and asks "Install the update now? [y/N]". With `--yes` (or `-y`) and without a terminal (scripts, autostart, the Update button) it does not ask.
+- `sunak changelog` shows the changes of the next update without installing anything; when Sunak is up to date, it shows those of the installed version.
+- If `CHANGELOG.md` is missing or broken, the update still works and Sunak says "No changelog available".
 
 ## [0.12.3] – 2026-10-07
 
-### Behoben
-- Der Geschwindigkeitstest des Token-Zählers hängt nicht mehr von der Uhr des Testrechners ab (schlug unter Windows fehl).
+### Fixed
+- The speed test of the token counter no longer depends on the clock of the test machine (it failed on Windows).
 
 ## [0.12.2] – 2026-10-07
 
-### Behoben
-- Token-Zähler: Gestoppte Claude-Antworten erzeugen keine Platzhalter-Ausgabe mehr, eine Null in `message_delta` überschreibt keine echten Zahlen, `stream_options` wird nur wiederholt, wenn der Server sie nennt, und die Ausgabezeit von Werkzeugaufrufen wird mitgezählt.
+### Fixed
+- Token counter: stopped Claude replies no longer produce placeholder output, a zero in `message_delta` no longer overwrites real numbers, `stream_options` is only retried when the server names them, and the output time of tool calls is counted.
 
 ## [0.12.1] – 2026-10-07
 
-### Entfernt
-- Token-Zähler: der Fortschrittsbalken bis 1.000.000.000 Tokens.
+### Removed
+- Token counter: the progress bar to 1,000,000,000 tokens.
 
 ## [0.12.0] – 2026-10-07
 
-### Neu
-- Token-Zähler je Profil: für alle Anbieter und den Agent, mit Tokens pro Sekunde und der Gesamtsumme.
+### Added
+- Token counter per profile: for all providers and the agent, with tokens per second and the total.
 
 ## [0.11.1] – 2026-10-07
 
-### Behoben
-- Der Recherche-Test erreicht nicht mehr die echte Websuche (hing in der macOS- und Windows-CI).
+### Fixed
+- The research test no longer reaches the real web search (it hung on macOS and Windows CI).
 
 ## [0.11.0] – 2026-10-07
 
-### Neu
-- Bildwünsche werden auch in der Tiefenrecherche erkannt; jede Prüfung steht im Log.
-- Websuche: Suchanfragen von Modellen (Qwen) werden bereinigt, DuckDuckGo Lite und Bing dienen als Ausweichen, und Sunak sagt, warum eine Suche scheiterte.
+### Added
+- Picture requests are recognised in Deep Research too; every check is logged.
+- Web search: search queries written by models (Qwen) are cleaned up, DuckDuckGo Lite and Bing serve as fallbacks, and Sunak says why a search failed.
 
 ## [0.10.1] – 2026-10-07
 
-### Geändert
-- Fehlerberichte wissen, dass das Repository öffentlich ist: strenges Schwärzen, Warnungen und Rückfrage vor dem automatischen Senden. Die Doku geht nicht mehr von einem privaten Repository aus.
+### Changed
+- Error reports know that the repository is public: strict masking, warnings and a confirmation before automatic sending. The docs no longer assume a private repository.
 
 ## [0.10.0] – 2026-10-07
 
-### Neu
-- Bildwünsche prüft das Chat-Modell (Einstellung, standardmäßig an); eindeutige Wünsche werden ohne Rückfrage gemalt.
+### Added
+- The chat model checks picture requests (setting, on by default); clear requests are painted without a question.
 
 ## [0.9.4] – 2026-10-07
 
-### Behoben
-- Bildwünsche scheitern nie still: Es gibt einen Hinweis, wenn Bilder nicht eingerichtet sind oder der Agent-Modus an ist, und jede Prüfung steht im Log.
+### Fixed
+- Picture requests never fail silently: there is a hint when pictures are not set up or agent mode is on, and every check is logged.
 
 ## [0.9.3] – 2026-10-07
 
-### Behoben
-- Kurze Bildwünsche ohne Verb werden erkannt („a picture of: …“, „Bild von …“, „draw a cat“).
+### Fixed
+- Short picture requests without a verb are recognised ("a picture of: ...", "Bild von ...", "draw a cat").
 
 ## [0.9.2] – 2026-10-07
 
-### Behoben
-- Bildwünsche werden zuverlässiger erkannt (Regeln plus Chat-Modell bei unklaren Nachrichten).
+### Fixed
+- Picture requests are recognised more reliably (rules plus the chat model for unclear messages).
 
 ## [0.9.1] – 2026-10-07
 
-### Geändert
-- Doku: Wer für Fehlerberichte ein GitHub-Konto braucht.
+### Changed
+- Docs: who needs a GitHub account for error reports.
 
 ## [0.9.0] – 2026-10-07
 
-### Neu
-- Fehlerberichte als GitHub-Issues: freiwillig, anonymisiert, mit Vorschau, Duplikat-Erkennung und Begrenzung der Anzahl.
+### Added
+- Error reports as GitHub issues: opt-in, anonymised, with preview, duplicate detection and a rate limit.
 
 ## [0.8.1] – 2026-10-07
 
-### Geändert
-- Doku: die Versionsregel a.b.c.
+### Changed
+- Docs: the a.b.c version policy.
 
 ## [0.8.0] – 2026-10-07
 
-### Neu
-- Besseres Logging im Terminal und in einer Logdatei von höchstens 50 MB (`sunak logs`).
+### Added
+- Better logging in the terminal and in a log file of at most 50 MB (`sunak logs`).
 
 ## [0.7.1] – 2026-10-07
 
-### Behoben
-- Der Warteschlangen-Test hängt nicht mehr vom Start der Threads ab (schlug in der macOS-CI fehl).
+### Fixed
+- The queue test no longer depends on thread start timing (it failed on macOS CI).
 
 ## [0.7.0] – 2026-10-07
 
-### Neu
-- Bildwünsche im Chat werden automatisch mit einem verbesserten Prompt gemalt.
-- Anfragen an Modelle laufen in einer Warteschlange (der Reihe nach).
+### Added
+- Picture requests in the chat are made automatically with an improved prompt.
+- Requests to models run in a queue (first come, first served).
 
 ## [0.6.2] – 2026-10-07
 
-### Geändert
-- Doku mit den Hinweisen zur Update-Prüfung zusammengeführt.
+### Changed
+- Docs merged with the notes on the update check.
 
 ## [0.6.1] – 2026-10-07
 
-### Geändert
-- Doku neu geschrieben und gegen den Code geprüft; der Knopf zur Update-Prüfung ist dokumentiert.
+### Changed
+- Docs rewritten and checked against the code; the button for the update check is documented.
 
 ## [0.6.0] – 2026-10-07
 
-### Neu
-- Settings → Updates: Knopf „Check for updates now“ prüft sofort und nennt den Grund, wenn es nicht ging.
+### Added
+- Settings → Updates: the "Check for updates now" button checks right away and gives the reason when it fails.
 
 ## [0.5.0] – 2026-10-07
 
-### Geändert
-- Versionsnummer angepasst (0.4.0 war schon für die Gedächtnis-Funktion vergeben).
+### Changed
+- Version number adjusted (0.4.0 was already taken by the memory feature).
 
 ## [0.4.0] – 2026-10-07
 
-### Neu
-- Sunak merkt sich Fakten aus Chats von selbst (Gedächtnis).
-- Chat-Optionen in einem Aufklappmenü, damit das Textfeld auf dem Handy Platz hat.
+### Added
+- Sunak remembers facts from chats by itself (memory).
+- Composer options in a drop-up menu so the text field has room on phones.
 
 ## [0.3.0] – 2026-10-07
 
-### Neu
-- E-Mail, eigene Linien-Icons statt Emojis und Einrichtung der Bildgenerierung; die Versionsregel ist dokumentiert.
+### Added
+- Mail, own line icons instead of emojis, and guided image setup; the versioning rule is documented.
 
 ## [0.2.0] – 2026-10-06
 
-### Neu
-- Wissensbasis (Dokumente mit eigenem PDF-Leser, Volltextsuche), Chat-Suche und -Export, Personas.
-- Autostart, Desktop-Icon und `sunak stop`.
-- Update-Hinweis mit Update-Knopf, Sunak zieht Updates per `git pull` aus dem Klon.
-- Mehrere Profile mit eigenen Daten, optionaler PIN und Admin-Rechten; Themes; Oberfläche auf Deutsch.
-- Kalender (CalDAV, ICS), Spracheingabe und Vorlesen, MCP-Werkzeuge, Websuche mit Quellen, Bilder verstehen (Vision), Zugriff vom Handy per QR-Code.
-- Bildgenerierung (Automatic1111, ComfyUI und ein eigenes Programm mit Modell-Downloads), GPU-Erkennung.
-- `sunak uninstall`, übersichtliches `sunak -h` mit Hilfe je Befehl.
+### Added
+- Knowledge base (documents with an own PDF reader, full-text search), chat search and export, personas.
+- Autostart, desktop icon and `sunak stop`.
+- Update hint with an Update button; Sunak updates with `git pull` in the clone.
+- Several profiles with their own data, optional PIN and admin rights; themes; interface in German.
+- Calendar (CalDAV, ICS), speech input and reading aloud, MCP tools, web search with sources, image understanding (vision), phone access with a QR code.
+- Image generation (Automatic1111, ComfyUI and an own program with model downloads), GPU detection.
+- `sunak uninstall`, a clearer `sunak -h` with help per command.
