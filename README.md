@@ -324,7 +324,7 @@ Beim Pipen hängt man Optionen mit `bash -s --` an: `curl -fsSL …/install.sh |
 - **Jetzt prüfen:** Settings → Updates → „Check for updates now“ schaut sofort nach (auch wenn der Hinweis abgeschaltet ist) und zeigt „ist aktuell“, „Neue Version x.y.z verfügbar“ oder „Check failed“ mit dem Grund, warum die Prüfung nicht ging (kein Klon, kein Netz, kein Upstream-Branch). Gibt es eine neue Version, erscheint daneben „Install update“.
 - **Prüfung:** Sunak schaut beim Start und danach alle 6 Stunden per `git fetch` nach, still und ohne Rückfragen; ohne Netz oder Klon gibt es einfach keinen Hinweis. Abschalten: Settings → Updates → Haken bei „Check for updates“ entfernen → Save settings.
 - Bei einem privaten Repository merkt sich der Installer den Klon, aus dem installiert wurde, und `sunak update` zieht dort per `git pull`.
-- **Versionsnummer:** `sunak version` (steht auch unten in Settings). Jede Änderung erhöht die Version (`sunak/__init__.py`): Patch für Fehlerbehebungen und Doku, Minor für neue Funktionen; Sunak bleibt unter 1.0, bis der Maintainer 1.0 freigibt.
+- **Versionsnummer:** `sunak version` (steht auch unten in Settings). Die Version hat die Form **a.b.c** (`sunak/__init__.py`) und steigt bei jeder Änderung: **c** bei kleinen Fixes und Doku-Korrekturen (0.8.0 → 0.8.1), **b** bei kleineren Updates wie neuen Funktionen (0.8.1 → 0.9.0, c wird 0), **a** nur für große Updates, und die entscheidet allein der Maintainer. Solange er 1.0 nicht freigibt, bleibt a bei 0.
 
 ### Deinstallieren
 
