@@ -600,7 +600,20 @@ async function runChat(payload, localUserMsg) {
   renderMessages();
   if (error) $('#messages').append(el('div', { class: 'msg' }, el('div', { class: 'avatar warn' }, icon('alert')), el('div', { class: 'body err' }, error)));
   $('#messages').scrollTop = $('#messages').scrollHeight;
+  if (!error && !stopped) remember(s.id);
   return refused ? 'refused' : 'ok';
+}
+
+// after an answer: the server picks lasting facts about the user from it (sunak/memory.py); say what it kept, with Undo
+async function remember(sid) {
+  if (!state.settings?.use_memory) return;
+  let r;
+  try { r = await api(`/api/sessions/${sid}/remember`, { method: 'POST', body: {} }); } catch (e) { return; }
+  if (!r.added?.length) return;
+  toast(tr('Remembered: {text}', { text: r.added.map((n) => n.content).join(' · ') }), { label: tr('Undo'), fn: async () => {
+    await Promise.all(r.added.map((n) => api(`/api/notes/${n.id}`, { method: 'DELETE' }).catch(() => {})));
+    toast('Forgotten');
+  } });
 }
 
 /* ---------------- Image generation ----------------
@@ -2737,7 +2750,13 @@ async function loadNotes() {
   for (const n of notes) {
     const c = el('div', { class: 'c', contenteditable: 'true', spellcheck: 'false', style: 'white-space:pre-wrap' }, n.content);
     c.onblur = () => { const v = c.innerText.trim(); if (v && v !== n.content) { n.content = v; api(`/api/notes/${n.id}`, { method: 'PATCH', body: { content: v } }).then(() => toast('Saved')); } };
-    box.append(el('div', { class: `note${n.is_memory ? ' memory' : ''}` }, c, el('div', { class: 'tools' },
+    // memories Sunak picked up by itself say where from (the chat may be gone)
+    const date = new Date(n.created * 1000).toLocaleDateString();
+    const origin = !n.source ? null : n.source_title
+      ? el('div', { class: 'origin muted small link', title: tr('Open this chat'), ...KEY_BUTTON, onclick: () => openSession(n.source) },
+        icon('sparkles'), tr('Remembered from the chat “{title}”, {date}', { title: n.source_title, date }))
+      : el('div', { class: 'origin muted small' }, icon('sparkles'), tr('Remembered from a chat, {date}', { date }));
+    box.append(el('div', { class: `note${n.is_memory ? ' memory' : ''}` }, el('div', { class: 'note-main' }, c, origin), el('div', { class: 'tools' },
       el('label', { class: 'check', title: 'Remember in chats' }, el('input', { type: 'checkbox', checked: !!n.is_memory,
         onchange: async (e) => { await api(`/api/notes/${n.id}`, { method: 'PATCH', body: { is_memory: e.target.checked } }); loadNotes(); } }), 'memory'),
       el('button', { class: 'icon-btn', title: 'Delete', onclick: async () => { await api(`/api/notes/${n.id}`, { method: 'DELETE' }); loadNotes(); } }, icon('trash')))));
@@ -2774,6 +2793,7 @@ function renderSettings() {
   $('#temperature').value = s.temperature;
   $('#tempVal').textContent = s.temperature;
   $('#useMemory').checked = s.use_memory;
+  $('#autoMemory').checked = s.auto_memory;
   $('#mailNotify').checked = s.mail_notify;
   renderMailDesktop();
   $('#checkUpdates').checked = s.check_updates;
@@ -2943,7 +2963,7 @@ $('#saveSettings').onclick = async () => {
       image_gen_size: Number($('#imageGenSize').value), image_gen_steps: Number($('#imageGenSteps').value),
     };
     state.settings = await api('/api/settings', { method: 'PUT', body: { ...install,
-      system_prompt: $('#sysPrompt').value, temperature: parseFloat($('#temperature').value), use_memory: $('#useMemory').checked,
+      system_prompt: $('#sysPrompt').value, temperature: parseFloat($('#temperature').value), use_memory: $('#useMemory').checked, auto_memory: $('#autoMemory').checked,
       mail_notify: $('#mailNotify').checked, accent: s.accent, theme: s.theme, default_model: $('#defaultModel').value, personas: draftPersonas,
     } });
     applyLook();

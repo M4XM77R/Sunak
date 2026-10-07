@@ -260,6 +260,7 @@
     <section class="view" id="view-notes">
       <div class="pad narrow">
         <p class="muted">Notes marked as <b>memory</b> are remembered in every chat (e.g. “My name is Max”, “Answer in German”).</p>
+        <p class="muted small">Sunak also adds memories from chats by itself; those say which chat they came from. Click a note to edit it.</p>
         <form id="noteForm" class="inline-form">
           <textarea id="noteInput" rows="2" placeholder="New note…"></textarea>
           <label class="check"><input type="checkbox" id="noteMemory" checked> memory</label>
@@ -328,6 +329,8 @@
         <label>System prompt<textarea id="sysPrompt" rows="3"></textarea></label>
         <label>Creativity (temperature): <b id="tempVal"></b><input type="range" id="temperature" min="0" max="1.5" step="0.1"></label>
         <label class="check"><input type="checkbox" id="useMemory"> Use memory notes in chats</label>
+        <label class="check"><input type="checkbox" id="autoMemory"> Remember things about me from chats by itself</label>
+        <p class="muted small">After an answer the chat’s model notes lasting facts, e.g. your name or how you like answers. Passwords and keys are never kept. You see them under Notes &amp; Memory, where you can edit or delete them. “Remember that …” in a chat is always kept.</p>
 
         <h2>Voice</h2>
         <p class="muted small">The microphone next to the message box turns speech into text, the speaker under an answer reads it aloud.</p>

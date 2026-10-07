@@ -38,6 +38,7 @@ Browser (sunak/static)  ──HTTP/JSON, NDJSON-Streams──▶  sunak/server.p
 | `sunak/modelsearch.py` | Modellsuche in der Ollama-Bibliothek (ollama.com) und auf Hugging Face (Repositories, Dateien mit Größe, Quantisierung, Lizenz) |
 | `sunak/speech.py` | Spracheingabe: Aufnahme an einen lokalen Whisper-Server weiterreichen (whisper.cpp oder OpenAI-kompatibel) |
 | `sunak/knowledge.py` | Wissensbasis: Abschnitte bilden, suchen, passende Abschnitte für den Chat auswählen |
+| `sunak/memory.py` | Automatisches Gedächtnis: Fakten über den Nutzer aus dem letzten Austausch, ohne Geheimnisse und Duplikate |
 | `sunak/static/` | Oberfläche: `index.html`, `app.js` (gesamte Logik), `app.css` (inklusive Themes), `theme.js` (setzt das Theme vor dem ersten Zeichnen), `icons.js` (eigene Icons), `i18n.js` und `lang-de.js` (Sprachen), `login.html`, Icon, PWA-Manifest |
 | `tests/test_server.py` | End-to-End-Tests gegen simulierte Backends |
 | `tests/test_mail.py` | E-Mail gegen simulierte IMAP- und SMTP-Server, dazu der Selbsttest |
@@ -54,6 +55,7 @@ Browser (sunak/static)  ──HTTP/JSON, NDJSON-Streams──▶  sunak/server.p
 4. `providers.chat_stream` streamt die Antwort als Paare `("think" | "text", stück)`.
 5. Der Server reicht jedes Stück sofort als NDJSON-Zeile an den Browser weiter, zum Beispiel `{"type": "text", "t": "Hallo"}`.
 6. Am Ende wird die Antwort gespeichert. Der Denkprozess bleibt dabei in `<think>`-Tags eingebettet. Bricht die Verbindung ab, bleibt die Teilantwort erhalten.
+7. Danach ruft `app.js` `POST /api/sessions/<id>/remember` auf (nicht im Agent-Modus, nicht nach Bildern, nicht bei ausgeschaltetem Gedächtnis). `memory.extract` lässt das Modell des Chats dauerhafte Fakten aus der letzten Frage und Antwort ziehen; neue werden Notizen mit `is_memory = 1` und `source` = Chat-ID. Ohne „Sich Dinge … selbst merken“ (`auto_memory`) geschieht das nur, wenn der Nutzer ausdrücklich „merk dir …“ schreibt. Der Browser zeigt das Gemerkte mit Rückgängig.
 
 „Neu generieren“ und „Bearbeiten“ schicken `truncate_from` mit. Der Server löscht dann diese Nachricht und alle späteren, bevor er antwortet.
 
@@ -296,7 +298,7 @@ Alle Daten liegen in einer SQLite-Datei: `~/.sunak/sunak.db`, der Ordner lässt 
 | `messages` | Nachrichten der Chats (werden mit dem Chat gelöscht); `meta` (JSON) enthält z. B. die Quellen oder die Namen angehängter Bilder (Dateien in `images/` neben der Datenbank) |
 | `kb_files`, `kb_chunks`, `kb_fts` | Wissensbasis: Dateien, ihre Textabschnitte und der Volltextindex |
 | `documents` | Markdown-Dokumente |
-| `notes` | Notizen; `is_memory = 1` bedeutet „im Gedächtnis“ |
+| `notes` | Notizen; `is_memory = 1` bedeutet „im Gedächtnis“, `source` ist die Chat-ID, wenn Sunak sie selbst angelegt hat |
 | `settings` | Schlüssel-Wert-Paare als JSON: `prefs` (u. a. Theme, Sprache, Bildgenerierung), `providers`, `personas` (fehlt der Eintrag, gelten `DEFAULT_PERSONAS`), `mail_accounts`, `calendars`, `mcp_servers`, `password_hash`, `secret` |
 | `calendar_events` | Sunaks eigener Kalender: `uid`, iCalendar-Text, Änderungszeit |
 

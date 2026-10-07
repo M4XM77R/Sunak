@@ -27,8 +27,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlparse
 
-from . import (__version__, agent, cal, extract, gpu, imagegen, images, knowledge, mail, mcp, modelsearch, ollama,
-               providers, qr, research, sdcpp, speech, updates)
+from . import (__version__, agent, cal, extract, gpu, imagegen, images, knowledge, mail, mcp, memory, modelsearch,
+               ollama, providers, qr, research, sdcpp, speech, updates)
 from .db import DB, new_id
 
 STATIC = Path(__file__).parent / "static"
@@ -40,6 +40,7 @@ DEFAULT_SETTINGS = {
     "system_prompt": "You are Sunak, a helpful, honest and concise assistant. Use Markdown when it helps.",
     "temperature": 0.7,
     "use_memory": True,
+    "auto_memory": True,     # Sunak picks up lasting facts about the user from chats by itself (memory.py)
     "accent": "",       # "" = the theme's own accent color
     "theme": "dark",
     "language": "",     # "" = the browser's language; else one of LANGUAGES
@@ -1641,6 +1642,31 @@ class Handler(BaseHTTPRequestHandler):
         self.app.db.delete_note(nid)
         self.send_json({"ok": True})
 
+    def remember(self, sid):
+        """POST /api/sessions/<id>/remember: after an answer, let the chat's model pick lasting facts about
+        the user from the last exchange and store them as memory notes (see memory.py). Runs when memory
+        is on and either automatic memory is on or the user asked for something to be remembered; not
+        after agent runs or pictures. Returns {added: [notes]} (and `error` when the model failed)."""
+        db, s = self.app.db, self.app.settings()
+        session = db.get_session(sid)
+        if not session:
+            return self.error("Session not found", 404)
+        msgs = session["messages"]
+        if (not s["use_memory"] or len(msgs) < 2 or msgs[-1]["role"] != "assistant" or msgs[-2]["role"] != "user"
+                or msgs[-1]["meta"].get("agent") or msgs[-1]["meta"].get("imagegen")):
+            return self.send_json({"added": []})
+        history = [{"role": m["role"], "content": ATTACHED_RE.sub("", m["content"]).strip() if m["role"] == "user"
+                    else m["content"]} for m in msgs[-3:]]
+        explicit = memory.is_explicit(history[-2]["content"])
+        if not history[-2]["content"] or not (s["auto_memory"] or explicit):
+            return self.send_json({"added": []})
+        try:
+            prov, model = self.app.resolve(session["model"] or None)
+            facts = memory.extract(prov, model, history, db.memories(), explicit)
+        except providers.ProviderError as e:
+            return self.send_json({"added": [], "error": str(e)})
+        self.send_json({"added": [db.add_note(f, True, sid) for f in facts]})
+
     # knowledge base
     def file_upload(self):
         """Decode an upload {name, data (base64)} and return (name, bytes, text). Raises ValueError."""
@@ -2375,6 +2401,7 @@ ROUTES = [
     (r"/api/notes", "POST", Handler.create_note),
     (rf"/api/notes/{ID}", "PATCH", Handler.patch_note),
     (rf"/api/notes/{ID}", "DELETE", Handler.delete_note),
+    (rf"/api/sessions/{ID}/remember", "POST", Handler.remember),
 ]
 
 
