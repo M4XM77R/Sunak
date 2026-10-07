@@ -33,19 +33,23 @@ class GateTest(unittest.TestCase):
             seen = []
             with jobqueue.slot("fifo", 1, notify=seen.append):
                 order.append(i)
-                time.sleep(0.15)
+                time.sleep(0.5)
             places[i] = seen
         threads = []
         for i in range(4):
             t = threading.Thread(target=worker, args=(i,))
             t.start()
             threads.append(t)
-            time.sleep(0.03)
+            for _ in range(500):  # the next one starts only when this one is in the line (slow machines)
+                running, waiting = jobqueue.gate("fifo").snapshot()
+                if running + waiting == i + 1:
+                    break
+                time.sleep(0.01)
         for t in threads:
             t.join()
         self.assertEqual(order, [0, 1, 2, 3])
         self.assertEqual(places[0], [])                  # was served at once
-        self.assertEqual(places[3][0], 3)                # told its place, then moved up
+        self.assertEqual(places[3][0], 3)                # told its place at once, then moved up
         self.assertEqual(places[3][-1], 0)               # 0 = its turn
         self.assertEqual(places[3], sorted(places[3], reverse=True))
         self.assertEqual(jobqueue.gate("fifo").snapshot(), (0, 0))
