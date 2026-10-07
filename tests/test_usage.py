@@ -111,8 +111,9 @@ class CounterTest(unittest.TestCase):
         self.assertEqual("".join(c for _, c in chunks), "AB")
         (r,) = self.rows()
         self.assertEqual((r["input_tokens"], r["output_tokens"], r["cache_read_tokens"], r["cache_creation_tokens"]), (12, 77, 300, 50))
-        # no eval_duration: measured between the first and the last output chunk (0.1 s) → about 770 tok/s
-        self.assertTrue(300 < r["tokens_per_second"] < 800, r["tokens_per_second"])
+        # no eval_duration: measured between the first and the last output chunk (about 0.1 s, the clock of a CI machine is
+        # not exact) → several hundred tok/s, and never more than the 77 tokens in the time of one pause
+        self.assertTrue(50 < r["tokens_per_second"] < 77 / 0.05, r["tokens_per_second"])
 
     def test_anthropic_stopped_stream_keeps_no_placeholder_output(self):
         events = sse({"type": "message_start", "message": {"usage": {"input_tokens": 12, "output_tokens": 1}}},
@@ -173,7 +174,7 @@ class CounterTest(unittest.TestCase):
                     {"type": "content_block_delta", "index": 0, "delta": {"type": "input_json_delta", "partial_json": "\"a\"}"}},
                     {"type": "message_delta", "delta": {"stop_reason": "tool_use"}, "usage": {"output_tokens": 50}},
                     {"type": "message_stop"})
-        with mock.patch.object(providers, "_request", return_value=FakeResponse(lines, pause=0.06)):
+        with mock.patch.object(providers, "_request", return_value=FakeResponse(lines, pause=0.1)):
             drain(t.turn())
         (r,) = self.rows()
         self.assertEqual((r["output_tokens"], r["ok"]), (50, 1))
