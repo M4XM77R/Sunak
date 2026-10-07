@@ -6,6 +6,7 @@ import base64
 import binascii
 import json
 import random
+import re
 import threading
 import time
 import urllib.error
@@ -22,6 +23,17 @@ MAX_STEPS = 100
 MAX_BYTES = 40 * 1024 * 1024
 TIMEOUT = 900  # seconds for one picture (a slow CPU can take minutes)
 POLL = 1.0     # seconds between progress checks
+
+
+IMPROVE_SYSTEM = (
+    "You write prompts for an image generator (Stable Diffusion). The user asked for a picture. Write ONE "
+    "English prompt of 25 to 50 words that describes the picture: the subject, setting, composition, lighting, "
+    "style and mood, as short phrases separated by commas. Keep everything the user asked for and do not add "
+    "people, text or logos they did not ask for. Reply with the prompt only: no quotes, no explanation, no "
+    "list, no 'Prompt:'.")
+MAX_PROMPT = 700
+_LANDSCAPE = re.compile(r"\b(querformat|breitbild|panorama\w*|landscape|widescreen|wide|16:9|3:2)\b", re.I)
+_PORTRAIT = re.compile(r"\b(hochformat|portrait|poster|vertical\w*|9:16|2:3)\b", re.I)
 
 
 class ImageGenError(Exception):
@@ -226,3 +238,30 @@ def _comfy(cfg, prompt, negative, width, height, steps, seed, progress, cancelle
                 raise ImageGenError("ComfyUI finished without a picture")
         progress(None)
         time.sleep(poll)
+
+
+def aspect_from_text(text):
+    """'landscape' or 'portrait' when the request names a format, else 'square'."""
+    if _LANDSCAPE.search(text):
+        return "landscape"
+    if _PORTRAIT.search(text):
+        return "portrait"
+    return "square"
+
+
+def improve_messages(request):
+    """The chat model's task: turn the user's request into a prompt for the image model."""
+    return [{"role": "system", "content": IMPROVE_SYSTEM}, {"role": "user", "content": request}]
+
+
+def clean_prompt(answer, fallback):
+    """The prompt from the chat model's answer: first paragraph, without quotes, markup or a 'Prompt:' label.
+    `fallback` (the user's own description) when the answer is empty or not a prompt."""
+    text = (answer or "").strip()
+    text = re.sub(r"^```\w*\s*|\s*```$", "", text).strip()
+    text = (text.split("\n\n")[0] if text else "").strip()
+    text = re.sub(r"^(?:\*\*)?(?:prompt|image prompt|bild-?prompt)(?:\*\*)?\s*:\s*", "", text, flags=re.I)
+    text = " ".join(text.split()).strip(" \"'`*“”„")
+    if not text or len(text) > MAX_PROMPT or len(text) < 8:
+        return fallback
+    return text

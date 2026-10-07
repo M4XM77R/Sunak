@@ -126,7 +126,7 @@ Die Daten liegen dann im Ordner `data/` neben der Compose-Datei (Ollama-Modelle 
 | Chat exportieren | Download-Knopf oben rechts → Markdown, JSON oder Drucken/PDF |
 | Alles sichern | Settings → Data → Download backup: eine JSON-Datei mit Chats, Dokumenten, Notizen, Wissensbasis, Einstellungen, Mail- und Kalender-Konten, aber ohne API-Keys und Passwörter |
 
-**Das Eingabefeld:** Links daneben stehen die Büroklammer (Dateien und Bilder anhängen), das **+** und rechts Senden. Das **+**-Menü klappt nach oben auf und enthält Knowledge base, Web search, Agent mode, Tools (MCP), Make a picture und Speak, jeweils mit Ein-/Aus-Schalter. Agent mode erscheint nur, wenn er in den Settings eingeschaltet ist, Tools (MCP) nur, wenn ein Server eingeschaltet ist, beide nur für Admin-Profile; Make a picture erscheint, sobald Bildgenerierung an ist (oder noch ein Schritt fehlt), Speak, solange die Spracheingabe nicht ausgeschaltet ist. So bleibt am Handy Platz zum Tippen.
+**Das Eingabefeld:** Links daneben stehen die Büroklammer (Dateien und Bilder anhängen), das **+** und rechts Senden. Das **+**-Menü klappt nach oben auf und enthält Knowledge base, Web search, Agent mode, Tools (MCP) und Speak, jeweils mit Ein-/Aus-Schalter. Agent mode erscheint nur, wenn er in den Settings eingeschaltet ist, Tools (MCP) nur, wenn ein Server eingeschaltet ist, beide nur für Admin-Profile; Speak, solange die Spracheingabe nicht ausgeschaltet ist. So bleibt am Handy Platz zum Tippen.
 
 **Dateien anhängen:** Büroklammer oder Drag & Drop. Text, PDF, Word und PowerPoint werden gelesen und zur Nachricht gelegt. Für viele Dateien dauerhaft ist die Wissensbasis besser.
 
@@ -175,17 +175,21 @@ MCP-Server (Model Context Protocol) geben dem Modell Werkzeuge: Dateien, Webseit
 
 Vor jedem Werkzeugaufruf fragt Sunak („Allow“, „Allow … in this chat“, „Deny“) und zeigt die Eingabe. Nur Admin-Profile richten Server ein und nutzen sie; ein Programm-Server läuft mit deinen Rechten.
 
+### Mehrere Nutzer gleichzeitig
+
+Sunak kann von mehreren Personen gleichzeitig benutzt werden (Handy-Zugriff und Profile siehe oben). Damit ein Rechner nicht an mehreren großen Anfragen gleichzeitig erstickt, stehen Anfragen an ein Modell in einer Warteschlange, **first in, first out**: Wer zuerst fragt, wird zuerst bedient. Jedes Backend hat seine eigene Reihe (jedes Chatmodell-Programm für sich, der Bildgenerator für sich). Wartet deine Anfrage, steht im Chat „Waiting in the queue: place n“ (im Agent-Modus als Hinweis, bei Bildern im Platzhalter); sobald sie dran ist, läuft sie wie gewohnt. **Stop** oder das Schließen der Seite nimmt eine wartende Anfrage aus der Reihe. Ein lokales Modell bearbeitet eine Anfrage nach der anderen (`SUNAK_MODEL_SLOTS` ändert das), ein Modell im Internet vier gleichzeitig. Im Agent-Modus zählt jeder Modellaufruf einzeln; das Warten auf deine Bestätigung blockiert niemanden.
+
 ### Bilder erzeugen
 
-Der Bild-Knopf („Make a picture“ im **+**-Menü) macht aus einer Beschreibung ein Bild. Format wählbar (quadratisch, hoch, quer), optional was nicht im Bild sein soll; Fortschrittsbalken, Stop, „Noch einmal“ (Again) für eine neue Variante, Download. Die Bilder bleiben im Chat. Standardmäßig aus.
+Bildwünsche im Chat macht Sunak von selbst, ohne Rückfrage und mit jedem Chatmodell: Schreibst du „mach mir ein Bild von einem Leuchtturm im Querformat“ oder „generate an image of …“ (Deutsch und Englisch erkannt; nicht bei Anhängen und im Agent-Modus), schreibt zuerst das Chatmodell aus deiner Bitte einen besseren englischen Prompt, und der geht an das Bildmodell. Unter dem Bild stehen der „Improved prompt“, Größe, Seed und Schritte; „Again“ malt mit demselben Prompt eine neue Variante, Download und Stop (bricht auch eine wartende Anfrage ab) gibt es auch. Das Format folgt dem Wunsch (Querformat/landscape, Hochformat/portrait, sonst quadratisch). Klappt die Verbesserung nicht, geht deine Beschreibung unverändert an das Bildmodell. Die Bilder bleiben im Chat. Standardmäßig ist die Bildgenerierung aus; solange sie nicht eingerichtet ist, fragt Sunak bei einem Bildwunsch, ob es die Einrichtung zeigen soll (OK) oder die Nachricht normal senden (Abbrechen).
 
 **Mit Sunaks eigenem Bildprogramm (stable-diffusion.cpp), ohne Python-Pakete:**
 
 1. Models → Filter „Image“ → „Set up the image program“: Sunak schlägt die passende Version vor (NVIDIA: CUDA, andere Grafikkarten: Vulkan, Mac: Metal, sonst nur Prozessor), Install. Das Programm ist je nach Version etwa 20 bis 500 MB groß (CUDA am größten).
 2. Ein Bildmodell herunterladen: SD-Turbo (für den Anfang, 5 GB), SD 1.5, SDXL-Turbo, SDXL oder per Suche von Hugging Face, mit Lizenzhinweis, Fortschritt, Pause/Fortsetzen und Löschen. Modelle sind 4 bis 8 GB groß.
-3. Im Chat „Make a picture“ einschalten. Sunak führt durch die Schritte: Fehlt noch etwas, steht auf der Models-Seite „Next step“, und der blasse Bild-Knopf sagt per Klick, was fehlt. Sind Programm und Modell da, wählt Sunak das Modell selbst und schaltet den Bildmodus ein.
+3. Im Chat um ein Bild bitten. Sunak führt durch die Schritte: Fehlt noch etwas, steht auf der Models-Seite „Next step“, und ein Bildwunsch im Chat nennt, was fehlt. Sind Programm und Modell da, wählt Sunak das Modell selbst.
 
-Auch im normalen Chat: Schreibst du „generiere ein Bild von …“, fragt Sunak, ob es das Bild mit dem Bildgenerator machen soll (OK) oder die Nachricht normal senden (Abbrechen). Mit Grafikkarte dauert ein Bild Sekunden, nur mit dem Prozessor eine bis mehrere Minuten. Fehlermeldungen des Programms erscheinen im Chat.
+Mit Grafikkarte dauert ein Bild Sekunden, nur mit dem Prozessor eine bis mehrere Minuten. Fehlermeldungen des Programms erscheinen im Chat.
 
 **Mit Automatic1111 / Forge / ComfyUI:** Ein Stable-Diffusion-Programm installieren, z. B. [Automatic1111](https://github.com/AUTOMATIC1111/stable-diffusion-webui) bzw. Forge (mit der Option `--api` starten) oder [ComfyUI](https://github.com/comfyanonymous/ComfyUI), und ein Modell hineinlegen. Dann Settings → Image generation → Programm wählen, Adresse leer lassen für die übliche lokale (`http://127.0.0.1:7860` bzw. `:8188`), „Test“ zeigt die Modelle → Save settings. Für SDXL- und Flux-Modelle die Bildgröße 1024 px wählen.
 
@@ -286,6 +290,7 @@ Alles Wichtige stellst du in der Oberfläche ein (Settings). Optional per Umgebu
 | `SUNAK_PASSWORD` | – | Passwort beim Start setzen |
 | `SUNAK_NO_BROWSER` | – | Auf einen beliebigen Wert setzen: Browser nicht öffnen |
 | `SUNAK_DEBUG` | – | Auf einen beliebigen Wert setzen: Zugriffslog im Terminal |
+| `SUNAK_MODEL_SLOTS` | `1` | Wie viele Anfragen ein lokales Modell (Ollama auf diesem Rechner oder im LAN) gleichzeitig bearbeitet; weitere warten in der Reihe. Modelle im Internet (Claude, OpenAI) nehmen vier gleichzeitig |
 | `SUNAK_ALLOWED_HOSTS` | – | Weitere Hostnamen, unter denen Sunak erreichbar ist, kommagetrennt (`*` für alle). Erlaubt sind sonst `localhost`, IP-Adressen, Namen ohne Punkt und `*.local` (Schutz gegen DNS-Rebinding) |
 | `SUNAK_GPU` | – | Nur für Docker: `nvidia` oder `amd`, damit die CPU-Warnung auch dort greift (setzen die GPU-Compose-Dateien selbst) |
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama-Adresse beim ersten Start |
@@ -346,7 +351,8 @@ Ohne Terminal wird nichts davon gelöscht. Zweimal ausführen schadet nicht.
 | Seite meldet „This address is not allowed“ | Du greifst über einen Hostnamen zu, den Sunak nicht kennt: in `SUNAK_ALLOWED_HOSTS` eintragen |
 | Keine Modelle in der Auswahl | Läuft Ollama? Models → „Start Ollama“ bzw. „Install Ollama“. Oder unter Settings → Providers einen Cloud-Anbieter eintragen |
 | Antworten kommen sehr langsam | Wahrscheinlich läuft das Modell auf dem Prozessor: `sunak gpu` und die Models-Seite zeigen es. Ein kleineres Modell wählen |
-| Bild-Knopf ist blass | Es fehlt noch ein Schritt (Programm oder Modell); ein Klick auf den Knopf nennt ihn |
+| Ein Bildwunsch im Chat wird nicht gemalt, sondern es kommt eine Rückfrage | Die Bildgenerierung ist noch nicht eingerichtet; „OK“ nennt den fehlenden Schritt (Programm oder Modell) |
+| „Waiting in the queue: place n“ | Das Modell beantwortet gerade andere Anfragen; deine kommt der Reihe nach dran. **Stop** zieht sie zurück |
 | Handy erreicht Sunak nicht | Passwort gesetzt? Selbes WLAN? Firewall des Computers: Python erlauben |
 | Mail-Anmeldung abgelehnt | App-Passwort statt normalem Passwort nutzen, bei GMX/WEB.DE IMAP freischalten; Microsoft-Konten gehen oft nur mit OAuth, das Sunak nicht kann |
 | Mikrofon tut nichts | Es geht nur auf `localhost` oder mit https, nicht über den Handy-Zugriff |

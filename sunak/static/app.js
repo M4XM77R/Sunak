@@ -499,6 +499,8 @@ function stopBusy() {
   if (state.busy) state.busy.abort();
 }
 
+// a request waits for the model while others are served first (sunak/jobqueue.py): say its place
+const queueText = (n) => tr('Waiting in the queue: place {n}', { n });
 let sending = false;
 async function send() {
   if (state.busy || sending) return;
@@ -506,10 +508,9 @@ async function send() {
   try { await sendNow(); } finally { sending = false; }
 }
 async function sendNow() {
-  if (imagineOn()) return sendImagine();
   let text = promptEl.value.trim();
   if (!text && !state.attachments.length) return;
-  if (!state.attachments.length && imageRequest(text) && await offerPicture(text)) return;
+  if (!state.attachments.length && !agentOn() && imageRequest(text) && await pictureRequest(text)) return;
   if (!currentModel()) { toast('Install or connect a model first'); show('settings'); return; }
   if (state.attachments.some((a) => a.loading)) { toast('Still reading your files…'); return; }
   if (agentOn() && !agentFolder()) { toast('Enter the project folder for the agent first'); $('#agentFolder').focus(); return; }
@@ -571,6 +572,7 @@ async function runChat(payload, localUserMsg) {
       if (ev.type === 'start') { s.title = ev.title; $('#viewTitle').textContent = ev.title; }
       else if (ev.type === 'sources') target.before(sourcesEl(ev.sources));
       else if (ev.type === 'status') { status.textContent = ev.t; return; }
+      else if (ev.type === 'queued') { status.textContent = ev.position > 0 ? queueText(ev.position) : ''; return; }
       else if (ev.type === 'web') { status.textContent = ''; target.before(webSourcesEl(ev)); return; }
       else if (ev.type === 'think') { if (!thinking) { raw += '<think>'; thinking = true; } raw += ev.t; }
       else if (ev.type === 'text') { if (thinking) { raw += '</think>\n\n'; thinking = false; } raw += ev.t; }
@@ -617,57 +619,41 @@ async function remember(sid) {
 }
 
 /* ---------------- Image generation ----------------
-   The picture button sends the message as a picture description to Automatic1111 or ComfyUI (see sunak/imagegen.py). */
+   A message that asks for a picture ("make a picture of …") is recognised and made by the image generator without
+   asking: the chat model first writes a better prompt, the image model paints it (Sunak's own program, see
+   sunak/sdcpp.py, or Automatic1111 / ComfyUI, see sunak/imagegen.py). */
 // image_status.problem: what is missing for Sunak's own program ('' = nothing), see sdcpp.status
 const imageProblem = () => state.settings?.image_status?.problem || '';
-const imagineVisible = () => (state.settings?.image_gen || 'off') !== 'off' || !!imageProblem();
 const imagineReady = () => (state.settings?.image_gen || 'off') !== 'off' && !imageProblem();
-const imagineOn = () => imagineReady() && store.get('sunak-imagine') === '1';
 const IMAGE_PROBLEMS = {
   setup: 'No image generator is set up. Set up Sunak’s own image program on the Models page under Image models, or connect ComfyUI or Automatic1111 in Settings.',
   no_engine: 'The image program is not set up. Set it up on the Models page under Image models.',
   no_model: 'The image program is ready, but no image model is downloaded yet. Download one on the Models page under Image models (SD-Turbo is small and fast).',
 };
-// the picture button while something is missing: say what, and go there
+// a picture was asked for but something is missing: say what, and go there
 async function imagineSetup() {
   const p = imageProblem(), st = state.settings.image_status;
   if (p === 'choose') {  // program and model are there, only the choice was never made
     await useImageModel(st.model);
-    if (imagineReady()) { store.set('sunak-imagine', '1'); renderAgentToggle(); promptEl.focus(); }
-    return;
+    return imagineReady();
   }
-  if (!isAdmin()) { toast('An admin profile has to set up pictures first (Models page, Image models).'); return; }
+  if (!isAdmin()) { toast('An admin profile has to set up pictures first (Models page, Image models).'); return false; }
   toast(IMAGE_PROBLEMS[p || 'setup'], { label: 'Open', fn: () => show('models') });
+  return false;
 }
-function renderImagineToggle() {
-  const b = $('#imagineToggle');
-  b.classList.toggle('hidden', !imagineVisible());
-  b.classList.toggle('needs-setup', !!imageProblem());
-  b.setAttribute('aria-pressed', String(imagineOn()));
-  b.title = imageProblem() ? 'Pictures need one more step: click to see which' : imagineOn() ? 'Picture mode on: your message describes a picture' : 'Make a picture with your image generator';
-  $('#imagineBar').classList.toggle('hidden', !imagineOn());
-  if (imagineOn()) {
-    $('#agentBar').classList.add('hidden');
-    promptEl.placeholder = tr('Describe the picture, e.g. “a lighthouse at dusk, oil painting”');
-  }
-}
-$('#imagineToggle').onclick = () => {
-  if (imageProblem()) { imagineSetup(); return; }
-  store.set('sunak-imagine', imagineOn() ? '0' : '1'); renderAgentToggle(); promptEl.focus();
-};
-$('#imagineAspect').value = store.get('sunak-imagine-aspect', 'square');
-$('#imagineAspect').onchange = (e) => store.set('sunak-imagine-aspect', e.target.value);
 function genFigure(m) {
   if (m.meta.pending) {
-    return el('div', { class: 'gen-wait', role: 'status' }, el('progress', { max: 1 }), el('span', { class: 'muted small' }, 'Painting the picture…'));
+    return el('div', { class: 'gen-wait', role: 'status' }, el('progress', { max: 1 }), el('span', { class: 'muted small gen-status' }, 'Painting the picture…'), el('div', { class: 'muted small gen-prompt', 'data-no-i18n': '' }));
   }
   const g = m.meta.imagegen, src = `/api/images/${m.meta.images[0]}`;
   return el('figure', { class: 'gen-figure' },
     el('a', { href: src, target: '_blank', rel: 'noopener' }, el('img', { src, alt: g.prompt, loading: 'lazy', width: g.width, height: g.height, 'data-no-i18n': '' })),
-    el('figcaption', { class: 'muted small', 'data-no-i18n': '' }, `${g.width}×${g.height} · ${tr('seed')} ${g.seed} · ${g.steps} ${tr('steps')}${g.model ? ` · ${g.model}` : ''}`));
+    el('figcaption', { class: 'muted small' },
+      el('div', { class: 'gen-prompt', 'data-no-i18n': '' }, el('b', {}, `${tr(g.request ? 'Improved prompt' : 'Prompt')}: `), g.prompt),
+      el('div', { 'data-no-i18n': '' }, `${g.width}×${g.height} · ${tr('seed')} ${g.seed} · ${g.steps} ${tr('steps')}${g.model ? ` · ${g.model}` : ''}`)));
 }
 // A chat model cannot paint. When the message asks for a picture ("generate an image of …", "mach ein Bild von …"),
-// Sunak offers to make it with the image generator (OK) or to send the message as a normal chat message (Cancel).
+// Sunak makes it with the image generator by itself: the chat model improves the description first.
 const IMAGE_ASK = /\b(generier\w*|erzeug\w*|erstell\w*|mach\w*|mal\w*|zeichn\w*|gestalt\w*|generate|create|make|draw|paint|render|produce)\b[^.?!\n]{0,50}\b(bild\w*|foto\w*|grafik\w*|zeichnung\w*|illustration\w*|gemälde|logo|picture|image|photo|drawing|painting|illustration|artwork)\b/i;
 const IMAGE_ASK_AFTER = /\b(bild\w*|foto\w*|grafik\w*|zeichnung\w*|illustration\w*|gemälde|picture|image|photo|drawing|painting|artwork)\b[^.!\n]{0,120}\b(generier|erzeug|erstell|mal|zeichn|generate|create|make|draw|paint)\w*/i;
 const imageRequest = (t) => t.length < 600 && (IMAGE_ASK.test(t) || IMAGE_ASK_AFTER.test(t));
@@ -677,31 +663,22 @@ function pictureSubject(t) {  // the description without the request ("a lightho
   for (let i = 0; i < 2; i++) out = out.replace(/[\s,.!?]*\b(?:generier\w*|erzeug\w*|erstell\w*|mal\w*|zeichn\w*|generate|create|make|draw|paint|bitte|please)[\s.!?]*$/i, '');
   return out.trim() || t;
 }
-async function offerPicture(text) {
-  const subject = pictureSubject(text);
-  if (imagineReady()) {
-    if (!confirm(`${tr('This looks like a request for a picture. OK makes it with your image generator, Cancel sends it as a normal chat message.')}\n\n“${subject}”`)) return false;
-    promptEl.value = ''; autosize();
-    await sendImagine(subject);
-    return true;
+async function pictureRequest(text) {
+  if (!imagineReady()) {
+    // not set up (yet): ask before leaving the chat, the message may not have meant a picture at all
+    if (!confirm(tr('This looks like a request for a picture, but pictures are not set up yet. OK shows what is missing, Cancel sends it as a normal chat message.'))) return false;
+    if (!(await imagineSetup())) return true;
   }
-  if (!confirm(tr('This looks like a request for a picture, but pictures are not set up yet. OK shows what is missing, Cancel sends it as a normal chat message.'))) return false;
-  imagineSetup();
-  return true;
-}
-async function sendImagine(given) {
-  const text = given || promptEl.value.trim();
-  if (!text) { toast('Describe the picture first'); return; }
-  if (state.attachments.length) { toast('Pictures are made from your description only. Remove the attachments or switch off the picture button.'); return; }
   if (!state.session) {
     try {
       state.session = await api('/api/sessions', { method: 'POST', body: { model: currentModel() || '', use_kb: kbOn(), use_web: webOn(), persona: currentPersona() } });
-    } catch (e) { toast(e.message); return; }
+    } catch (e) { toast(e.message); return true; }
     state.session.messages = [];
   }
   promptEl.value = ''; autosize();
   sending = false; // from here on state.busy guards against a second send
-  await runImagine({ prompt: text, aspect: $('#imagineAspect').value, negative: $('#imagineNegative').value.trim() });
+  await runImagine({ prompt: text, improve: true, model: currentModel() || '', fallback: pictureSubject(text), aspect: 'auto' });
+  return true;
 }
 async function runImagine(body) {
   const s = state.session;
@@ -711,11 +688,15 @@ async function runImagine(body) {
   state.busy = ctrl;
   $('#sendBtn').textContent = 'Stop';
   renderMessages();
-  const bar = $('#messages').lastElementChild.querySelector('.gen-wait progress');
+  const wait = $('#messages').lastElementChild.querySelector('.gen-wait');
+  const bar = wait.querySelector('progress'), statusEl = wait.querySelector('.gen-status'), promptShown = wait.querySelector('.gen-prompt');
   let error = null, stopped = false;
   try {
     await stream('/api/imagine', { session_id: s.id, ...body }, (ev) => {
       if (ev.type === 'start') { s.title = ev.title; $('#viewTitle').textContent = ev.title; }
+      else if (ev.type === 'status') statusEl.textContent = tr(ev.t);
+      else if (ev.type === 'queued') { if (ev.position > 0) statusEl.textContent = queueText(ev.position); }
+      else if (ev.type === 'prompt') promptShown.textContent = `${tr('Prompt')}: ${ev.prompt}`;
       else if (ev.type === 'progress') { if (ev.p == null) bar.removeAttribute('value'); else bar.value = ev.p; }
       else if (ev.type === 'error') error = ev.error;
     }, ctrl.signal);
@@ -756,7 +737,6 @@ function renderAgentToggle() {
   $('#agentLabel').classList.toggle('hidden', !agentOn());
   $('#agentFolder').classList.toggle('hidden', !agentOn());
   promptEl.placeholder = agentOn() ? 'Tell the agent what to do…' : 'Message Sunak…';
-  renderImagineToggle();
 }
 $('#agentToggle').onclick = () => {
   store.set('sunak-agent', agentOn() ? '0' : '1');
@@ -828,7 +808,7 @@ async function runAgent(payload, localUserMsg) {
   const target = box.lastElementChild.querySelector('.agent');
   target.classList.add('typing');
   const steps = {};
-  let cur = null, pending = false, error = null, stopped = false;
+  let cur = null, pending = false, error = null, stopped = false, qnote = null;
   const scroll = () => { if (box.scrollHeight - box.scrollTop - box.clientHeight < 160) box.scrollTop = box.scrollHeight; };
   const paint = () => { pending = false; if (cur) cur.el.innerHTML = md(cur.raw); scroll(); };
   const endText = () => { if (cur) { if (cur.thinking) cur.raw += '</think>'; cur.el.innerHTML = md(cur.raw); cur = null; } };
@@ -853,6 +833,10 @@ async function runAgent(payload, localUserMsg) {
         if (!pending) { pending = true; requestAnimationFrame(paint); }
       } else if (ev.type === 'step' || ev.type === 'step_done') { endText(); showStep(ev); }
       else if (ev.type === 'confirm') showStep(ev, true);
+      else if (ev.type === 'queued') {
+        qnote?.remove(); qnote = null;
+        if (ev.position > 0) { endText(); qnote = el('p', { class: 'notice muted small' }, icon('clock'), queueText(ev.position)); target.append(qnote); }
+      }
       else if (ev.type === 'notice') { endText(); target.append(el('p', { class: 'notice muted small' }, icon('info'), ev.t)); }
       else if (ev.type === 'done') stopped = !!ev.stopped;
       else if (ev.type === 'error') error = ev.error;
@@ -2225,9 +2209,7 @@ async function refreshImageStatus() {  // the settings carry what is missing for
 async function useImageModel(id) {
   try { state.settings = await api('/api/settings', { method: 'PUT', body: { image_gen: 'local', image_gen_model: id } }); }
   catch (e) { toast(e.message); return; }
-  store.set('sunak-imagine', '1');  // picture mode is on right away
-  renderAgentToggle();
-  toast('Ready: picture mode is on. Describe a picture in the message box.');
+  toast('Ready: ask for a picture in the chat, e.g. “make a picture of a lighthouse at dusk”.');
   renderImageModels();
 }
 $('#pullForm').onsubmit = (e) => {

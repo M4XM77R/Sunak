@@ -544,8 +544,6 @@ input.emoji { width: 52px; min-width: 0; flex: none; text-align: center; }
 #profileBox { margin-bottom: 28px; }
 
 /* image generation */
-#imagineBar select { width: auto; padding: 4px 8px; font-size: 13px; }
-#imagineBar input { font-family: inherit; }
 .gen-figure { margin: 0; }
 .gen-figure img { display: block; max-width: min(100%, 512px); max-height: 70vh; border-radius: 10px; border: 1px solid var(--border); cursor: zoom-in; }
 .gen-figure figcaption { margin-top: 6px; }
@@ -597,3 +595,7 @@ input.emoji { width: 52px; min-width: 0; flex: none; text-align: center; }
 .opt-item.mic-btn.recording { color: var(--danger); box-shadow: none; animation: none; }
 .opt-item.mic-btn.recording .ic { color: var(--danger); }
 @media (max-width: 800px) { .composer-row { gap: 4px; padding: 6px; } .composer-row .btn.primary { padding-left: 14px; padding-right: 14px; } }
+.gen-prompt { margin: 2px 0; overflow-wrap: anywhere; }
+.gen-prompt:empty { display: none; }
+.gen-wait { flex-wrap: wrap; }
+.gen-wait .gen-prompt { flex-basis: 100%; }

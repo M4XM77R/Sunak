@@ -82,7 +82,7 @@ OPTIONS = (  # options for starting Sunak
     ("--version", "Print the version", "sunak --version"),
 )
 ENV_VARS = ("SUNAK_PORT", "SUNAK_HOST", "SUNAK_DATA", "SUNAK_PASSWORD", "SUNAK_NO_BROWSER", "SUNAK_DEBUG",
-            "SUNAK_ALLOWED_HOSTS", "OLLAMA_BASE_URL", "ANTHROPIC_API_KEY", "SEARXNG_URL", "NO_COLOR")
+            "SUNAK_ALLOWED_HOSTS", "SUNAK_MODEL_SLOTS", "OLLAMA_BASE_URL", "ANTHROPIC_API_KEY", "SEARXNG_URL", "NO_COLOR")
 START_OPTIONS = ("--port", "--host", "--data-dir", "--no-browser", "--version", "--help", "-h")
 
 

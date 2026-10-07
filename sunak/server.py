@@ -27,7 +27,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlparse
 
-from . import (__version__, agent, cal, extract, gpu, imagegen, images, knowledge, mail, mcp, memory, modelsearch,
+from . import (__version__, agent, cal, extract, gpu, imagegen, images, jobqueue, knowledge, mail, mcp, memory, modelsearch,
                ollama, providers, qr, research, sdcpp, speech, updates)
 from .db import DB, new_id
 
@@ -766,6 +766,8 @@ class Handler(BaseHTTPRequestHandler):
     def start_stream(self):
         """Send headers for an NDJSON stream; the connection closes when it ends."""
         self.streaming = True
+        # a request that has to wait for the model tells the browser its place in the queue (jobqueue.py)
+        jobqueue.local.notify = lambda place: self.emit({"type": "queued", "position": place})
         self.send_response(200)
         self.send_header("Content-Type", "application/x-ndjson")
         self.send_header("Cache-Control", "no-store")
@@ -1866,9 +1868,13 @@ class Handler(BaseHTTPRequestHandler):
             raise ValueError(f"Hugging Face is not reachable ({e})") from None
 
     def imagine(self):
-        """POST /api/imagine {session_id, prompt, negative, aspect, seed}: make a picture with the local image
-        generator and store it in the chat (user message = prompt, assistant message = picture).
-        Events: start, progress {p (0..1 or null)}, done | error. Closing the connection stops the backend."""
+        """POST /api/imagine {session_id, prompt, negative, aspect, seed, improve, model, fallback}: make a
+        picture with the image generator and store it in the chat (user message = prompt, assistant message
+        = picture). With `improve` the prompt is a request in the user's words ("make me a picture of ..."):
+        the chat model `model` first turns it into a prompt for the image model (`fallback`, the plain
+        description, is used when that fails). Both steps wait their turn in the queues (jobqueue.py).
+        Events: start, status, queued {position}, prompt {prompt}, progress {p (0..1 or null)}, done | error.
+        Closing the connection stops the backend."""
         d = self.body()
         db = self.app.db
         s = self.app.settings()
@@ -1878,13 +1884,23 @@ class Handler(BaseHTTPRequestHandler):
         session = db.get_session(str(d.get("session_id") or ""))
         if not session:
             return self.error("Session not found", 404)
-        prompt = self.text(d, "prompt").strip()
-        if not prompt:
+        request = self.text(d, "prompt").strip()
+        if not request:
             raise ValueError("Describe the picture first")
-        if len(prompt) > 4000:
+        if len(request) > 4000:
             raise ValueError("The description is too long")
+        improve = self.flag(d, "improve")
+        prov = model = None
+        if improve:
+            model_id = d.get("model") or session["model"]
+            try:
+                prov, model = self.app.resolve(model_id)
+            except providers.ProviderError:
+                prov = None  # no chat model: the description goes to the image model as it is
         negative = self.text(d, "negative").strip()[:2000]
         aspect = self.text(d, "aspect", "square")
+        if aspect == "auto":
+            aspect = imagegen.aspect_from_text(request)
         if aspect not in imagegen.ASPECTS:
             raise ValueError("aspect must be one of: " + ", ".join(imagegen.ASPECTS))
         seed = d.get("seed")
@@ -1894,10 +1910,11 @@ class Handler(BaseHTTPRequestHandler):
             seed = random.randrange(2 ** 32)
         width, height = imagegen.dimensions(aspect, s["image_gen_size"])
         sid = session["id"]
-        db.add_message(sid, "user", prompt, meta={"imagine": {"aspect": aspect, **({"negative": negative} if negative else {})}})
+        imagine_meta = {"aspect": aspect, **({"negative": negative} if negative else {}), **({"improved": True} if improve else {})}
+        db.add_message(sid, "user", request, meta={"imagine": imagine_meta})
         title = session["title"]
         if title == "New chat":
-            title = (prompt[:55] + "…") if len(prompt) > 56 else prompt
+            title = (request[:55] + "…") if len(request) > 56 else request
             db.update_session(sid, title=title)
         self.start_stream()
         self.emit({"type": "start", "title": title})
@@ -1911,20 +1928,47 @@ class Handler(BaseHTTPRequestHandler):
             except OSError:  # the browser went away (Stop button)
                 gone.set()
 
+        prompt = request
+        if improve and prov is not None:
+            fallback = self.text(d, "fallback").strip()[:4000] or request
+            prompt = fallback
+            try:
+                self.emit({"type": "status", "t": "Improving the description for the image model…"})
+                answer = providers.chat_once(prov, model, imagegen.improve_messages(request), {"temperature": 0.7})
+                prompt = imagegen.clean_prompt(answer, fallback)
+            except providers.ProviderError:
+                pass  # the plain description still makes a picture
+            except OSError:  # the browser went away while waiting
+                return
+        elif improve:
+            prompt = self.text(d, "fallback").strip()[:4000] or request
         try:
-            if cfg["type"] == "local":
-                data, info = sdcpp.generate(self.app.data_dir, cfg["model"], prompt, negative,
-                                            lambda size: imagegen.dimensions(aspect, size), seed,
-                                            progress=progress, cancelled=gone.is_set)
-            else:
-                data, info = imagegen.generate(cfg, prompt, negative, width, height, s["image_gen_steps"], seed,
-                                               progress=progress, cancelled=gone.is_set)
+            self.emit({"type": "prompt", "prompt": prompt})
+            self.emit({"type": "status", "t": "Painting the picture…"})
+        except OSError:
+            return
+
+        try:
+            with jobqueue.slot("image"):
+                if cfg["type"] == "local":
+                    data, info = sdcpp.generate(self.app.data_dir, cfg["model"], prompt, negative,
+                                                lambda size: imagegen.dimensions(aspect, size), seed,
+                                                progress=progress, cancelled=gone.is_set)
+                else:
+                    data, info = imagegen.generate(cfg, prompt, negative, width, height, s["image_gen_steps"], seed,
+                                                   progress=progress, cancelled=gone.is_set)
             name = images.store(self.app.user_dir, data)
+        except jobqueue.Cancelled:
+            return
+        except jobqueue.Timeout:
+            return self.emit({"type": "error", "error": "The image generator was busy with other requests for too long. Please try again."})
         except (imagegen.ImageGenError, sdcpp.SdError, ValueError) as e:
             if gone.is_set():
                 return
             return self.emit({"type": "error", "error": str(e)})
         info["prompt"] = prompt
+        if improve:
+            info["request"] = request
         if negative:
             info["negative"] = negative
         text = f"[Picture made with {imagegen.BACKENDS.get(cfg['type'], 'stable-diffusion.cpp')}{' (' + info['model'] + ')' if info['model'] else ''}: {prompt}]"

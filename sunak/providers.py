@@ -10,6 +10,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from . import jobqueue
+
 TIMEOUT = 600  # long generations on slow CPUs are normal
 
 THINK_RE = re.compile(r"<think>.*?(</think>|$)", re.S)
@@ -116,15 +118,29 @@ def list_models(p, timeout=4):
     return sorted(m["id"] for m in data.get("data", []))
 
 
+def queue_key(p):
+    """Every backend has its own queue (see jobqueue.py)."""
+    return f"chat:{p.get('id') or _base(p)}"
+
+
+def queue_slots(p):
+    """Requests a backend takes at the same time: one for a local one, a few for one on the internet."""
+    return jobqueue.local_slots() if _is_local(_base(p)) else jobqueue.REMOTE_SLOTS
+
+
 def chat_stream(p, model, messages, options=None):
     """Yield ("text"|"think", chunk) tuples. Broken connections and malformed data from the
-    backend raise ProviderError."""
+    backend raise ProviderError. Waits its turn first when the backend is busy with other requests."""
     try:
-        yield from _chat_stream(p, model, messages, options)
-    except ProviderError:
-        raise
-    except (http.client.HTTPException, OSError, ValueError) as e:
-        raise ProviderError(f"The connection to the model broke off ({type(e).__name__}: {e})") from None
+        with jobqueue.slot(queue_key(p), queue_slots(p)):
+            try:
+                yield from _chat_stream(p, model, messages, options)
+            except ProviderError:
+                raise
+            except (http.client.HTTPException, OSError, ValueError) as e:
+                raise ProviderError(f"The connection to the model broke off ({type(e).__name__}: {e})") from None
+    except jobqueue.Timeout:
+        raise ProviderError("The model was busy with other requests for too long. Please try again.") from None
 
 
 def _with_images(messages, kind):

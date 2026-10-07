@@ -223,6 +223,10 @@ class ImageGenTest(unittest.TestCase):
                      {"Content-Type": "application/json", "X-Requested-With": "sunak"})
         resp = conn.getresponse()
         json.loads(resp.readline())
+        for _ in range(100):  # leave while the picture is being made
+            if any(p == "/sdapi/v1/txt2img" for m, p, b in FakeBackend.log):
+                break
+            time.sleep(0.05)
         resp.close()
         conn.close()
         for _ in range(60):

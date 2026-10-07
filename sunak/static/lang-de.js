@@ -862,5 +862,12 @@
 "Forgotten": "Vergessen",
 "Remembered from the chat “{title}”, {date}": "Gemerkt aus dem Chat „{title}“, {date}",
 "Remembered from a chat, {date}": "Gemerkt aus einem Chat, {date}",
-"Open this chat": "Diesen Chat öffnen"
+"Open this chat": "Diesen Chat öffnen",
+"Waiting in the queue: place {n}": "Warteschlange: Platz {n}",
+"Improving the description for the image model…": "Beschreibung für das Bildmodell wird verbessert…",
+"Prompt": "Prompt",
+"Improved prompt": "Verbesserter Prompt",
+"Ready: ask for a picture in the chat, e.g. “make a picture of a lighthouse at dusk”.": "Fertig: Bitte im Chat um ein Bild, zum Beispiel „mach ein Bild von einem Leuchtturm in der Dämmerung“.",
+"The image generator was busy with other requests for too long. Please try again.": "Der Bildgenerator war zu lange mit anderen Anfragen beschäftigt. Bitte versuche es noch einmal.",
+"The model was busy with other requests for too long. Please try again.": "Das Modell war zu lange mit anderen Anfragen beschäftigt. Bitte versuche es noch einmal."
 } };

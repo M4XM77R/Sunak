@@ -21,7 +21,7 @@ import threading
 import time
 import urllib.parse
 
-from . import mcp, providers
+from . import jobqueue, mcp, providers
 from .providers import ProviderError
 
 SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", ".mypy_cache", ".pytest_cache", ".tox",
@@ -867,6 +867,19 @@ class AgentRun:
         self.emit({"type": "notice", "t": f"Stopped after {self.max_steps} steps. Send a message to let the agent continue."})
 
     def _turn(self, turns):
+        """One model call of the loop. It waits its turn when the backend is busy with other requests; the
+        place in the queue is shown to the user. Waiting for the user's confirmation does not hold a place."""
+        try:
+            with jobqueue.slot(providers.queue_key(turns.p), providers.queue_slots(turns.p),
+                               notify=lambda place: self.emit({"type": "queued", "position": place}),
+                               cancelled=self.cancelled.is_set):
+                return self._turn_inner(turns)
+        except jobqueue.Cancelled:
+            raise Cancelled from None
+        except jobqueue.Timeout:
+            raise ProviderError("The model was busy with other requests for too long. Please try again.") from None
+
+    def _turn_inner(self, turns):
         from .server import stream_to_text
         chunks = []
         gen = turns.turn()
