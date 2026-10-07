@@ -90,12 +90,15 @@
         </div>
         <div class="composer-row">
           <label class="icon-btn" title="Attach files or images (text, PDF, Word, PowerPoint, PNG, JPEG…). You can also paste a screenshot."><i data-i="paperclip"></i><input type="file" id="fileInput" multiple hidden></label>
-          <button class="icon-btn kb-toggle" id="kbToggle" type="button" aria-pressed="false" title="Answer with my knowledge base"><i data-i="book"></i></button>
-          <button class="icon-btn kb-toggle" id="webToggle" type="button" aria-pressed="false" title="Search the web for answers"><i data-i="globe"></i></button>
-          <button class="icon-btn kb-toggle hidden admin-only" id="agentToggle" type="button" aria-pressed="false" title="Agent mode: let the model work in a project folder"><i data-i="terminal"></i></button>
-          <button class="icon-btn kb-toggle hidden admin-only" id="mcpToggle" type="button" aria-pressed="false" title="Tools (MCP): let the model use your MCP servers"><i data-i="plug"></i></button>
-          <button class="icon-btn kb-toggle hidden" id="imagineToggle" type="button" aria-pressed="false" title="Make a picture with your image generator"><i data-i="image"></i></button>
-          <button class="icon-btn mic-btn hidden" id="micBtn" type="button" aria-pressed="false" title="Speak instead of typing"><i data-i="mic"></i></button>
+          <button class="icon-btn opt-btn" id="optBtn" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="optMenu" title="More options: knowledge base, web search, pictures, tools, voice"><i data-i="plus"></i></button>
+          <div class="opt-menu hidden" id="optMenu" role="menu">
+            <button class="opt-item kb-toggle" id="kbToggle" type="button" role="menuitemcheckbox" aria-pressed="false" title="Answer with my knowledge base"><i data-i="book"></i><span class="opt-label">Knowledge base</span><span class="opt-state"></span></button>
+            <button class="opt-item kb-toggle" id="webToggle" type="button" role="menuitemcheckbox" aria-pressed="false" title="Search the web for answers"><i data-i="globe"></i><span class="opt-label">Web search</span><span class="opt-state"></span></button>
+            <button class="opt-item kb-toggle hidden admin-only" id="agentToggle" type="button" role="menuitemcheckbox" aria-pressed="false" title="Agent mode: let the model work in a project folder"><i data-i="terminal"></i><span class="opt-label">Agent mode</span><span class="opt-state"></span></button>
+            <button class="opt-item kb-toggle hidden admin-only" id="mcpToggle" type="button" role="menuitemcheckbox" aria-pressed="false" title="Tools (MCP): let the model use your MCP servers"><i data-i="plug"></i><span class="opt-label">Tools (MCP)</span><span class="opt-state"></span></button>
+            <button class="opt-item kb-toggle hidden" id="imagineToggle" type="button" role="menuitemcheckbox" aria-pressed="false" title="Make a picture with your image generator"><i data-i="image"></i><span class="opt-label">Make a picture</span><span class="opt-state"></span></button>
+            <button class="opt-item mic-btn hidden" id="micBtn" type="button" role="menuitemcheckbox" aria-pressed="false" title="Speak instead of typing"><i data-i="mic"></i><span class="opt-label">Speak</span><span class="opt-state"></span></button>
+          </div>
           <textarea id="prompt" rows="1" placeholder="Message Sunak…" title="Enter to send, Shift+Enter for a new line"></textarea>
           <button class="btn primary" id="sendBtn" type="submit">Send</button>
         </div>

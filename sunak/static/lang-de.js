@@ -838,5 +838,9 @@
 "Next step: download an image model below. Without one the program cannot make pictures.": "Nächster Schritt: lade unten ein Bildmodell herunter. Ohne eines kann das Programm keine Bilder machen.",
 "This looks like a request for a picture. OK makes it with your image generator, Cancel sends it as a normal chat message.": "Das sieht nach einer Bild-Anfrage aus. OK erzeugt es mit deinem Bildgenerator, Abbrechen schickt es als normale Chat-Nachricht.",
 "This looks like a request for a picture, but pictures are not set up yet. OK shows what is missing, Cancel sends it as a normal chat message.": "Das sieht nach einer Bild-Anfrage aus, aber Bilder sind noch nicht eingerichtet. OK zeigt, was fehlt, Abbrechen schickt es als normale Chat-Nachricht.",
-"No image generator is set up. Set up Sunak’s own image program on the Models page under Image models, or connect ComfyUI or Automatic1111 in Settings.": "Kein Bildgenerator eingerichtet. Richte Sunaks eigenes Bildprogramm auf der Modelle-Seite unter „Bildmodelle“ ein oder verbinde ComfyUI oder Automatic1111 in den Einstellungen."
+"No image generator is set up. Set up Sunak’s own image program on the Models page under Image models, or connect ComfyUI or Automatic1111 in Settings.": "Kein Bildgenerator eingerichtet. Richte Sunaks eigenes Bildprogramm auf der Modelle-Seite unter „Bildmodelle“ ein oder verbinde ComfyUI oder Automatic1111 in den Einstellungen.",
+"More options: knowledge base, web search, pictures, tools, voice": "Mehr Optionen: Wissensbasis, Websuche, Bilder, Werkzeuge, Sprache",
+"Web search": "Websuche",
+"Agent mode": "Agent-Modus",
+"Speak": "Sprechen"
 } };

@@ -3226,3 +3226,22 @@ async function refreshAll(poll = false) {
   setTimeout(checkNewMail, 5000);
   setInterval(checkNewMail, MAIL_POLL);
 })();
+
+/* composer options menu (drop-up): opens above the text field; closes on pick, outside click or Escape */
+const optBtn = $('#optBtn'), optMenu = $('#optMenu');
+function setOptMenu(open) {
+  optMenu.classList.toggle('hidden', !open);
+  optBtn.setAttribute('aria-expanded', String(open));
+  if (open) optMenu.querySelector('.opt-item:not(.hidden)')?.focus();
+}
+function renderOptBadge() {
+  const items = [...optMenu.querySelectorAll('.opt-item')].filter((b) => !b.classList.contains('hidden'));
+  optBtn.classList.toggle('active', items.some((b) => b.getAttribute('aria-pressed') === 'true'));
+  optBtn.classList.toggle('recording', !!$('#micBtn').classList.contains('recording'));
+}
+optBtn.onclick = () => setOptMenu(optMenu.classList.contains('hidden'));
+optMenu.addEventListener('click', (e) => { if (e.target.closest('.opt-item')) setOptMenu(false); });
+document.addEventListener('click', (e) => { if (!optMenu.classList.contains('hidden') && !e.target.closest('#optMenu, #optBtn')) setOptMenu(false); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !optMenu.classList.contains('hidden')) { setOptMenu(false); optBtn.focus(); } });
+new MutationObserver(renderOptBadge).observe(optMenu, { subtree: true, attributes: true, attributeFilter: ['aria-pressed', 'class'] });
+renderOptBadge();

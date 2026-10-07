@@ -565,3 +565,31 @@ input.emoji { width: 52px; min-width: 0; flex: none; text-align: center; }
 
 .kb-toggle.needs-setup { opacity: .55; border: 1px dashed var(--border); }
 .next-step { margin: 6px 0 0; color: var(--accent); font-weight: 600; }
+
+/* composer options: everything except attaching and sending lives in the drop-up menu (+) */
+.composer-row { position: relative; }
+.opt-btn { position: relative; flex: none; }
+.opt-btn.active::after { content: ""; position: absolute; top: 4px; right: 4px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+.opt-btn.recording { color: var(--danger); }
+.opt-btn.recording::after { background: var(--danger); animation: recording 1.4s ease-in-out infinite; }
+.opt-btn[aria-expanded="true"] { background: var(--panel-2); color: var(--text); }
+.opt-btn[aria-expanded="true"] .ic { transform: rotate(45deg); }
+.opt-menu { position: absolute; left: 0; bottom: calc(100% + 8px); z-index: 30; min-width: 230px; max-width: calc(100vw - 32px); padding: 6px; display: flex; flex-direction: column; gap: 2px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 14px; box-shadow: 0 10px 30px #0000004d; }
+.opt-menu.hidden { display: none; }
+.opt-item { display: flex; align-items: center; gap: 12px; width: 100%; padding: 12px 12px; border: 0; background: none; color: var(--text); font: inherit; text-align: left; border-radius: 10px; cursor: pointer; min-height: 44px; }
+.opt-item:hover, .opt-item:focus-visible { background: var(--panel-2); }
+.opt-item.hidden { display: none; }
+.opt-item .ic { width: 20px; height: 20px; flex: none; color: var(--muted); }
+.opt-label { flex: 1; }
+.opt-state { flex: none; width: 34px; height: 20px; border-radius: 10px; background: var(--border); position: relative; transition: background .15s; }
+.opt-state::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--panel); transition: transform .15s; }
+.opt-item[aria-pressed="true"] { background: var(--accent-soft); box-shadow: none; }
+.opt-item[aria-pressed="true"] .ic { color: var(--accent); }
+.opt-item[aria-pressed="true"] .opt-state { background: var(--accent); }
+.opt-item[aria-pressed="true"] .opt-state::after { transform: translateX(14px); }
+.opt-item.needs-setup { opacity: .7; border: 0; }
+.opt-item.needs-setup .opt-state { background: none; border: 1px dashed var(--border); }
+.opt-item.mic-btn.recording { color: var(--danger); box-shadow: none; animation: none; }
+.opt-item.mic-btn.recording .ic { color: var(--danger); }
+@media (max-width: 800px) { .composer-row { gap: 4px; padding: 6px; } .composer-row .btn.primary { padding-left: 14px; padding-right: 14px; } }
