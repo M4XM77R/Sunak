@@ -27,7 +27,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlparse
 
-from . import (__version__, agent, cal, extract, gpu, imagegen, images, jobqueue, knowledge, log, mail, mcp, memory, modelsearch,
+from . import (__version__, agent, cal, extract, gpu, imagegen, images, intent, jobqueue, knowledge, log, mail, mcp, memory, modelsearch,
                ollama, providers, qr, reports, research, sdcpp, speech, updates)
 from .db import DB, new_id
 
@@ -1960,6 +1960,26 @@ class Handler(BaseHTTPRequestHandler):
         except modelsearch.SearchError as e:
             raise ValueError(f"Hugging Face is not reachable ({e})") from None
 
+    def imagine_intent(self):
+        """POST /api/imagine/intent {text, model}: does this chat message ask for a picture? Answer: {image, subject, via}.
+        `via` is "rules" (clear), or "model" when the rules were unsure and the chat model decided (only when pictures
+        are set up; a model that cannot be reached means "no")."""
+        d = self.body()
+        text = self.text(d, "text").strip()
+        verdict = intent.classify(text)
+        out = {"image": verdict == "yes", "subject": intent.subject(text) if verdict != "no" else "", "via": "rules"}
+        s = self.app.settings()
+        ready = s["image_gen"] != "off" and not sdcpp.status(self.app.data_dir, s)["problem"]
+        if verdict == "maybe" and ready:
+            try:
+                prov, model = self.app.resolve(d.get("model") or s["default_model"])
+                out["image"] = intent.parse(providers.chat_once(prov, model, intent.messages(text), {"temperature": 0}))
+                out["via"] = "model"
+            except (providers.ProviderError, ValueError, OSError) as e:
+                log_image.info("Picture request check by the chat model failed (%s), treated as a normal message", str(e)[:150])
+        log_image.debug("Picture request check: %s (%s)", out["image"], out["via"] if verdict != "no" else "no rule applies")
+        self.send_json(out)
+
     def imagine(self):
         """POST /api/imagine {session_id, prompt, negative, aspect, seed, improve, model, fallback}: make a
         picture with the image generator and store it in the chat (user message = prompt, assistant message
@@ -2540,6 +2560,7 @@ ROUTES = [
     (rf"/api/knowledge/{ID}", "DELETE", Handler.kb_delete),
     (r"/api/extract", "POST", Handler.extract_file),
     (r"/api/transcribe", "POST", Handler.transcribe),
+    (r"/api/imagine/intent", "POST", Handler.imagine_intent),
     (r"/api/imagine", "POST", Handler.imagine),
     (r"/api/imagegen/test", "POST", Handler.imagegen_test),
     (r"/api/imagegen/local", "GET", Handler.local_images),

@@ -28,6 +28,7 @@ const state = { settings: null, models: [], modelErrors: [], sessions: [], sessi
 async function api(path, opts = {}) {
   const init = { method: opts.method || 'GET', headers: { 'X-Requested-With': 'sunak' } };
   if (opts.body !== undefined) { init.headers['Content-Type'] = 'application/json'; init.body = JSON.stringify(opts.body); }
+  if (opts.signal) init.signal = opts.signal;
   const r = await fetch(path, init);
   if (r.status === 401) { location.reload(); throw new Error('Login required'); }
   const data = await r.json().catch(() => ({}));
@@ -510,7 +511,10 @@ async function send() {
 async function sendNow() {
   let text = promptEl.value.trim();
   if (!text && !state.attachments.length) return;
-  if (!state.attachments.length && !agentOn() && imageRequest(text) && await pictureRequest(text)) return;
+  if (!state.attachments.length && !agentOn()) {
+    const ask = await pictureIntent(text);
+    if (ask && await pictureRequest(text, ask.subject)) return;
+  }
   if (!currentModel()) { toast('Install or connect a model first'); show('settings'); return; }
   if (state.attachments.some((a) => a.loading)) { toast('Still reading your files…'); return; }
   if (agentOn() && !agentFolder()) { toast('Enter the project folder for the agent first'); $('#agentFolder').focus(); return; }
@@ -652,18 +656,20 @@ function genFigure(m) {
       el('div', { class: 'gen-prompt', 'data-no-i18n': '' }, el('b', {}, `${tr(g.request ? 'Improved prompt' : 'Prompt')}: `), g.prompt),
       el('div', { 'data-no-i18n': '' }, `${g.width}×${g.height} · ${tr('seed')} ${g.seed} · ${g.steps} ${tr('steps')}${g.model ? ` · ${g.model}` : ''}`)));
 }
-// A chat model cannot paint. When the message asks for a picture ("generate an image of …", "mach ein Bild von …"),
-// Sunak makes it with the image generator by itself: the chat model improves the description first.
-const IMAGE_ASK = /\b(generier\w*|erzeug\w*|erstell\w*|mach\w*|mal\w*|zeichn\w*|gestalt\w*|generate|create|make|draw|paint|render|produce)\b[^.?!\n]{0,50}\b(bild\w*|foto\w*|grafik\w*|zeichnung\w*|illustration\w*|gemälde|logo|picture|image|photo|drawing|painting|illustration|artwork)\b/i;
-const IMAGE_ASK_AFTER = /\b(bild\w*|foto\w*|grafik\w*|zeichnung\w*|illustration\w*|gemälde|picture|image|photo|drawing|painting|artwork)\b[^.!\n]{0,120}\b(generier|erzeug|erstell|mal|zeichn|generate|create|make|draw|paint)\w*/i;
-const imageRequest = (t) => t.length < 600 && (IMAGE_ASK.test(t) || IMAGE_ASK_AFTER.test(t));
-function pictureSubject(t) {  // the description without the request ("a lighthouse at dusk")
-  const m = t.match(/\b(?:bild\w*|foto\w*|grafik\w*|zeichnung\w*|illustration\w*|gemälde|picture|image|photo|drawing|painting|artwork)\s*(?:von|vom|mit|of|showing|with|:|,|-)?\s+([\s\S]{3,})$/i);
-  let out = (m ? m[1] : t).trim();
-  for (let i = 0; i < 2; i++) out = out.replace(/[\s,.!?]*\b(?:generier\w*|erzeug\w*|erstell\w*|mal\w*|zeichn\w*|generate|create|make|draw|paint|bitte|please)[\s.!?]*$/i, '');
-  return out.trim() || t;
+// A chat model cannot paint. When the message asks for a picture ("generate an image of …", "mach ein Bild von …",
+// "mal mir eine Katze"), Sunak makes it with the image generator by itself: the chat model improves the description
+// first. The server decides (sunak/intent.py: rules, and for unclear messages the chat model).
+async function pictureIntent(text) {
+  if (text.length > 600) return null;
+  const ctrl = new AbortController(), timer = setTimeout(() => ctrl.abort(), 30000);
+  $('#sendBtn').disabled = true;
+  try {
+    const r = await api('/api/imagine/intent', { method: 'POST', body: { text, model: currentModel() || '' }, signal: ctrl.signal });
+    return r.image ? r : null;
+  } catch (e) { return null; } // no answer: it is a normal chat message
+  finally { clearTimeout(timer); $('#sendBtn').disabled = false; }
 }
-async function pictureRequest(text) {
+async function pictureRequest(text, subject) {
   if (!imagineReady()) {
     // not set up (yet): ask before leaving the chat, the message may not have meant a picture at all
     if (!confirm(tr('This looks like a request for a picture, but pictures are not set up yet. OK shows what is missing, Cancel sends it as a normal chat message.'))) return false;
@@ -677,7 +683,7 @@ async function pictureRequest(text) {
   }
   promptEl.value = ''; autosize();
   sending = false; // from here on state.busy guards against a second send
-  await runImagine({ prompt: text, improve: true, model: currentModel() || '', fallback: pictureSubject(text), aspect: 'auto' });
+  await runImagine({ prompt: text, improve: true, model: currentModel() || '', fallback: subject || text, aspect: 'auto' });
   return true;
 }
 async function runImagine(body) {
