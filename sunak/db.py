@@ -60,6 +60,20 @@ CREATE TABLE IF NOT EXISTS calendar_events (
     ics TEXT NOT NULL,
     updated REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS usage (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts REAL NOT NULL,
+    provider TEXT NOT NULL,
+    model TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    input_tokens INTEGER,
+    output_tokens INTEGER,
+    cache_read_tokens INTEGER,
+    cache_creation_tokens INTEGER,
+    seconds REAL,
+    tokens_per_second REAL,
+    ok INTEGER NOT NULL DEFAULT 1
+);
 """
 
 # Columns added after the first release; created on start when an older database lacks them.
@@ -118,6 +132,31 @@ class DB:
         if one:
             return rows[0] if rows else None
         return rows
+
+    # token counter ----------------------------------------------------
+    USAGE_COLUMNS = ("ts", "provider", "model", "kind", "input_tokens", "output_tokens", "cache_read_tokens",
+                     "cache_creation_tokens", "seconds", "tokens_per_second", "ok")
+
+    def add_usage(self, row):
+        """Store the numbers of one model request (see usage.py)."""
+        cols = self.USAGE_COLUMNS
+        self._q(f"INSERT INTO usage({', '.join(cols)}) VALUES({', '.join('?' * len(cols))})", tuple(row.get(c) for c in cols))
+
+    def usage_last(self, skip_kinds=()):
+        """The latest record whose kind is not in `skip_kinds`, or None."""
+        marks = ", ".join("?" * len(skip_kinds)) or "''"
+        return self._q(f"SELECT {', '.join(self.USAGE_COLUMNS)} FROM usage WHERE kind NOT IN ({marks}) ORDER BY id DESC LIMIT 1",
+                       tuple(skip_kinds), one=True)
+
+    def usage_sums(self, only_kinds=None):
+        """Sums of the token counts: {requests, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, all}.
+        With `only_kinds` only those kinds count. Missing (NULL) counts are zero. `all` includes the cache tokens."""
+        where, args = ("WHERE kind IN (%s)" % ", ".join("?" * len(only_kinds)), tuple(only_kinds)) if only_kinds else ("", ())
+        r = self._q("SELECT COUNT(*) AS requests, " + ", ".join(f"COALESCE(SUM({c}), 0) AS {c}" for c in
+                    ("input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens")) + f" FROM usage {where}",
+                    args, one=True)
+        r["all"] = r["input_tokens"] + r["output_tokens"] + r["cache_read_tokens"] + r["cache_creation_tokens"]
+        return r
 
     # settings ---------------------------------------------------------
     def get_setting(self, key, default=None):

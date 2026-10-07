@@ -21,7 +21,7 @@ import threading
 import time
 import urllib.parse
 
-from . import jobqueue, mcp, providers
+from . import jobqueue, mcp, providers, usage
 from .providers import ProviderError
 
 SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", ".mypy_cache", ".pytest_cache", ".tox",
@@ -473,6 +473,22 @@ def _parse_args(raw):
     return (val, None) if isinstance(val, dict) else (None, "The tool arguments must be a JSON object")
 
 
+def _metered(turn):
+    """Count the tokens of the model request one `turn(self, meter)` generator makes (usage.py). The generator tells the
+    meter about each streamed chunk and about the backend's token numbers; the record is stored when the turn ends."""
+    def wrapper(self):
+        meter, ok = usage.Meter(self.p, getattr(self, "model", None) or getattr(self, "payload", {}).get("model")), True
+        try:
+            return (yield from turn(self, meter))
+        except Exception:
+            ok = False
+            raise
+        finally:
+            meter.finish(ok)
+    wrapper.__name__ = turn.__name__
+    return wrapper
+
+
 class ClaudeTurns:
     """Claude tool use over the Messages API: the assistant content (thinking with signature,
     text, tool_use) goes back unchanged, results come back as tool_result blocks."""
@@ -485,7 +501,8 @@ class ClaudeTurns:
                                        "input_schema": t["parameters"]},
                                       **({"eager_input_streaming": True} if official else {})) for t in tools]
 
-    def turn(self):
+    @_metered
+    def turn(self, meter):
         resp = providers._request(providers._base(self.p) + "/v1/messages", self.payload, extra_headers=self.headers)
         blocks, partial, stop = {}, {}, None
         with resp:
@@ -503,15 +520,20 @@ class ClaudeTurns:
                     b = blocks.setdefault(ev.get("index", 0), {"type": "thinking" if dt == "thinking_delta" else "text"})
                     if dt == "text_delta" and d.get("text"):
                         b["text"] = b.get("text", "") + d["text"]
+                        meter.tick()
                         yield "text", d["text"]
                     elif dt == "thinking_delta" and d.get("thinking"):
                         b["thinking"] = b.get("thinking", "") + d["thinking"]
+                        meter.tick()
                         yield "think", d["thinking"]
                     elif dt == "signature_delta":
                         b["signature"] = b.get("signature", "") + d.get("signature", "")
                     elif dt == "input_json_delta":
                         partial[ev.get("index", 0)] = partial.get(ev.get("index", 0), "") + d.get("partial_json", "")
+                elif kind == "message_start":
+                    usage.anthropic_usage(meter, (ev.get("message") or {}).get("usage"))
                 elif kind == "message_delta":
+                    usage.anthropic_usage(meter, ev.get("usage"))
                     stop = (ev.get("delta") or {}).get("stop_reason") or stop
                 elif kind == "error":
                     err = ev.get("error") or {}
@@ -553,7 +575,8 @@ class OllamaTurns:
         self.p, self.model, self.options, self.tools = p, model, options or {}, tools
         self.msgs = [dict(m) for m in messages]
 
-    def turn(self):
+    @_metered
+    def turn(self, meter):
         payload = {"model": self.model, "messages": self.msgs, "stream": True, "tools": _openai_tools(self.tools)}
         if "temperature" in self.options:
             payload["options"] = {"temperature": self.options["temperature"]}
@@ -574,12 +597,15 @@ class OllamaTurns:
                     raise ProviderError(obj["error"])
                 msg = obj.get("message") or {}
                 if msg.get("thinking"):
+                    meter.tick()
                     yield "think", msg["thinking"]
                 if msg.get("content"):
                     text.append(msg["content"])
+                    meter.tick()
                     yield "text", msg["content"]
                 raw_calls += [c for c in msg.get("tool_calls") or [] if isinstance(c, dict)]
                 if obj.get("done"):
+                    usage.ollama_usage(meter, obj)
                     break
         out = {"role": "assistant", "content": "".join(text)}
         if raw_calls:
@@ -604,12 +630,13 @@ class OpenAITurns:
         self.p, self.model, self.options, self.tools = p, model, options or {}, tools
         self.msgs = [dict(m) for m in messages]
 
-    def turn(self):
+    @_metered
+    def turn(self, meter):
         payload = {"model": self.model, "messages": self.msgs, "stream": True, "tools": _openai_tools(self.tools)}
         if "temperature" in self.options:
             payload["temperature"] = self.options["temperature"]
         try:
-            resp = providers._request(providers._base(self.p) + "/chat/completions", payload, self.p.get("api_key", ""))
+            resp = providers.open_openai_stream(self.p, "/chat/completions", payload)
         except ProviderError as e:
             msg = str(e).lower()
             if msg.startswith(("http 400", "http 404", "http 422", "http 501")) and ("tool" in msg or "function" in msg):
@@ -628,13 +655,16 @@ class OpenAITurns:
                 if obj.get("error"):
                     err = obj["error"]
                     raise ProviderError(err.get("message", str(err)) if isinstance(err, dict) else str(err))
+                usage.openai_usage(meter, obj.get("usage"))
                 for choice in obj.get("choices", []):
                     delta = choice.get("delta") or {}
                     think = delta.get("reasoning_content") or delta.get("reasoning")
                     if think:
+                        meter.tick()
                         yield "think", think
                     if delta.get("content"):
                         text.append(delta["content"])
+                        meter.tick()
                         yield "text", delta["content"]
                     for tc in delta.get("tool_calls") or []:
                         cur = parts.setdefault(tc.get("index", len(parts)), {"id": "", "name": "", "arguments": ""})

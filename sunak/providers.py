@@ -10,7 +10,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from . import jobqueue
+from . import jobqueue, usage
 
 TIMEOUT = 600  # long generations on slow CPUs are normal
 
@@ -130,15 +130,23 @@ def queue_slots(p):
 
 def chat_stream(p, model, messages, options=None):
     """Yield ("text"|"think", chunk) tuples. Broken connections and malformed data from the
-    backend raise ProviderError. Waits its turn first when the backend is busy with other requests."""
+    backend raise ProviderError. Waits its turn first when the backend is busy with other requests.
+    The tokens of the request are counted (usage.py) when it ends, also when the caller stops reading."""
     try:
         with jobqueue.slot(queue_key(p), queue_slots(p)):
+            meter, failed = usage.Meter(p, model), False
             try:
-                yield from _chat_stream(p, model, messages, options)
+                for kind, chunk in _chat_stream(p, model, messages, options, meter):
+                    meter.tick()
+                    yield kind, chunk
             except ProviderError:
+                failed = True
                 raise
             except (http.client.HTTPException, OSError, ValueError) as e:
+                failed = True
                 raise ProviderError(f"The connection to the model broke off ({type(e).__name__}: {e})") from None
+            finally:
+                meter.finish(not failed)
     except jobqueue.Timeout:
         raise ProviderError("The model was busy with other requests for too long. Please try again.") from None
 
@@ -169,10 +177,10 @@ def ollama_capabilities(p, model, timeout=5):
     return caps if isinstance(caps, list) else None
 
 
-def _chat_stream(p, model, messages, options=None):
+def _chat_stream(p, model, messages, options=None, meter=usage.NONE):
     options = options or {}
     if p["type"] == "anthropic":
-        yield from anthropic_stream(p, model, messages)
+        yield from anthropic_stream(p, model, messages, meter)
         return
     if any(m.get("images") for m in messages):
         messages = _with_images(messages, p["type"])
@@ -195,13 +203,14 @@ def _chat_stream(p, model, messages, options=None):
                 if msg.get("content"):
                     yield "text", msg["content"]
                 if obj.get("done"):
+                    usage.ollama_usage(meter, obj)
                     break
         return
 
     payload = {"model": model, "messages": messages, "stream": True}
     if "temperature" in options:
         payload["temperature"] = options["temperature"]
-    resp = _request(_base(p) + "/chat/completions", payload, p.get("api_key", ""))
+    resp = open_openai_stream(p, "/chat/completions", payload)
     with resp:
         for raw in resp:
             line = raw.decode("utf-8", "replace").strip()
@@ -214,6 +223,7 @@ def _chat_stream(p, model, messages, options=None):
             if obj.get("error"):
                 err = obj["error"]
                 raise ProviderError(err.get("message", str(err)) if isinstance(err, dict) else str(err))
+            usage.openai_usage(meter, obj.get("usage"))
             for choice in obj.get("choices", []):
                 delta = choice.get("delta") or {}
                 think = delta.get("reasoning_content") or delta.get("reasoning")
@@ -221,6 +231,26 @@ def _chat_stream(p, model, messages, options=None):
                     yield "think", think
                 if delta.get("content"):
                     yield "text", delta["content"]
+
+
+_NO_STREAM_USAGE = set()  # OpenAI-compatible servers that refused `stream_options` (asked without it from then on)
+
+
+def open_openai_stream(p, path, payload):
+    """POST a streaming request to an OpenAI-compatible server and return the response. It asks for the token counts
+    (`stream_options.include_usage`); a server that refuses the option is asked again without it, and remembered."""
+    base = _base(p)
+    if base in _NO_STREAM_USAGE:
+        return _request(base + path, payload, p.get("api_key", ""))
+    asked = dict(payload, stream_options={"include_usage": True})
+    try:
+        return _request(base + path, asked, p.get("api_key", ""))
+    except ProviderError as e:
+        if not str(e).lower().startswith(("http 400", "http 422")):
+            raise
+    resp = _request(base + path, payload, p.get("api_key", ""))  # a real error is raised again here
+    _NO_STREAM_USAGE.add(base)
+    return resp
 
 
 def chat_once(p, model, messages, options=None):
@@ -370,7 +400,7 @@ def anthropic_payload(p, model, messages):
     return payload, headers
 
 
-def anthropic_stream(p, model, messages):
+def anthropic_stream(p, model, messages, meter=usage.NONE):
     """Stream a Claude answer as ("think"|"text", chunk) tuples from the SSE event stream."""
     payload, headers = anthropic_payload(p, model, messages)
     resp = _request(_base(p) + "/v1/messages", payload, extra_headers=headers)
@@ -387,7 +417,10 @@ def anthropic_stream(p, model, messages):
                     yield "text", delta["text"]
                 elif delta.get("type") == "thinking_delta" and delta.get("thinking"):
                     yield "think", delta["thinking"]
+            elif kind == "message_start":
+                usage.anthropic_usage(meter, (ev.get("message") or {}).get("usage"))
             elif kind == "message_delta":
+                usage.anthropic_usage(meter, ev.get("usage"))
                 if (ev.get("delta") or {}).get("stop_reason") == "refusal":
                     raise ProviderError("Claude declined to answer this request.")
             elif kind == "error":

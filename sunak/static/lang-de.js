@@ -906,5 +906,20 @@
 "When Sunak hits an unexpected error, it can turn it into an issue on GitHub so it can be fixed. A report contains the Sunak version, system, Python version, the error with its stack trace and the last log lines. It never contains chats, prompts, mail or file contents, API keys or passwords; private paths, host names, IP addresses and long quoted texts are masked.": "Wenn Sunak auf einen unerwarteten Fehler stößt, kann es daraus ein Issue auf GitHub machen, damit er behoben werden kann. Ein Bericht enthält die Sunak-Version, das System, die Python-Version, den Fehler mit Stacktrace und die letzten Logzeilen. Nie enthalten sind Chats, Prompts, Inhalte von Mails oder Dateien, API-Keys oder Passwörter; private Pfade, Rechnernamen, IP-Adressen und lange Zitate werden unkenntlich gemacht.",
 "These issues are public: everyone can read them on GitHub.": "Diese Issues sind öffentlich: Jeder kann sie auf GitHub lesen.",
 "Public on GitHub: everyone can read this report.": "Öffentlich auf GitHub: Jeder kann diesen Bericht lesen.",
-"Reports are sent to a PUBLIC GitHub repository, so everyone can read them, and without you looking at each one first. Send automatically?": "Berichte gehen an ein ÖFFENTLICHES GitHub-Repository, jeder kann sie lesen, und du siehst sie vorher nicht einzeln an. Automatisch senden?"
+"Reports are sent to a PUBLIC GitHub repository, so everyone can read them, and without you looking at each one first. Send automatically?": "Berichte gehen an ein ÖFFENTLICHES GitHub-Repository, jeder kann sie lesen, und du siehst sie vorher nicht einzeln an. Automatisch senden?",
+"Token counter: open the details in Settings": "Token-Zähler: Details in den Einstellungen öffnen",
+"Token counter": "Token-Zähler",
+"Sunak counts the tokens of every model request in this profile, also of requests it makes by itself (picture check, remembering, improving picture prompts). Cache reads are shown separately and count in the total. A number the model does not report stays empty instead of being guessed.": "Sunak zählt in diesem Profil die Tokens jeder Modellanfrage, auch der Anfragen, die es von selbst stellt (Bildprüfung, Merken, Verbessern von Bildprompts). Cache-Lesezugriffe werden getrennt gezeigt und zählen in der Gesamtsumme mit. Eine Zahl, die das Modell nicht meldet, bleibt leer und wird nicht geraten.",
+"Tokens counted so far": "Bisher gezählte Tokens",
+"tokens": "Tokens",
+"Total": "Gesamt",
+"Last request": "Letzte Anfrage",
+"Input": "Eingabe",
+"Output": "Ausgabe",
+"Cache read": "Cache gelesen",
+"No request counted yet.": "Noch keine Anfrage gezählt.",
+"requests": "Anfragen",
+"Cache write": "Cache geschrieben",
+"made by Sunak itself": "von Sunak selbst gestellt",
+"All profiles together": "Alle Profile zusammen"
 } };

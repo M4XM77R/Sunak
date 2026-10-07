@@ -29,7 +29,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, quote, urlparse
 
 from . import (__version__, agent, cal, extract, gpu, imagegen, images, intent, jobqueue, knowledge, log, mail, mcp, memory, modelsearch,
-               ollama, providers, qr, reports, research, sdcpp, speech, updates)
+               ollama, providers, qr, reports, research, sdcpp, speech, updates, usage)
 from .db import DB, new_id
 
 log_http = log.get("http")
@@ -360,7 +360,7 @@ class App:
                 log_image.info("Picture request check by the chat model failed (%s), the rules decide", str(e)[:150])
             finally:
                 done.set()
-        threading.Thread(target=run, daemon=True).start()
+        usage.thread(run).start()
         if not done.wait(timeout):
             log_image.info("Picture request check by the chat model took longer than %.0fs, the rules decide", timeout)
             return None
@@ -737,6 +737,17 @@ def file_name(title, ext):
     return f"{base}.{ext}"
 
 
+# What a model request is counted as (usage.py), by the path of the request that made it.
+USAGE_KINDS = ((r"/api/chat", "chat"), (r"/api/agent", "agent"), (r"/api/research", "research"), (r"/api/compare", "compare"),
+               (r"/api/documents/ai", "document"), (r"/api/mail/ai", "mail"), (r"/api/calendar/parse", "calendar"),
+               (r"/api/imagine/intent", "image_check"), (r"/api/imagine", "image_prompt"),
+               (rf"/api/sessions/[^/]+/remember", "memory"))
+
+
+def usage_kind(path):
+    return next((kind for pattern, kind in USAGE_KINDS if re.fullmatch(pattern, path)), "other")
+
+
 class Handler(BaseHTTPRequestHandler):
     """HTTP request handler. Static files are served from STATIC; JSON API routes are listed in ROUTES.
 
@@ -892,6 +903,7 @@ class Handler(BaseHTTPRequestHandler):
     def dispatch(self, method):
         """Dispatch a request: static files, CSRF header check, login, auth check, then ROUTES."""
         path = urlparse(self.path).path
+        usage.unbind()  # this thread served another request before
         try:
             if not self.host_allowed():
                 return self.error("This address is not allowed. Open Sunak via localhost or its IP address, "
@@ -921,6 +933,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.error("Choose a profile", 409)
             self.profile = prof
             self.app = self.app.view(prof["id"])
+            usage.bind(self.app.db, prof["id"], usage_kind(path))
             for pattern, meth, fn in ROUTES:
                 m = re.fullmatch(pattern, path)
                 if m and meth == method:
@@ -987,6 +1000,20 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json(self.app.check_updates_now())
 
     # error reports (admin profiles only) -----------------------------
+    def usage_get(self):
+        """GET /api/usage: the token counter of this profile: {last, total, background, goal}. `last` is the latest request
+        that was not a background one (fields: ts, provider, model, kind, input_tokens, output_tokens, cache_read_tokens,
+        cache_creation_tokens, seconds, tokens_per_second, ok; unknown numbers are null), `total` and `background` are
+        sums ({requests, the four token counts, all}; `all` includes cache reads and writes; `background` is the part of
+        `total` that Sunak asked for by itself). Admin profiles also get `installation`: the sum of all profiles."""
+        out = usage.summary(self.app.db)
+        if self.profile.get("admin"):
+            try:
+                out["installation"] = sum(self.app.root.profile_db(p["id"]).usage_sums()["all"] for p in self.app.profiles())
+            except Exception:  # noqa: BLE001 - the extra line is optional
+                log_app.debug("Could not add up the token counters of all profiles", exc_info=True)
+        self.send_json(out)
+
     def reports_get(self):
         """GET /api/reports: mode, whether a token is saved (never the token), waiting and sent reports."""
         self.send_json(self.app.reports.state())
@@ -1654,7 +1681,7 @@ class Handler(BaseHTTPRequestHandler):
                 q.put({"i": i, "type": "error", "error": str(e)})
 
         self.start_stream()
-        threads = [threading.Thread(target=run, args=(i, p, m), daemon=True) for i, (p, m) in enumerate(targets)]
+        threads = [usage.thread(run, i, p, m) for i, (p, m) in enumerate(targets)]
         for t in threads:
             t.start()
         finished = 0
@@ -2580,6 +2607,7 @@ ROUTES = [
     (r"/api/update", "GET", Handler.update_get),
     (r"/api/update", "POST", Handler.update_apply),
     (r"/api/update/check", "POST", Handler.update_check),
+    (r"/api/usage", "GET", Handler.usage_get),
     (r"/api/reports", "GET", Handler.reports_get),
     (r"/api/reports/token", "POST", Handler.reports_token),
     (r"/api/reports/check", "POST", Handler.reports_check),

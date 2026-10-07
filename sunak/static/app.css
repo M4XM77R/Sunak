@@ -178,6 +178,8 @@ details.think summary { cursor: pointer; user-select: none; }
 .suggestions button { text-align: left; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; cursor: pointer; color: var(--muted); }
 .suggestions button:hover { border-color: var(--accent); color: var(--text); }
 .progress { height: 8px; background: var(--panel-2); border-radius: 99px; overflow: hidden; margin: 8px 0 4px; }
+.usage-line { display: block; margin: 4px auto 0; max-width: 820px; width: 100%; text-align: right; background: none; border: 0; padding: 0 8px; cursor: pointer; }
+.usage-line:hover { color: var(--text); }
 .progress > div { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
 
 /* markdown */

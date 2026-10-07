@@ -95,6 +95,7 @@ Die Daten liegen dann im Ordner `data/` neben der Compose-Datei (Ollama-Modelle 
 | 🧠 **Notes & Memory** | Notizen und ein Gedächtnis, das Sunak aus Chats selbst aufbaut |
 | ✉️ **Mail** | Mehrere Konten per IMAP/SMTP, KI fasst zusammen, entwirft Antworten und sortiert den Posteingang |
 | 📅 **Kalender** | Eigener Kalender, CalDAV und abonnierte Kalender; Termine aus einem Satz oder einer Mail |
+| 🔢 **Token-Zähler** | Zählt je Profil die Tokens jeder Modellanfrage (Eingabe, Ausgabe, Cache) mit Tokens pro Sekunde und einem Balken zur Marke 1 000 000 000 |
 | 🛠 **Agent** | Agentisches Coding in einem Projektordner, jede Änderung nur nach deinem Klick |
 | 🔌 **Werkzeuge (MCP)** | Beliebige MCP-Server als Werkzeuge für das Modell |
 | 🎨 **Bilder erzeugen** | Mit Sunaks eigenem Bildprogramm (stable-diffusion.cpp), Automatic1111 oder ComfyUI |
@@ -237,12 +238,22 @@ Monatsansicht mit allen Kalendern: Sunaks eigener Kalender, CalDAV-Konten (iClou
 
 ### Profile
 
-Mehrere Personen an einem Sunak: Jedes Profil hat eigene Chats, Dokumente, Notizen, Wissensbasis, Mail-Konten, Kalender, Personas, Theme und Sprache, auf Wunsch mit PIN. Anbieter, Modelle und MCP-Server sind gemeinsam.
+Mehrere Personen an einem Sunak: Jedes Profil hat eigene Chats, Dokumente, Notizen, Wissensbasis, Mail-Konten, Kalender, Personas, Theme und Sprache, auf Wunsch mit PIN. Anbieter, Modelle und MCP-Server sind gemeinsam. Auch der Token-Zähler gehört zum Profil.
 
 - **Anlegen:** Settings → Profile → „Add profile“: Name, optional ein eigenes Emoji, optional PIN (mindestens 4 Zeichen) und ob das Profil Admin sein soll. Beim nächsten Öffnen fragt Sunak „Who is using Sunak?“; gewechselt wird über den Namen oben links.
 - Das erste Profil ist das Hauptprofil mit allen bisherigen Daten, es bleibt immer Admin und lässt sich nicht löschen.
 - **Rechte:** Nur Admin-Profile ändern Anbieter, Modelle, Agent, Werkzeuge, Bildgenerierung, Spracheingabe, Updates, Fehlerberichte, Handy-Zugriff, Passwort und Profile.
 - Eine PIN trennt die Profile in der App, schützt aber nicht vor jemandem, der am Computer die Dateien unter `~/.sunak` öffnen kann. Das Passwort (Security) gilt für die ganze Installation.
+
+### Token-Zähler
+
+Sunak zählt für jede Modellanfrage die Tokens und merkt sich: Zeitpunkt, Anbieter, Modell, Eingabe, Ausgabe, Cache gelesen, Cache geschrieben, Dauer und Tokens pro Sekunde. Das gilt für Ollama, Claude und OpenAI-kompatible Anbieter, auch im Agent-Modus. Die Zahlen liegen in der Datenbank des Profils und bleiben nach einem Neustart erhalten.
+
+- **Anzeige:** Unter dem Eingabefeld steht nach der ersten gezählten Anfrage eine Zeile mit den Tokens und Tokens pro Sekunde der letzten Anfrage und der Gesamtsumme; ein Klick öffnet Settings → Token counter. Dort stehen die letzte Anfrage im Detail, die Gesamtsumme mit Balken zur Marke 1 000 000 000, Eingabe, Ausgabe, Cache gelesen und geschrieben getrennt und der Teil, den Sunak von selbst angefragt hat. Admin-Profile sehen zusätzlich die Summe aller Profile.
+- **Je Profil:** Jedes Profil hat seinen eigenen Zähler und sieht nur den eigenen.
+- **Was zählt:** Die Gesamtsumme besteht aus Eingabe, Ausgabe, gelesenem und geschriebenem Cache. Auch Anfragen, die Sunak selbst stellt (Bildprüfung, Merken von Fakten, Verbessern von Bildprompts), zählen mit und sind getrennt ausgewiesen. „Letzte Anfrage“ ist die letzte, die du ausgelöst hast, nicht eine dieser Hintergrundanfragen. Bricht eine Anfrage ab oder wird gestoppt, zählt Sunak, was bis dahin gemeldet wurde.
+- **Woher die Zahlen kommen:** Ollama meldet sie am Ende der Antwort (Tokens pro Sekunde aus `eval_count` und `eval_duration`), Claude in `usage` (Tokens pro Sekunde aus der gemessenen Zeit zwischen erstem und letztem Ausgabeteil), OpenAI-kompatible Server mit der Option `stream_options` (Sunak fragt sie mit; lehnt ein Server sie ab, fragt Sunak ohne und merkt es sich). Meldet ein Anbieter eine Zahl nicht, bleibt sie leer („–“) und wird nicht geschätzt, zum Beispiel der Cache bei Ollama.
+- **Nie ein Fehler:** Scheitert das Zählen, wird still ins Log geschrieben und die Anfrage läuft normal weiter.
 
 ### Fehlerberichte
 

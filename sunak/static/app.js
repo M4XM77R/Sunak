@@ -49,19 +49,57 @@ async function stream(path, body, onEvent, signal) {
   const reader = r.body.getReader();
   const dec = new TextDecoder();
   let buf = '';
-  for (;;) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buf += dec.decode(value, { stream: true });
-    let i;
-    while ((i = buf.indexOf('\n')) >= 0) {
-      const line = buf.slice(0, i).trim();
-      buf = buf.slice(i + 1);
-      if (line) onEvent(JSON.parse(line));
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let i;
+      while ((i = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, i).trim();
+        buf = buf.slice(i + 1);
+        if (line) onEvent(JSON.parse(line));
+      }
     }
-  }
-  if (buf.trim()) onEvent(JSON.parse(buf));
+    if (buf.trim()) onEvent(JSON.parse(buf));
+  } finally { usageSoon(); }
 }
+
+/* ---------------- Token counter (sunak/usage.py) ---------------- */
+const nf = (n) => (n == null ? '–' : Number(n).toLocaleString());
+const nfShort = (n) => new Intl.NumberFormat(undefined, { notation: 'compact', maximumFractionDigits: 1 }).format(n || 0);
+let usageTimers = [];
+function usageSoon() {  // after a model request: look again right away and once more for the requests Sunak makes afterwards
+  usageTimers.forEach(clearTimeout);
+  usageTimers = [setTimeout(loadUsage, 400), setTimeout(loadUsage, 5000)];
+}
+async function loadUsage() {
+  try { state.usage = await api('/api/usage'); } catch (e) { return; }  // the counter is never worth an error message
+  renderUsage();
+}
+function renderUsage() {
+  const u = state.usage;
+  if (!u) return;
+  const last = u.last, sum = (r) => (r.input_tokens || 0) + (r.output_tokens || 0) + (r.cache_read_tokens || 0) + (r.cache_creation_tokens || 0);
+  const rate = last?.tokens_per_second == null ? '–' : last.tokens_per_second.toFixed(1);
+  const line = $('#usageLine');
+  line.classList.toggle('hidden', !u.total.requests);
+  const known = last && ['input_tokens', 'output_tokens', 'cache_read_tokens', 'cache_creation_tokens'].some((k) => last[k] != null);
+  line.textContent = `${last ? `${known ? nf(sum(last)) : '–'} ${tr('tokens')} · ${rate} tok/s · ` : ''}${tr('Total')} ${nfShort(u.total.all)} / ${nfShort(u.goal)}`;
+  if (!$('#usageLast')) return;
+  $('#usageLast').textContent = last
+    ? `${tr('Last request')}: ${tr('Input')} ${nf(last.input_tokens)} · ${tr('Output')} ${nf(last.output_tokens)} · ${tr('Cache read')} ${nf(last.cache_read_tokens)} · ${rate} tok/s · ${last.seconds == null ? '–' : last.seconds.toFixed(1)} s · ${last.model}`
+    : tr('No request counted yet.');
+  const pct = u.total.all / u.goal * 100;
+  $('#usageBar').style.width = `${Math.min(100, pct)}%`;
+  $('#usageProgress').setAttribute('aria-valuenow', String(u.total.all));
+  $('#usageTotal').textContent = `${nf(u.total.all)} / ${nf(u.goal)} ${tr('tokens')} (${pct < 0.1 ? pct.toFixed(4) : pct.toFixed(1)} %) · ${nf(u.total.requests)} ${tr('requests')}`;
+  $('#usageDetail').textContent = `${tr('Input')} ${nf(u.total.input_tokens)} · ${tr('Output')} ${nf(u.total.output_tokens)} · ${tr('Cache read')} ${nf(u.total.cache_read_tokens)} · ${tr('Cache write')} ${nf(u.total.cache_creation_tokens)} · ${tr('made by Sunak itself')} ${nf(u.background.all)}`;
+  const all = $('#usageAll');
+  all.classList.toggle('hidden', u.installation == null);
+  if (u.installation != null) all.textContent = `${tr('All profiles together')}: ${nf(u.installation)} ${tr('tokens')}`;
+}
+$('#usageLine').onclick = () => { show('settings'); $('#usageLast').scrollIntoView({ block: 'center' }); };
 
 function toast(msg, action) {
   const t = $('#toast');
@@ -2780,6 +2818,7 @@ function renderDefaultModel(value = $('#defaultModel').value || state.settings.d
 }
 function renderSettings() {
   const s = state.settings;
+  loadUsage();
   renderDefaultModel(s.default_model);
   draftProviders = s.providers.map((p) => ({ ...p }));
   renderProviders();
@@ -3326,6 +3365,7 @@ async function refreshAll(poll = false) {
   // pick up a newly started Ollama without reloading
   setInterval(() => { if (!state.models.length && !state.busy && !state.ollamaBusy) refreshAll(true); }, 8000);
   // the update check runs in the background after the start: look again a little later, then hourly
+  loadUsage();
   checkUpdate();
   setTimeout(checkUpdate, 20000);
   setInterval(checkUpdate, 3600000);
