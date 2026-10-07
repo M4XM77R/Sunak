@@ -135,8 +135,9 @@ function blocks(text) {
       while (i < lines.length && /^\s*([-*+]|\d+[.)])\s+/.test(lines[i])) {
         let item = lines[i].replace(/^\s*([-*+]|\d+[.)])\s+/, '');
         const box = item.match(/^\[([ xX])\]\s+/);
-        if (box) item = (box[1] === ' ' ? '☐ ' : '☑ ') + item.slice(box[0].length);
-        items.push(`<li>${inline(item)}</li>`); i++;
+        if (box) item = item.slice(box[0].length);
+        const check = box ? `<input type="checkbox" disabled${box[1] === ' ' ? '' : ' checked'}> ` : '';
+        items.push(`<li>${check}${inline(item)}</li>`); i++;
       }
       i--; out.push(ordered ? `<ol>${items.join('')}</ol>` : `<ul>${items.join('')}</ul>`); continue;
     }
@@ -310,14 +311,14 @@ function currentPersona() {
 function renderPersonaSelect() {
   const sel = $('#personaSelect');
   sel.innerHTML = '';
-  for (const p of state.settings?.personas || []) sel.append(el('option', { value: p.id }, `${p.icon || '🙂'} ${p.name}`));
+  for (const p of state.settings?.personas || []) sel.append(el('option', { value: p.id }, p.name));
   sel.value = currentPersona();
 }
 $('#personaSelect').onchange = async (e) => {
   store.set('sunak-persona', e.target.value);
   if (state.session?.id) { state.session.persona = e.target.value; await api(`/api/sessions/${state.session.id}`, { method: 'PATCH', body: { persona: e.target.value } }); }
   const p = state.settings.personas.find((x) => x.id === e.target.value);
-  toast(`${p.icon || ''} ${p.name}${p.prompt ? '' : ` ${tr('(no extra instructions)')}`}`);
+  toast(`${p.name}${p.prompt ? '' : ` ${tr('(no extra instructions)')}`}`);
 };
 
 /* ---------------- Sessions ---------------- */
@@ -338,7 +339,7 @@ function renderSessions() {
         await api(`/api/sessions/${s.id}`, { method: 'DELETE' });
         if (state.session?.id === s.id) newChat();
         loadSessions();
-      } }, '✕')));
+      } }, icon('x'))));
   }
 }
 // search in all chats (titles and messages); results show where the words occur
@@ -433,11 +434,11 @@ function messageEl(m, i, msgs) {
   const copyText = gen ? gen.prompt : m.content.replace(/<think>[\s\S]*?(<\/think>|$)/g, '').trim();
   meta.append(el('button', { onclick: () => navigator.clipboard.writeText(copyText).then(() => toast('Copied')) }, gen ? 'Copy description' : 'Copy'));
   if (gen) {
-    meta.append(el('a', { href: `/api/images/${m.meta.images[0]}`, download: `sunak-${gen.seed}.${m.meta.images[0].split('.')[1]}` }, '⬇ Download'));
+    meta.append(el('a', { href: `/api/images/${m.meta.images[0]}`, download: `sunak-${gen.seed}.${m.meta.images[0].split('.')[1]}` }, icon('download'), 'Download'));
     if (!state.busy) meta.append(el('button', { title: 'Same description, new picture', onclick: () => {
       const asked = msgs.slice(0, i).reverse().find((x) => x.role === 'user');
       runImagine({ prompt: gen.prompt, negative: gen.negative || '', aspect: asked?.meta?.imagine?.aspect || 'square' });
-    } }, '🔁 Again'));
+    } }, icon('refresh'), 'Again'));
   } else if (!state.busy && m.id && !m.meta?.imagine) {
     if (isUser) meta.append(el('button', { onclick: () => editMessage(m) }, 'Edit'));
     if (!isUser && i === msgs.length - 1) meta.append(el('button', { onclick: () => regenerate(m) }, 'Regenerate'));
@@ -445,7 +446,7 @@ function messageEl(m, i, msgs) {
   if (!isUser && tts && m.content && !gen && !m.meta?.pending) meta.append(speakButton(m));
   if (!isUser && m.model) meta.append(el('span', {}, m.model.split('::')[1] || m.model));
   body.append(meta);
-  return el('div', { class: `msg ${m.role}`, 'data-id': m.id }, el('div', { class: 'avatar' }, isUser ? '🙂' : '⛵'), body);
+  return el('div', { class: `msg ${m.role}`, 'data-id': m.id }, el('div', { class: 'avatar' }, icon(isUser ? 'user' : 'sail')), body);
 }
 
 // attached files (File `name`: ``` text ```) are shown folded, the question as text
@@ -456,7 +457,7 @@ function userBubble(content, images = []) {
   return el('div', { class: 'bubble' },
     images.length ? el('div', { class: 'msg-images' }, images.map((src) =>
       el('a', { href: src, target: '_blank', rel: 'noopener' }, el('img', { src, alt: tr('Attached image'), loading: 'lazy' })))) : '',
-    files.map((f) => el('details', { class: 'attached' }, el('summary', {}, `📄 ${f[1]}`), el('pre', { class: 'kb-text' }, f[2]))),
+    files.map((f) => el('details', { class: 'attached' }, el('summary', {}, icon('file'), f[1]), el('pre', { class: 'kb-text' }, f[2]))),
     rest);
 }
 
@@ -512,7 +513,7 @@ async function sendNow() {
   if (state.attachments.some((a) => a.loading)) { toast('Still reading your files…'); return; }
   if (agentOn() && !agentFolder()) { toast('Enter the project folder for the agent first'); $('#agentFolder').focus(); return; }
   const pics = state.attachments.filter((a) => a.image);
-  if (pics.length && (agentOn() || mcpOn())) { toast('Agent mode and tools (MCP) cannot look at images yet. Switch them off (🛠, 🔌) to ask about the image.'); return; }
+  if (pics.length && (agentOn() || mcpOn())) { toast('Agent mode and tools (MCP) cannot look at images yet. Switch them off to ask about the image.'); return; }
   const files = state.attachments.filter((a) => !a.image);
   if (files.length) {
     text = files.map((a) => `File \`${a.name}\`:\n\`\`\`\n${a.text}\n\`\`\``).join('\n\n') + (text ? `\n\n${text}` : '');
@@ -596,13 +597,13 @@ async function runChat(payload, localUserMsg) {
     state.session = fresh;
   }
   renderMessages();
-  if (error) $('#messages').append(el('div', { class: 'msg' }, el('div', { class: 'avatar' }, '⚠️'), el('div', { class: 'body err' }, error)));
+  if (error) $('#messages').append(el('div', { class: 'msg' }, el('div', { class: 'avatar warn' }, icon('alert')), el('div', { class: 'body err' }, error)));
   $('#messages').scrollTop = $('#messages').scrollHeight;
   return refused ? 'refused' : 'ok';
 }
 
 /* ---------------- Image generation ----------------
-   🎨 sends the message as a picture description to Automatic1111 or ComfyUI (see sunak/imagegen.py). */
+   The picture button sends the message as a picture description to Automatic1111 or ComfyUI (see sunak/imagegen.py). */
 const imagineReady = () => (state.settings?.image_gen || 'off') !== 'off';
 const imagineOn = () => imagineReady() && store.get('sunak-imagine') === '1';
 function renderImagineToggle() {
@@ -631,7 +632,7 @@ function genFigure(m) {
 async function sendImagine() {
   const text = promptEl.value.trim();
   if (!text) { toast('Describe the picture first'); return; }
-  if (state.attachments.length) { toast('Pictures are made from your description only. Remove the attachments or switch 🎨 off.'); return; }
+  if (state.attachments.length) { toast('Pictures are made from your description only. Remove the attachments or switch off the picture button.'); return; }
   if (!state.session) {
     try {
       state.session = await api('/api/sessions', { method: 'POST', body: { model: currentModel() || '', use_kb: kbOn(), use_web: webOn(), persona: currentPersona() } });
@@ -669,7 +670,7 @@ async function runImagine(body) {
   try { state.session = await api(`/api/sessions/${s.id}`); } catch (e) { s.messages = s.messages.filter((x) => !x.meta?.pending); }
   if (state.session !== s && state.session.id !== s.id) return;
   renderMessages();
-  if (error && !stopped) $('#messages').append(el('div', { class: 'msg' }, el('div', { class: 'avatar' }, '⚠️'), el('div', { class: 'body err' }, error)));
+  if (error && !stopped) $('#messages').append(el('div', { class: 'msg' }, el('div', { class: 'avatar warn' }, icon('alert')), el('div', { class: 'body err' }, error)));
   $('#messages').scrollTop = $('#messages').scrollHeight;
 }
 
@@ -679,7 +680,7 @@ async function runImagine(body) {
 const agentFolder = () => $('#agentFolder').value.trim();
 const isAdmin = () => !!state.settings?.profile?.admin;
 const agentOn = () => isAdmin() && !!state.settings?.agent_enabled && store.get('sunak-agent') === '1';
-// 🔌 tools of the MCP servers (Settings → Tools); every call asks first, like a change in agent mode
+// tools (plug button) of the MCP servers (Settings → Tools); every call asks first, like a change in agent mode
 const mcpReady = () => isAdmin() && (state.settings?.mcp_servers || []).some((m) => m.enabled);
 const mcpOn = () => mcpReady() && store.get('sunak-mcp') === '1';
 function renderAgentToggle() {
@@ -713,7 +714,7 @@ $('#agentRevoke').onclick = async () => {
   toast('Sunak asks again before every change, command and tool in this chat');
 };
 
-const STEP_ICONS = { running: '⏳', waiting: '❓', done: '✅', error: '⚠️', denied: '✋', stopped: '⏹' };
+const STEP_ICONS = { running: 'clock', waiting: 'help', done: 'check-circle', error: 'alert', denied: 'hand', stopped: 'stop' };
 function diffEl(diff) {
   return el('pre', { class: 'diff' }, diff.split('\n').map((line) => el('span', {
     class: line.startsWith('@@') ? 'hunk' : /^\+(?!\+\+ )/.test(line) ? 'add' : /^-(?!-- )/.test(line) ? 'del' : '' }, line + '\n')));
@@ -727,7 +728,7 @@ function stepEl(st, onDecide) {
   if (st.diff) kids.push(diffEl(st.diff));
   if (st.output && !onDecide) kids.push(el('pre', { class: 'step-out' }, st.output));
   const box = el('details', { class: `step ${status}`, open: !!onDecide || status === 'error' },
-    el('summary', {}, el('span', { class: 'step-icon' }, STEP_ICONS[status] || '•'), el('code', {}, st.title || st.tool)), kids);
+    el('summary', {}, el('span', { class: 'step-icon' }, icon(STEP_ICONS[status] || 'dot')), el('code', {}, st.title || st.tool)), kids);
   if (onDecide && st.kind?.startsWith('tool:')) {
     box.append(el('div', { class: 'row step-actions' },
       el('span', { class: 'muted small' }, 'Use this tool?'),
@@ -792,7 +793,7 @@ async function runAgent(payload, localUserMsg) {
         if (!pending) { pending = true; requestAnimationFrame(paint); }
       } else if (ev.type === 'step' || ev.type === 'step_done') { endText(); showStep(ev); }
       else if (ev.type === 'confirm') showStep(ev, true);
-      else if (ev.type === 'notice') { endText(); target.append(el('p', { class: 'notice muted small' }, 'ℹ️ ', ev.t)); }
+      else if (ev.type === 'notice') { endText(); target.append(el('p', { class: 'notice muted small' }, icon('info'), ev.t)); }
       else if (ev.type === 'done') stopped = !!ev.stopped;
       else if (ev.type === 'error') error = ev.error;
     }, ctrl.signal);
@@ -816,7 +817,7 @@ async function runAgent(payload, localUserMsg) {
   if (state.session !== s || state.busy) return;
   if (fresh) state.session = fresh;
   renderMessages();
-  if (error) $('#messages').append(el('div', { class: 'msg' }, el('div', { class: 'avatar' }, '⚠️'), el('div', { class: 'body err' }, error)));
+  if (error) $('#messages').append(el('div', { class: 'msg' }, el('div', { class: 'avatar warn' }, icon('alert')), el('div', { class: 'body err' }, error)));
   $('#messages').scrollTop = $('#messages').scrollHeight;
 }
 
@@ -846,7 +847,7 @@ function fileData(f) {
 }
 function dropAttachment(a) {
   const k = state.attachments.indexOf(a);
-  if (k >= 0) state.attachments.splice(k, 1); // it may already be removed by its ✕
+  if (k >= 0) state.attachments.splice(k, 1); // it may already be removed by its remove button
 }
 /* images go to the model as pictures (vision models), shrunk in the browser to at most 1568 px */
 const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
@@ -914,8 +915,8 @@ function renderAttachments() {
   const box = $('#attachments');
   box.innerHTML = '';
   state.attachments.forEach((a, i) => box.append(el('span', { class: 'chip' },
-    a.image && a.url ? el('img', { class: 'thumb', src: a.url, alt: '' }) : (a.loading ? '⏳' : a.image ? '🖼' : '📄'), ` ${a.name}`,
-    el('button', { type: 'button', 'aria-label': tr('Remove {name}', { name: a.name }), onclick: () => { state.attachments.splice(i, 1); renderAttachments(); } }, '✕'))));
+    a.image && a.url ? el('img', { class: 'thumb', src: a.url, alt: '' }) : icon(a.loading ? 'clock' : a.image ? 'image' : 'file'), a.name,
+    el('button', { type: 'button', 'aria-label': tr('Remove {name}', { name: a.name }), onclick: () => { state.attachments.splice(i, 1); renderAttachments(); } }, icon('x', 'solo')))));
 }
 // paste a screenshot straight into the message box
 promptEl.addEventListener('paste', (e) => {
@@ -931,9 +932,9 @@ chatView.addEventListener('dragleave', (e) => { if (!chatView.contains(e.related
 chatView.addEventListener('drop', (e) => { e.preventDefault(); chatView.classList.remove('drag'); attachFiles([...e.dataTransfer.files]); });
 
 /* ---------------- Voice ----------------
-   🎤 speech input: a local Whisper server (recorded here, sent as 16 kHz WAV, see sunak/speech.py) or the
+   Speech input (microphone): a local Whisper server (recorded here, sent as 16 kHz WAV, see sunak/speech.py) or the
    browser's speech recognition, on this device only unless Settings → Voice allows more.
-   🔊 reading aloud: the browser's speech synthesis, preferably with a voice that runs on this device. */
+   Reading aloud (speaker): the browser's speech synthesis, preferably with a voice that runs on this device. */
 const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
 const tts = window.speechSynthesis;
 const speechLang = () => ({ de: 'de-DE', en: 'en-US' })[sunakLang] || navigator.language || 'en-US';
@@ -1077,7 +1078,7 @@ function speakButton(m) {
         voice.speaking = key;
         b.classList.add('on');
       }
-    } }, '🔊');
+    } }, icon('volume', 'solo'));
   return b;
 }
 function renderVoices() {
@@ -1118,9 +1119,9 @@ $('#kbToggle').onclick = async () => {
 };
 function sourcesEl(sources) {
   const box = el('div', { class: 'sources kb-sources' });
-  if (!sources.length) box.append(el('span', { class: 'muted small' }, tr('📚 No matching files')));
+  if (!sources.length) box.append(el('span', { class: 'muted small' }, icon('book'), tr('No matching files')));
   sources.forEach((src) => box.append(el('button', { class: 'chip', type: 'button', title: tr('Show file'),
-    onclick: () => { show('knowledge'); previewKb(src.id); } }, `📚 ${src.name}`)));
+    onclick: () => { show('knowledge'); previewKb(src.id); } }, icon('book'), src.name)));
   return box;
 }
 /* ---------------- Web search in the chat ----------------
@@ -1147,7 +1148,7 @@ $('#webToggle').onclick = async () => {
 };
 function webSourcesEl(web) {
   return el('div', { class: 'sources kb-sources' },
-    el('span', { class: 'muted small', title: tr('Searched for: {query}', { query: web.query }) }, '🌐'),
+    el('span', { class: 'muted small', title: tr('Searched for: {query}', { query: web.query }) }, icon('globe', 'solo')),
     web.sources.map((src, i) => el('a', { class: 'chip', href: src.url, target: '_blank', rel: 'noopener noreferrer', title: src.url },
       `[${i + 1}] ${src.title || new URL(src.url).hostname}`)));
 }
@@ -1163,14 +1164,14 @@ async function loadKb() {
   box.append(el('p', { class: 'muted small' }, `${trn(state.kb.files.length, '{n} file', '{n} files')} · ${tr('{k}k characters', { k: Math.round(state.kb.chars / 1000) })}`));
   for (const f of state.kb.files) {
     box.append(el('div', { class: 'kb-item' },
-      el('button', { class: 'kb-name', title: 'Show text', onclick: () => previewKb(f.id) }, `📄 ${f.name}`),
+      el('button', { class: 'kb-name', title: 'Show text', onclick: () => previewKb(f.id) }, icon('file'), f.name),
       el('span', { class: 'muted small' }, `${(f.size / 1024).toFixed(f.size < 10240 ? 1 : 0)} KB · ${Math.round(f.chars / 100) / 10}k chars`),
       el('button', { class: 'icon-btn', title: 'Remove', onclick: async () => {
         if (!confirm(tr('Remove “{name}” from your knowledge base?', { name: f.name }))) return;
         await api(`/api/knowledge/${f.id}`, { method: 'DELETE' });
         $('#kbPreview').classList.add('hidden');
         loadKb();
-      } }, '🗑')));
+      } }, icon('trash'))));
   }
 }
 async function previewKb(id) {
@@ -1179,7 +1180,7 @@ async function previewKb(id) {
     const f = await api(`/api/knowledge/${id}`);
     box.innerHTML = '';
     box.append(el('div', { class: 'row' }, el('h3', { style: 'margin:0;flex:1' }, f.name),
-      el('button', { class: 'icon-btn', onclick: () => box.classList.add('hidden') }, '✕')),
+      el('button', { class: 'icon-btn', title: 'Close', onclick: () => box.classList.add('hidden') }, icon('x'))),
       el('pre', { class: 'kb-text' }, f.text.length > 20000 ? `${f.text.slice(0, 20000)}\n\n… (${tr('{k}k characters in total', { k: Math.round(f.text.length / 1000) })})` : f.text));
     box.classList.remove('hidden');
     box.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -1189,15 +1190,15 @@ async function uploadKb(files) {
   const box = $('#kbUploads');
   let added = 0;
   for (const f of files) {
-    const line = el('div', { class: 'kb-upload muted small' }, tr('⏳ Reading {name}…', { name: f.name }));
+    const line = el('div', { class: 'kb-upload muted small' }, icon('clock'), tr('Reading {name}…', { name: f.name }));
     box.append(line);
-    if (f.size > MAX_UPLOAD) { line.textContent = `✕ ${tr('{name} is too big (max 15 MB)', { name: f.name })}`; line.classList.add('err'); continue; }
+    if (f.size > MAX_UPLOAD) { line.replaceChildren(icon('x'), tr('{name} is too big (max 15 MB)', { name: f.name })); line.classList.add('err'); continue; }
     try {
       const r = await api('/api/knowledge', { method: 'POST', body: { name: f.name, data: await fileData(f) } });
       line.remove();
       added++;
       toast(tr('Added {name}', { name: r.name }));
-    } catch (e) { line.textContent = `✕ ${e.message}`; line.classList.add('err'); }
+    } catch (e) { line.replaceChildren(icon('x'), e.message); line.classList.add('err'); }
   }
   if (state.view === 'knowledge') loadKb(); else loadKbData();
   return added;
@@ -1258,7 +1259,7 @@ async function loadMailView() {
   if (!state.mail.accounts.length) {
     $('#mailItems').innerHTML = '';
     $('#mailItems').append(el('div', { class: 'card' }, el('p', {}, 'No mail account linked yet.'),
-      el('button', { class: 'btn primary', onclick: () => { show('settings'); editMailAccount({}); } }, '＋ Add mail account')));
+      el('button', { class: 'btn primary', onclick: () => { show('settings'); editMailAccount({}); } }, icon('plus'), 'Add mail account')));
     showMailPane('empty');
     return;
   }
@@ -1273,9 +1274,8 @@ async function loadFolders() {
   fsel.append(el('option', { value: 'INBOX' }, 'Inbox'));
   fsel.dataset.account = $('#mailAccount').value;
   try { state.mail.folders = await api(`/api/mail/${$('#mailAccount').value}/folders`); } catch (e) { toast(e.message); return; }
-  const icons = { inbox: '📥', drafts: '📝', sent: '📤', archive: '🗄', junk: '🚫', trash: '🗑', all: '📚', flagged: '⭐' };
   fsel.innerHTML = '';
-  state.mail.folders.forEach((f) => fsel.append(el('option', { value: f.id }, `${icons[f.role] || '📁'} ${f.name}`)));
+  state.mail.folders.forEach((f) => fsel.append(el('option', { value: f.id }, f.name)));
   fsel.value = state.mail.folders.some((f) => f.id === keep) ? keep : (state.mail.folders[0]?.id || 'INBOX');
 }
 async function loadMailList(older) {
@@ -1303,7 +1303,7 @@ function renderMailList() {
     box.append(el('button', { type: 'button', class: `mail-item${m.seen ? '' : ' unread'}${state.mail.open?.uid === m.uid ? ' active' : ''}`,
       onclick: () => openMail(m.uid) },
     el('span', { class: 'mi-top' }, el('span', { class: 'mi-from' }, who(m)), el('span', { class: 'muted small' }, mailDate(m.date))),
-    el('span', { class: 'mi-subj' }, `${m.flagged ? '⭐ ' : ''}${m.answered ? '↩ ' : ''}${m.subject}`)));
+    el('span', { class: 'mi-subj' }, m.flagged ? icon('star') : '', m.answered ? icon('reply') : '', m.subject)));
   }
   if (state.mail.more) box.append(el('button', { class: 'btn wide', type: 'button', onclick: () => loadMailList(true) }, 'Load older'));
 }
@@ -1333,19 +1333,19 @@ function renderReader(m) {
   r.innerHTML = '';
   const aiBox = el('div', { class: 'md mail-ai hidden' });
   const att = m.attachments.map((a, i) => el('a', { class: 'chip', download: a.name, title: `${a.type} · ${Math.ceil(a.size / 1024)} KB`,
-    href: `/api/mail/${m.account}/attachment?${new URLSearchParams({ folder: m.folder, uid: m.uid, i })}` }, `📎 ${a.name}`));
+    href: `/api/mail/${m.account}/attachment?${new URLSearchParams({ folder: m.folder, uid: m.uid, i })}` }, icon('paperclip'), a.name));
   r.append(...[el('h2', { class: 'mail-subject' }, m.subject),
     el('div', { class: 'mail-head small' },
       el('div', {}, el('b', {}, who(m)), m.from_name ? el('span', { class: 'muted' }, ` <${m.from_addr}>`) : null),
       el('div', { class: 'muted' }, `${tr('To: {to}', { to: m.to })}${m.cc ? ` · Cc: ${m.cc}` : ''} · ${mailDate(m.date, true)}`)),
     el('div', { class: 'row' },
-      el('button', { class: 'btn', type: 'button', onclick: () => replyTo(m, false) }, '↩ Reply'),
-      el('button', { class: 'btn', type: 'button', onclick: () => replyTo(m, true) }, '↩ Reply all'),
-      el('button', { class: 'btn', type: 'button', onclick: () => forward(m) }, '↪ Forward'),
-      el('button', { class: 'btn', type: 'button', onclick: () => mailAi('summarize', mailAsText(m), aiBox) }, '✨ Summarize'),
-      el('button', { class: 'btn', type: 'button', title: 'Attach this e-mail to a new chat and ask anything about it', onclick: () => askInChat(m) }, '💬 Ask in chat'),
+      el('button', { class: 'btn', type: 'button', onclick: () => replyTo(m, false) }, icon('reply'), 'Reply'),
+      el('button', { class: 'btn', type: 'button', onclick: () => replyTo(m, true) }, icon('reply-all'), 'Reply all'),
+      el('button', { class: 'btn', type: 'button', onclick: () => forward(m) }, icon('forward'), 'Forward'),
+      el('button', { class: 'btn', type: 'button', onclick: () => mailAi('summarize', mailAsText(m), aiBox) }, icon('sparkles'), 'Summarize'),
+      el('button', { class: 'btn', type: 'button', title: 'Attach this e-mail to a new chat and ask anything about it', onclick: () => askInChat(m) }, icon('chat'), 'Ask in chat'),
       el('button', { class: 'btn', type: 'button', title: 'The model reads the date out of this e-mail, you check it and save',
-        onclick: () => { show('calendar'); calQuickAdd(`${tr('Sent: {date}', { date: m.date })}\n${mailAsText(m)}`.slice(0, 20000)); } }, '📅 Add to calendar')),
+        onclick: () => { show('calendar'); calQuickAdd(`${tr('Sent: {date}', { date: m.date })}\n${mailAsText(m)}`.slice(0, 20000)); } }, icon('calendar'), 'Add to calendar')),
     mailActions(m),
     aiBox,
     att.length ? el('div', { class: 'sources' }, att) : null,
@@ -1358,7 +1358,7 @@ function mailActions(m) {
   const sel = el('select', { 'aria-label': 'Move to folder', onchange: () => { const t = sel.value; sel.value = ''; if (t) moveMail(m, t); } },
     el('option', { value: '' }, 'Move to…'), ...others.map((f) => el('option', { value: f.id }, f.name)));
   return el('div', { class: 'row mail-actions' }, sel,
-    el('button', { class: 'btn', type: 'button', onclick: () => deleteMail(m) }, '🗑 Delete'));
+    el('button', { class: 'btn', type: 'button', onclick: () => deleteMail(m) }, icon('trash'), 'Delete'));
 }
 function mailGone(m, msg) {
   state.mail.items = state.mail.items.filter((x) => x.uid !== m.uid);
@@ -1400,7 +1400,7 @@ async function mailAi(task, text, box, instruction = '', onText) {
 }
 function askInChat(m) {
   newChat();
-  const name = `✉ ${m.subject}`.replace(/[`\n\r]/g, "'").slice(0, 120);
+  const name = `${tr('E-mail')}: ${m.subject}`.replace(/[`\n\r]/g, "'").slice(0, 120);
   state.attachments.push({ name, text: mailAsText(m).replace(/```/g, "'''") });
   renderAttachments();
   promptEl.focus();
@@ -1429,7 +1429,7 @@ $('#mailOverview').onclick = () => {
   const r = $('#mailReader');
   const box = el('div', { class: 'md mail-ai' });
   r.innerHTML = '';
-  r.append(el('h2', { class: 'mail-subject' }, tr('✨ Overview of {n} e-mails', { n: Math.min(60, state.mail.items.length) })),
+  r.append(el('h2', { class: 'mail-subject' }, icon('sparkles'), tr('Overview of {n} e-mails', { n: Math.min(60, state.mail.items.length) })),
     el('p', { class: 'muted small' }, 'Based on sender and subject only.'), box);
   showMailPane('reader');
   mailAi('overview', list, box);
@@ -1486,8 +1486,8 @@ function renderComposeFiles() {
   const c = state.mail.compose, box = $('#mailAttach');
   box.innerHTML = '';
   const chip = (name, size, drop) => el('span', { class: 'chip', title: `${Math.ceil(size / 1024)} KB` },
-    el('span', { 'data-no-i18n': '' }, `📎 ${name}`),
-    el('button', { type: 'button', title: tr('Remove {name}', { name }), onclick: () => { drop(); renderComposeFiles(); } }, '✕'));
+    icon('paperclip'), el('span', { 'data-no-i18n': '' }, name),
+    el('button', { type: 'button', title: tr('Remove {name}', { name }), onclick: () => { drop(); renderComposeFiles(); } }, icon('x', 'solo')));
   if (c.fwd) c.fwd.keep.forEach((i) => box.append(chip(c.fwd.list[i].name, c.fwd.list[i].size, () => { c.fwd.keep = c.fwd.keep.filter((k) => k !== i); })));
   c.files.forEach((f) => box.append(chip(f.name, f.size, () => { c.files = c.files.filter((x) => x !== f); })));
 }
@@ -1514,12 +1514,12 @@ $('#mailAiBtn').onclick = async () => {
   if (!c?.original) return;
   const btn = $('#mailAiBtn'), ta = $('#mailBody');
   const rest = ta.value; // the AI text goes above what is there (the quoted original)
-  btn.disabled = true; btn.textContent = 'Writing…'; ta.readOnly = true;
+  btn.disabled = true; btn.lastChild.textContent = tr('Writing…'); ta.readOnly = true;
   let out = '';
   const ok = await mailAi('reply', mailAsText(c.original), null, $('#mailAiHint').value.trim(), (t) => {
     out += t; ta.value = out.replace(/^\s+/, '') + rest;
   });
-  btn.disabled = false; btn.textContent = '✨ Draft reply'; ta.readOnly = false;
+  btn.disabled = false; btn.lastChild.textContent = tr('Draft reply'); ta.readOnly = false;
   if (!ok) { ta.value = rest; return; }
   ta.value = `${out.replace(/<think>[\s\S]*?(<\/think>|$)/g, '').trim()}${rest}`;
   ta.focus(); ta.setSelectionRange(0, 0); ta.scrollTop = 0;
@@ -1629,7 +1629,7 @@ async function renderMailAccounts() {
   if (!state.mail.accounts.length) box.append(el('p', { class: 'muted small' }, 'No account linked.'));
   for (const a of state.mail.accounts) {
     box.append(el('div', { class: 'provider' },
-      el('span', { style: 'flex:1' }, '✉️ ', el('b', {}, a.email), a.name ? el('span', { class: 'muted' }, ` · ${a.name}`) : null),
+      el('span', { style: 'flex:1' }, icon('mail'), el('b', {}, a.email), a.name ? el('span', { class: 'muted' }, ` · ${a.name}`) : null),
       el('span', { class: 'muted small' }, a.imap_host),
       el('button', { class: 'btn', type: 'button', onclick: () => editMailAccount(a) }, 'Edit'),
       el('button', { class: 'icon-btn', type: 'button', title: 'Unlink (nothing is deleted on the mail server)', onclick: async () => {
@@ -1637,7 +1637,7 @@ async function renderMailAccounts() {
         await api(`/api/mail/accounts/${a.id}`, { method: 'DELETE' });
         if (mailDraftAcc?.id === a.id) editMailAccount(null);
         renderMailAccounts();
-      } }, '✕')));
+      } }, icon('x'))));
   }
 }
 function applyPreset(a, pid) {
@@ -1676,7 +1676,7 @@ function editMailAccount(a) {
     servers.innerHTML = '';
     const p = state.mail.presets[d.preset];
     help.innerHTML = '';
-    if (p) help.append(`${p.help} `, ...(p.link ? [el('a', { href: p.link, target: '_blank', rel: 'noopener' }, 'Open ↗')] : []));
+    if (p) help.append(`${p.help} `, ...(p.link ? [el('a', { href: p.link, target: '_blank', rel: 'noopener' }, 'Open', icon('external', 'after'))] : []));
     else help.append('Enter the IMAP and SMTP servers of your provider below (see its help pages).');
     servers.append(
       el('div', { class: 'row' }, el('span', { class: 'mail-lbl' }, 'IMAP'), field('imap_host', { placeholder: 'imap.example.com' }),
@@ -1713,8 +1713,8 @@ function editMailAccount(a) {
         try {
           const r = await api('/api/mail/test', { method: 'POST', body: { account: d } });
           result.innerHTML = '';
-          result.append(el('div', { class: r.imap ? 'bad' : 'ok' }, r.imap ? `✕ ${tr('Reading (IMAP): {error}', { error: r.imap })}` : '✓ Reading (IMAP) works'),
-            el('div', { class: r.smtp ? 'bad' : 'ok' }, r.smtp ? `✕ ${tr('Sending (SMTP): {error}', { error: r.smtp })}` : '✓ Sending (SMTP) works'));
+          result.append(el('div', { class: r.imap ? 'bad' : 'ok' }, icon(r.imap ? 'x' : 'check'), r.imap ? tr('Reading (IMAP): {error}', { error: r.imap }) : tr('Reading (IMAP) works')),
+            el('div', { class: r.smtp ? 'bad' : 'ok' }, icon(r.smtp ? 'x' : 'check'), r.smtp ? tr('Sending (SMTP): {error}', { error: r.smtp }) : tr('Sending (SMTP) works')));
         } catch (err) { result.innerHTML = ''; result.append(el('div', { class: 'bad' }, err.message)); }
         b.disabled = false;
       } }, 'Test connection'),
@@ -1853,7 +1853,7 @@ function fillPullSlot(wrap) {
   wrap.innerHTML = '';
   if (state.pulls[name]) wrap.append(pullWidget(name));
   else if (isInstalled(name)) wrap.append(el('button', { class: 'btn', onclick: () => useModel(name) }, 'Chat with it →'));
-  else wrap.append(el('button', { class: 'btn primary', onclick: () => startPull(name) }, wrap.dataset.label));
+  else wrap.append(el('button', { class: 'btn primary', onclick: () => startPull(name) }, icon('download'), wrap.dataset.label));
 }
 function fillImageSlot(wrap) {
   const key = wrap.dataset.img, p = state.imgPulls[key];
@@ -1873,7 +1873,7 @@ function fillImageSlot(wrap) {
         if (state.settings?.image_gen !== 'local' || !state.settings?.image_gen_model) useImageModel(r.id);
       });
     }
-  } }, wrap.dataset.label));
+  } }, icon('download'), wrap.dataset.label));
 }
 function updatePullWidgets() {
   $$('.pull-slot').forEach(fillPullSlot);
@@ -1901,12 +1901,12 @@ function gpuBanners(o) {
   const g = o.gpu;
   const box = el('div', { class: 'banner' });
   if (g?.usable) {
-    box.append(el('span', {}, `⚡ GPU: ${g.name || g.vendor}`), el('span', { class: 'muted small' },
-      g.unified ? ` · ${tr('Metal, shares the {gb} GB memory', { gb: o.ram_gb || '?' })}` : ` · ${g.vram_gb} GB VRAM · ${tr('models marked ⚡ run fully on it')}`));
+    box.append(el('span', {}, icon('bolt'), `GPU: ${g.name || g.vendor}`), el('span', { class: 'muted small' },
+      g.unified ? ` · ${tr('Metal, shares the {gb} GB memory', { gb: o.ram_gb || '?' })}` : ` · ${g.vram_gb} GB VRAM · ${tr('models marked “fits GPU” run fully on it')}`));
   } else if (g) {
-    box.append(el('span', {}, '🖥 No GPU that Ollama can use was found.'), el('span', { class: 'muted small' }, ' Models run on the CPU, smaller models answer faster.'));
+    box.append(el('span', {}, icon('cpu'), 'No GPU that Ollama can use was found.'), el('span', { class: 'muted small' }, ' Models run on the CPU, smaller models answer faster.'));
   } else if (!o.local) {
-    box.append(el('span', {}, o.gpu_expected ? `⚡ GPU: ${tr('{vendor} via Docker', { vendor: o.gpu_expected === 'nvidia' ? 'NVIDIA' : 'AMD' })}`
+    box.append(el('span', {}, o.gpu_expected ? icon('bolt') : '', o.gpu_expected ? `GPU: ${tr('{vendor} via Docker', { vendor: o.gpu_expected === 'nvidia' ? 'NVIDIA' : 'AMD' })}`
       : tr('Ollama runs at {url} and uses that computer’s GPU, if it has one.', { url: o.base_url })));
   } else return out; // still detecting
   if (o.running) {
@@ -1920,7 +1920,7 @@ function gpuBanners(o) {
   }
   out.push(box);
   const warn = o.gpu_warning || g?.hint;
-  if (warn) out.push(el('div', { class: 'banner warn-banner' }, el('p', {}, `⚠ ${warn}`)));
+  if (warn) out.push(el('div', { class: 'banner warn-banner' }, el('p', {}, icon('alert'), warn)));
   return out;
 }
 
@@ -1944,7 +1944,7 @@ function renderModelsView() {
         if (!confirm(tr('Delete {name} from disk?', { name: m.name }))) return;
         try { await api('/api/models/delete', { method: 'POST', body: { model: `ollama::${m.name}` } }); toast('Deleted'); await refreshAll(); }
         catch (e) { toast(e.message); }
-      } }, '🗑')));
+      } }, icon('trash'))));
   }
   renderCatFilters();
   const cat = $('#catalog');
@@ -1964,7 +1964,7 @@ function renderModelsView() {
   updatePullWidgets();
 }
 const fitBadge = (m) => el('span', { class: `badge ${m.gpu ? 'gpu' : m.fits ? 'fit' : 'nofit'}`, title: m.gpu ? 'Runs fully on your GPU' : m.fits ? 'Runs, on the CPU or partly on the GPU' : '' },
-  m.gpu ? '⚡ fits GPU' : m.fits ? '✓ fits' : 'needs more RAM');
+  m.gpu ? icon('bolt') : m.fits ? icon('check') : '', m.gpu ? 'fits GPU' : m.fits ? 'fits' : 'needs more RAM');
 
 /* Search and filters: the lists on this page are filtered right away; “Search online” also asks
    ollama.com and Hugging Face (see sunak/modelsearch.py) and quietly shows nothing when they cannot be reached. */
@@ -2012,7 +2012,7 @@ function renderOnline() {
       o_running() ? el('div', { class: 'size-pulls' }, sizes.map((sz) => {
         const name = sz ? `${m.name}:${sz}` : m.name;
         const gbs = sz ? ollamaGb(sz) : null;
-        return pullButton(name, sz ? `⬇ ${sz}${gbs ? ` · ≈ ${gbs} GB` : ''}` : 'Download');
+        return pullButton(name, sz ? `${sz}${gbs ? ` · ≈ ${gbs} GB` : ''}` : 'Download');
       })) : el('p', { class: 'muted small' }, 'Start Ollama to download.')));
   }
   for (const h of r.huggingface || []) cards.push(hfCard(h, r.kind));
@@ -2042,14 +2042,14 @@ function hfCard(h, kind) {
         const label = `${f.quant || f.path} · ${gb(f.size)}`;
         files.append(el('div', { class: 'hf-file' }, el('span', { class: 'small', title: f.path, 'data-no-i18n': '' }, label),
           kind === 'image' ? imagePullButton({ repo: h.repo, path: f.path }, `hf:${h.repo}/${f.path}`)
-            : o_running() ? pullButton(f.ollama, '⬇ Download') : null));
+            : o_running() ? pullButton(f.ollama) : null));
       }
       updatePullWidgets();
     } catch (e) { toast(e.message); btn.disabled = false; }
   } }, 'Show files');
   return el('div', { class: 'model-card' },
     el('div', { class: 'mc-head' }, el('b', { 'data-no-i18n': '', title: h.repo }, h.repo), el('span', { class: 'muted small' }, 'Hugging Face')),
-    el('p', { class: 'muted small' }, tr('{n} downloads', { n: h.downloads.toLocaleString() }), h.vision ? ' · 👁 vision' : ''),
+    el('p', { class: 'muted small' }, tr('{n} downloads', { n: h.downloads.toLocaleString() }), h.vision ? ' · ' : '', h.vision ? icon('eye') : '', h.vision ? 'vision' : ''),
     kind === 'image' ? el('p', { class: 'muted small' }, 'Only single-file Stable Diffusion models (SD 1.x, 2.x, SDXL) work.') : null,
     btn, files);
 }
@@ -2089,7 +2089,7 @@ function imgDownload(key, path, body, onDone) {
     updatePullWidgets();
   })();
 }
-function imagePullButton(body, key, label = '⬇ Download') {
+function imagePullButton(body, key, label = 'Download') {
   const wrap = el('div', { class: 'pull-slot', 'data-img': key, 'data-label': label });
   wrap._body = body;
   fillPullSlot(wrap);
@@ -2104,7 +2104,7 @@ function renderImageModels() {
   if (!L) { box.append(el('p', { class: 'muted small' }, '…')); return; }
   const eng = L.engine;
   if (eng.installed) {
-    box.append(el('div', { class: 'banner' }, el('div', {}, `🎨 ${tr('Image program installed')}: stable-diffusion.cpp ${eng.tag || ''}`,
+    box.append(el('div', { class: 'banner' }, el('div', {}, icon('image'), `${tr('Image program installed')}: stable-diffusion.cpp ${eng.tag || ''}`,
       el('span', { class: 'muted small', 'data-no-i18n': '' }, ` · ${eng.kind || ''}`)),
       el('button', { class: 'btn small-btn', type: 'button', onclick: async () => {
         if (!confirm('Remove the image program? Your image models stay.')) return;
@@ -2119,16 +2119,16 @@ function renderImageModels() {
     cat.append(el('div', { class: 'model-card' },
       el('div', { class: 'mc-head' }, el('b', m.custom ? { 'data-no-i18n': '' } : {}, m.title), fitBadge(m)),
       el('p', { class: 'muted small' }, m.description),
-      el('p', { class: 'small' }, '📄 ', el('a', { href: m.license_url, target: '_blank', rel: 'noopener', title: 'License' }, m.license)),
+      el('p', { class: 'small' }, icon('file'), el('a', { href: m.license_url, target: '_blank', rel: 'noopener', title: 'License' }, m.license)),
       el('div', { class: 'mc-foot' }, el('span', { class: 'small' }, `≈ ${m.size_gb} GB`), ...(m.tags || []).map((x) => el('span', { class: 'chip' }, x))),
       m.installed
-        ? el('div', { class: 'row' }, using ? el('span', { class: 'chip on' }, '✓ In use') : el('button', { class: 'btn primary', type: 'button', onclick: () => useImageModel(m.id) }, 'Use for 🎨'),
+        ? el('div', { class: 'row' }, using ? el('span', { class: 'chip on' }, icon('check'), 'In use') : el('button', { class: 'btn primary', type: 'button', onclick: () => useImageModel(m.id) }, 'Use for pictures'),
           el('button', { class: 'btn danger', type: 'button', title: 'Delete from disk', onclick: async () => {
             if (!confirm(tr('Delete {name} from disk?', { name: m.title }))) return;
             try { await api('/api/imagegen/models/delete', { method: 'POST', body: { id: m.id } }); } catch (e) { toast(e.message); }
             loadLocalImages();
-          } }, '🗑'))
-        : imagePullButton({ id: m.id }, m.id, m.partial ? '⬇ Continue download' : '⬇ Download')));
+          } }, icon('trash', 'solo')))
+        : imagePullButton({ id: m.id }, m.id, m.partial ? 'Continue download' : 'Download')));
   }
   updatePullWidgets();
 }
@@ -2141,8 +2141,8 @@ function engineSetup() {
     try { res = await api('/api/imagegen/engine'); } catch (e) { toast(e.message); go.disabled = false; return; }
     const kinds = { cuda: 'NVIDIA graphics card (CUDA)', vulkan: 'graphics card (Vulkan)', rocm: 'AMD graphics card (ROCm)', metal: 'Apple GPU (Metal)', cpu: 'processor only' };
     const sel = el('select', { 'aria-label': 'Version' }, res.options.map((o, i) => el('option', { value: o.name },
-      `${i === 0 ? '★ ' : ''}${tr(kinds[o.kind] || o.kind)} · ${gb(o.size)} · ${o.name}`)));
-    go.replaceWith(el('div', { class: 'row' }, sel, imagePullButton(null, 'engine', '⬇ Install')));
+      `${tr(kinds[o.kind] || o.kind)}${i === 0 ? ` (${tr('recommended')})` : ''} · ${gb(o.size)} · ${o.name}`)));
+    go.replaceWith(el('div', { class: 'row' }, sel, imagePullButton(null, 'engine', 'Install')));
     $('[data-img="engine"]', box)._sel = sel;
     updatePullWidgets();
   } }, 'Set up the image program');
@@ -2153,7 +2153,7 @@ async function useImageModel(id) {
   try { state.settings = await api('/api/settings', { method: 'PUT', body: { image_gen: 'local', image_gen_model: id } }); }
   catch (e) { toast(e.message); return; }
   renderAgentToggle();
-  toast('Ready: switch on 🎨 next to the message box');
+  toast('Ready: switch on the picture button next to the message box');
   renderImageModels();
 }
 $('#pullForm').onsubmit = (e) => {
@@ -2383,7 +2383,7 @@ async function loadCalEvents() {
   cal.events = res.events;
   const box = $('#calErrors');
   box.innerHTML = '';
-  for (const err of res.errors) box.append(el('p', { class: 'err small' }, '⚠️ ', el('b', { 'data-no-i18n': '' }, err.name || calNameOf(err.source)), `: ${err.error}`));
+  for (const err of res.errors) box.append(el('p', { class: 'err small' }, icon('alert'), el('b', { 'data-no-i18n': '' }, err.name || calNameOf(err.source)), `: ${err.error}`));
   renderCalGrid();
   renderCalDay();
 }
@@ -2429,9 +2429,9 @@ function renderCalDay() {
   if (!evs.length) box.append(el('p', { class: 'muted small' }, 'No events.'));
   for (const e of evs) {
     box.append(el('button', { class: `cal-item${e.status === 'cancelled' ? ' cancelled' : ''}`, type: 'button', style: `--c:${calColor(e)}`, onclick: () => editEvent(e) },
-      el('span', { class: 'when' }, timeText(e), e.recurring ? ' ↻' : ''),
+      el('span', { class: 'when' }, timeText(e), e.recurring ? icon('refresh', 'before') : ''),
       el('b', { 'data-no-i18n': '' }, e.summary || '…'),
-      e.location ? el('span', { class: 'muted small', 'data-no-i18n': '' }, `📍 ${e.location}`) : null,
+      e.location ? el('span', { class: 'muted small', 'data-no-i18n': '' }, icon('pin'), e.location) : null,
       el('span', { class: 'muted small', 'data-no-i18n': '' }, calNameOf(calKey(e)))));
   }
 }
@@ -2560,8 +2560,8 @@ async function calQuickAdd(text) {
   if (!cal.info) await loadCalendar();
   const btn = $('#calQuick button');
   btn.disabled = true;
-  const old = btn.textContent;
-  btn.textContent = '✨ …';
+  const lab = btn.lastChild, old = lab.textContent;
+  lab.textContent = '…';
   try {
     const d = await api('/api/calendar/parse', { method: 'POST', body: { text, now: isoLocal(new Date()), model: currentModel() } });
     cal.sel = d.start.slice(0, 10);
@@ -2571,7 +2571,7 @@ async function calQuickAdd(text) {
     editEvent(null, d);
     $('#calQuickText').value = '';
   } catch (e) { toast(e.message); }
-  finally { btn.disabled = false; btn.textContent = old; }
+  finally { btn.disabled = false; lab.textContent = old; }
 }
 $('#calQuick').onsubmit = (ev) => { ev.preventDefault(); const t = $('#calQuickText').value.trim(); if (t) calQuickAdd(t); };
 $('#calPrev').onclick = () => { cal.month = new Date(cal.month.getFullYear(), cal.month.getMonth() - 1, 1); loadCalEvents(); };
@@ -2593,7 +2593,7 @@ async function renderCalSources() {
         if (!confirm(tr('Remove {name} from Sunak? The calendar itself stays on its server.', { name: s.name }))) return;
         await api(`/api/calendar/sources/${s.id}`, { method: 'DELETE' }).catch((e) => toast(e.message));
         editCalSource(null); renderCalSources();
-      } }, '✕')));
+      } }, icon('x'))));
   }
 }
 function editCalSource(s) {
@@ -2660,7 +2660,7 @@ function editCalSource(s) {
           result.textContent = '';
           toast(saved.type === 'caldav' ? tr('{name}: {n} calendars found', { name: saved.name, n: saved.calendars.length }) : 'Saved');
           editCalSource(null); renderCalSources();
-        } catch (e) { result.textContent = `⚠️ ${e.message}`; ev.target.disabled = false; }
+        } catch (e) { result.replaceChildren(icon('alert'), e.message); ev.target.disabled = false; }
       } }, 'Save'),
       el('button', { class: 'btn', type: 'button', onclick: () => editCalSource(null) }, 'Cancel'))));
   url.focus();
@@ -2679,7 +2679,7 @@ async function loadNotes() {
     box.append(el('div', { class: `note${n.is_memory ? ' memory' : ''}` }, c, el('div', { class: 'tools' },
       el('label', { class: 'check', title: 'Remember in chats' }, el('input', { type: 'checkbox', checked: !!n.is_memory,
         onchange: async (e) => { await api(`/api/notes/${n.id}`, { method: 'PATCH', body: { is_memory: e.target.checked } }); loadNotes(); } }), 'memory'),
-      el('button', { class: 'icon-btn', title: 'Delete', onclick: async () => { await api(`/api/notes/${n.id}`, { method: 'DELETE' }); loadNotes(); } }, '🗑'))));
+      el('button', { class: 'icon-btn', title: 'Delete', onclick: async () => { await api(`/api/notes/${n.id}`, { method: 'DELETE' }); loadNotes(); } }, icon('trash')))));
   }
 }
 $('#noteForm').onsubmit = async (e) => {
@@ -2766,7 +2766,7 @@ function renderProviders() {
       el('input', { value: p.api_key || '', type: 'password', autocomplete: 'off', class: 'key-input', oninput: bind('api_key'),
         placeholder: p.has_key ? '•••••• saved (type to replace)' : p.type === 'anthropic' ? 'API key (sk-ant-…)' : 'API key (optional)' }),
       el('span', { class: `status ${err ? 'bad' : 'ok'}`, title: err?.error || '' }, err ? (p.type === 'ollama' ? '● offline' : '● not connected') : p.id ? `● ${trn(count, '{n} model', '{n} models')}` : ''),
-      el('button', { class: 'icon-btn', title: 'Remove', onclick: () => { draftProviders.splice(i, 1); renderProviders(); } }, '✕')));
+      el('button', { class: 'icon-btn', title: 'Remove', onclick: () => { draftProviders.splice(i, 1); renderProviders(); } }, icon('x'))));
   });
 }
 $('#addProvider').onclick = () => { draftProviders.push({ name: '', type: 'openai', base_url: '', api_key: '' }); renderProviders(); };
@@ -2788,16 +2788,15 @@ function renderPersonas() {
     prompt.oninput = () => (p.prompt = prompt.value);
     box.append(el('div', { class: 'card persona' },
       el('div', { class: 'row' },
-        el('input', { class: 'emoji', value: p.icon || '', placeholder: '🙂', 'aria-label': 'Icon', oninput: (e) => (p.icon = e.target.value) }),
         el('input', { value: p.name, placeholder: 'Name', 'aria-label': 'Name', oninput: (e) => (p.name = e.target.value) }),
         el('button', { class: 'icon-btn', title: 'Delete persona', onclick: () => {
           if (draftPersonas.length === 1) return toast('Keep at least one persona');
           draftPersonas.splice(i, 1); renderPersonas();
-        } }, '🗑')),
+        } }, icon('trash'))),
       prompt));
   });
 }
-$('#addPersona').onclick = () => { draftPersonas.push({ icon: '✨', name: tr('New persona'), prompt: '' }); renderPersonas(); $('#personaList .persona:last-child input:not(.emoji)').select(); };
+$('#addPersona').onclick = () => { draftPersonas.push({ icon: '', name: tr('New persona'), prompt: '' }); renderPersonas(); $('#personaList .persona:last-child input').select(); };
 
 /* MCP servers. Environment values and tokens are never sent to the browser: an empty field keeps the saved
    ones (as long as the command or address stays the same), typing replaces them. */
@@ -2830,7 +2829,7 @@ function renderMcp() {
       try {
         const r = await api('/api/mcp/test', { method: 'POST', body: { server: mcpBody(m) } });
         m.result = `✓ ${trn(r.tools.length, '{n} tool', '{n} tools')}: ${r.tools.map((t) => t.name).join(', ')}`;
-      } catch (e) { m.result = `⚠️ ${e.message}`; }
+      } catch (e) { m.result = e.message; m.failed = true; }
       result.textContent = m.result;
       test.disabled = false;
     } }, 'Test');
@@ -2843,7 +2842,7 @@ function renderMcp() {
         el('label', { class: 'check' }, el('input', { type: 'checkbox', checked: m.enabled !== false,
           onchange: (e) => (m.enabled = e.target.checked) }), 'on'),
         test,
-        el('button', { class: 'icon-btn', type: 'button', title: 'Remove server', onclick: () => { draftMcp.splice(i, 1); renderMcp(); } }, '🗑')),
+        el('button', { class: 'icon-btn', type: 'button', title: 'Remove server', onclick: () => { draftMcp.splice(i, 1); renderMcp(); } }, icon('trash'))),
       stdio
         ? [el('input', { value: m.command || '', spellcheck: 'false', autocomplete: 'off', class: 'mcp-cmd', 'aria-label': 'Command',
             placeholder: 'Command, e.g. npx -y @modelcontextprotocol/server-memory', oninput: (e) => (m.command = e.target.value) }), env]
@@ -2924,7 +2923,7 @@ $('#imageGenTest').onclick = async () => {
     const r = await api('/api/imagegen/test', { method: 'POST', body: { type: $('#imageGen').value, url: $('#imageGenUrl').value } });
     $('#imageGenModelList').replaceChildren(...r.models.map((m) => el('option', { value: m })));
     out.textContent = r.models.length ? `✓ ${trn(r.models.length, '{n} model', '{n} models')}: ${r.models.join(', ')}` : tr('Connected, but the program has no model yet.');
-  } catch (e) { out.textContent = `⚠️ ${e.message}`; }
+  } catch (e) { out.replaceChildren(icon('alert'), e.message); }
   btn.disabled = false;
 };
 $('#agentEnabled').onchange = (e) => {
@@ -2955,7 +2954,7 @@ async function renderLan(info) {
       catch (err) { toast(err.message); e.target.checked = !e.target.checked; }
     } }), ' Allow phones and tablets in my network');
   const kids = [toggle];
-  if (!info.password_set && !info.enabled) kids.push(el('p', { class: 'muted small' }, '🔒 Set a password below first.'));
+  if (!info.password_set && !info.enabled) kids.push(el('p', { class: 'muted small' }, icon('lock'), 'Set a password below first.'));
   if (info.error) kids.push(el('p', { class: 'err small' }, info.error));
   if (info.enabled && info.url) {
     kids.push(el('div', { class: 'lan-card' },
@@ -2973,7 +2972,7 @@ async function renderLan(info) {
 $('#stopBtn').onclick = async () => {
   if (!confirm('Stop Sunak? Open it again with the Sunak icon or the “sunak” command.')) return;
   await api('/api/shutdown', { method: 'POST' });
-  document.body.innerHTML = '<div class="welcome"><h2>Sunak stopped 👋</h2><p class="muted">Start it again with the Sunak icon or the <code>sunak</code> command.</p></div>';
+  document.body.innerHTML = '<div class="welcome"><h2>Sunak stopped</h2><p class="muted">Start it again with the Sunak icon or the <code>sunak</code> command.</p></div>';
 };
 
 /* ---------------- Updates ---------------- */
@@ -2983,7 +2982,7 @@ async function checkUpdate() {
   if (u.result) toast(u.result.ok ? tr('Update installed ✓ (Sunak {version})', { version: state.status?.version || '' }) : tr('Update failed: {error}', { error: u.result.error }));
   if ($('#updateBtn').disabled) return; // an update is running
   $('#updateNote').classList.toggle('hidden', !u.available);
-  $('#updateText').textContent = `✨ ${tr('Update available')}${u.behind > 1 ? ` (${tr('{n} changes', { n: u.behind })})` : ''}`;
+  $('#updateText').textContent = `${tr('Update available')}${u.behind > 1 ? ` (${tr('{n} changes', { n: u.behind })})` : ''}`;
   $('#updateBtn').classList.toggle('hidden', !u.can_update);
   $('#updateNote').title = u.can_update ? '' : 'Run “git pull” and the installer in your Sunak folder to update.';
 }
@@ -3020,8 +3019,8 @@ async function showProfilePicker(res) {
     el('img', { src: '/icon.svg', alt: '', width: 48, height: 48 }),
     el('h1', {}, 'Who is using Sunak?'),
     el('div', { class: 'profile-tiles' }, res.profiles.map((p) => el('button', { class: 'profile-tile', type: 'button', onclick: () => pick(p) },
-      el('span', { class: 'profile-emoji', 'data-no-i18n': '' }, p.emoji || '🙂'),
-      el('span', p.name ? { 'data-no-i18n': '' } : {}, profileName(p)), p.has_pin ? el('span', { class: 'muted small' }, '🔒') : null))),
+      profileFace(p),
+      el('span', p.name ? { 'data-no-i18n': '' } : {}, profileName(p)), p.has_pin ? el('span', { class: 'muted small', title: 'PIN' }, icon('lock', 'solo')) : null))),
     pinBox);
   async function select(p, pin) {
     try { await api('/api/profiles/select', { method: 'POST', body: { id: p.id, pin } }); location.reload(); }
@@ -3037,10 +3036,14 @@ async function showProfilePicker(res) {
   }
   document.body.append(box);
 }
+// a profile shows the user icon unless someone picked an emoji of their own ('🙂' was the old default)
+const ownEmoji = (p) => (p.emoji && p.emoji !== '🙂' ? p.emoji : '');
+const profileFace = (p) => (ownEmoji(p) ? el('span', { class: 'profile-emoji', 'data-no-i18n': '' }, ownEmoji(p))
+  : el('span', { class: 'profile-emoji' }, icon('user', 'solo')));
 function renderProfileChip() {
   const me = state.settings.profile, chip = $('#profileChip');
   chip.classList.toggle('hidden', state.settings.profiles_count < 2);
-  chip.replaceChildren(el('span', { 'data-no-i18n': '' }, me.emoji || '🙂'), ' ', el('span', me.name ? { 'data-no-i18n': '' } : {}, profileName(me)), el('span', { class: 'muted' }, ' ⇄'));
+  chip.replaceChildren(profileFace(me), el('span', me.name ? { 'data-no-i18n': '' } : {}, profileName(me)), icon('swap', 'after muted'));
   chip.onclick = switchProfile;
 }
 async function switchProfile() {
@@ -3048,7 +3051,7 @@ async function switchProfile() {
   location.reload();
 }
 function profileForm(p, onSave, isNew) {
-  const emoji = el('input', { class: 'emoji', value: p.emoji || '🙂', 'aria-label': 'Icon', 'data-no-i18n': '' });
+  const emoji = el('input', { class: 'emoji', value: ownEmoji(p), placeholder: '–', title: 'Your own emoji (optional)', 'aria-label': 'Icon', 'data-no-i18n': '' });
   const name = el('input', { value: p.name || '', placeholder: p.id === 'default' ? tr('Main profile') : 'Name', 'aria-label': 'Name', 'data-no-i18n': '' });
   const pin = el('input', { type: 'password', autocomplete: 'new-password', inputmode: 'numeric', 'aria-label': 'PIN',
     placeholder: p.has_pin ? '•••• saved (type to change)' : 'PIN (optional, at least 4 characters)' });
@@ -3085,7 +3088,7 @@ async function renderProfile() {
     el('p', { class: 'muted small' }, 'Every profile has its own chats, documents, notes, knowledge base, mail, calendar and look. Providers and models are shared. A PIN keeps others out of your profile in the app, but not out of the files on this computer.'),
     profileForm(me, update(me.id)),
     el('div', { class: 'row' },
-      state.settings.profiles_count > 1 || me.has_pin ? el('button', { class: 'btn', type: 'button', onclick: switchProfile }, '⇄ Switch profile') : null,
+      state.settings.profiles_count > 1 || me.has_pin ? el('button', { class: 'btn', type: 'button', onclick: switchProfile }, icon('swap'), 'Switch profile') : null,
       state.settings.password_set ? el('button', { class: 'btn', type: 'button', onclick: async () => { await api('/api/logout', { method: 'POST' }); location.reload(); } }, 'Log out') : null),
   ];
   box.replaceChildren(...kids);
@@ -3099,23 +3102,23 @@ async function renderProfile() {
     if (p.id === me.id) continue;
     const row = el('div', { class: 'card persona profile-row' },
       el('div', { class: 'row' },
-        el('span', { class: 'profile-emoji', 'data-no-i18n': '' }, p.emoji || '🙂'),
+        profileFace(p),
         el('b', p.name ? { 'data-no-i18n': '' } : {}, profileName(p)),
         p.admin ? el('span', { class: 'muted small' }, 'Admin') : null,
-        p.has_pin ? el('span', { class: 'muted small' }, '🔒') : null,
+        p.has_pin ? el('span', { class: 'muted small', title: 'PIN' }, icon('lock', 'solo')) : null,
         el('span', { class: 'spacer' }),
-        el('button', { class: 'icon-btn', type: 'button', title: 'Edit profile', onclick: () => row.replaceWith(profileForm(p, update(p.id))) }, '✎'),
+        el('button', { class: 'icon-btn', type: 'button', title: 'Edit profile', onclick: () => row.replaceWith(profileForm(p, update(p.id))) }, icon('edit')),
         p.id === 'default' ? null : el('button', { class: 'icon-btn', type: 'button', title: 'Delete profile', onclick: async () => {
           if (!confirm(`${tr('Delete the profile “{name}”?', { name: profileName(p) })}\n\n${tr('All its chats, documents, notes, knowledge base, mail and calendar links are deleted for good.')}`)) return;
           try { await api(`/api/profiles/${p.id}`, { method: 'DELETE' }); } catch (e) { toast(e.message); }
           renderProfile();
-        } }, '🗑')));
+        } }, icon('trash'))));
     list.append(row);
   }
-  const add = el('button', { class: 'btn', type: 'button', onclick: () => add.replaceWith(profileForm({ id: '', emoji: '🙂' }, async (body) => {
+  const add = el('button', { class: 'btn', type: 'button', onclick: () => add.replaceWith(profileForm({ id: '', emoji: '' }, async (body) => {
     try { await api('/api/profiles', { method: 'POST', body }); toast('Profile added ✓'); } catch (e) { toast(e.message); return; }
     renderProfile();
-  }, true)) }, '＋ Add profile');
+  }, true)) }, icon('plus'), 'Add profile');
   box.append(el('h3', {}, 'Other profiles'), list, add);
 }
 

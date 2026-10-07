@@ -144,7 +144,7 @@ class ImageGenTest(unittest.TestCase):
         s = self.call("POST", "/api/sessions", {})
         events = self.call("POST", "/api/imagine", {"session_id": s["id"], "prompt": "a lighthouse at dusk",
                                                     "negative": "blurry", "aspect": "landscape", "seed": 42})
-        self.assertEqual(events[0], {"type": "start", "title": "🎨 a lighthouse at dusk"})
+        self.assertEqual(events[0], {"type": "start", "title": "a lighthouse at dusk"})
         self.assertIn({"type": "progress", "p": 0.5}, events)
         done = events[-1]
         self.assertEqual(done["type"], "done", events)

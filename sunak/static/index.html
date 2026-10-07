@@ -23,22 +23,22 @@
       <span>Sunak</span>
     </div>
     <div class="update-note hidden" id="updateNote" role="status">
-      <span id="updateText">✨ Update available</span>
+      <i data-i="sparkles"></i><span id="updateText">Update available</span>
       <button class="btn primary" id="updateBtn" title="Install the update and restart Sunak">Update</button>
     </div>
     <button class="profile-chip hidden" id="profileChip" type="button" title="Switch profile"></button>
-    <button class="btn primary wide" id="newChat" title="New chat (Ctrl+K)">＋ New chat</button>
+    <button class="btn primary wide" id="newChat" title="New chat (Ctrl+K)"><i data-i="plus"></i>New chat</button>
     <nav class="nav">
-      <button data-view="chat" class="active">💬 Chat</button>
-      <button data-view="compare">⚖️ Compare</button>
-      <button data-view="research">🔎 Research</button>
-      <button data-view="documents">📝 Documents</button>
-      <button data-view="knowledge">📚 Knowledge</button>
-      <button data-view="mail">✉️ Mail<span id="mailBadge" class="nav-badge hidden" data-no-i18n></span></button>
-      <button data-view="calendar">📅 Calendar</button>
-      <button data-view="notes">🧠 Notes &amp; Memory</button>
-      <button data-view="models" class="admin-only">🧩 Models</button>
-      <button data-view="settings">⚙️ Settings</button>
+      <button data-view="chat" class="active"><i data-i="chat"></i>Chat</button>
+      <button data-view="compare"><i data-i="columns"></i>Compare</button>
+      <button data-view="research"><i data-i="search"></i>Research</button>
+      <button data-view="documents"><i data-i="doc"></i>Documents</button>
+      <button data-view="knowledge"><i data-i="book"></i>Knowledge</button>
+      <button data-view="mail"><i data-i="mail"></i>Mail<span id="mailBadge" class="nav-badge hidden" data-no-i18n></span></button>
+      <button data-view="calendar"><i data-i="calendar"></i>Calendar</button>
+      <button data-view="notes"><i data-i="note"></i>Notes &amp; Memory</button>
+      <button data-view="models" class="admin-only"><i data-i="box"></i>Models</button>
+      <button data-view="settings"><i data-i="gear"></i>Settings</button>
     </nav>
     <div class="sessions-head">
       <span>Chats</span>
@@ -50,13 +50,13 @@
 
   <main class="main">
     <header class="topbar">
-      <button class="icon-btn menu" id="menuBtn" aria-label="Menu">☰</button>
+      <button class="icon-btn menu" id="menuBtn" aria-label="Menu"><i data-i="menu"></i></button>
       <h1 id="viewTitle">Chat</h1>
       <div class="spacer"></div>
       <select id="personaSelect" class="persona-select" aria-label="Persona" title="Persona: how Sunak answers in this chat"></select>
       <select id="modelSelect" class="model-select" aria-label="Model"></select>
       <div class="pop-wrap hidden" id="exportWrap">
-        <button class="icon-btn" id="exportBtn" title="Export this chat" aria-haspopup="true">⬇</button>
+        <button class="icon-btn" id="exportBtn" title="Export this chat" aria-haspopup="true"><i data-i="download"></i></button>
         <div class="pop hidden" id="exportMenu">
           <a id="exportMd" download>Markdown (.md)</a>
           <a id="exportJson" download>JSON (.json)</a>
@@ -64,7 +64,7 @@
         </div>
       </div>
       <div class="pop-wrap" id="themeWrap">
-        <button class="icon-btn" id="themeBtn" title="Theme" aria-haspopup="true">🎨</button>
+        <button class="icon-btn" id="themeBtn" title="Theme" aria-haspopup="true"><i data-i="palette"></i></button>
         <div class="pop hidden" id="themeMenu"></div>
       </div>
     </header>
@@ -75,12 +75,12 @@
       <form class="composer" id="composer">
         <div class="attachments" id="attachments"></div>
         <div class="agent-bar hidden" id="agentBar">
-          <span id="agentLabel" title="The model reads files on its own and asks before it changes a file or runs a command">🛠 Agent in</span>
+          <span id="agentLabel" title="The model reads files on its own and asks before it changes a file or runs a command"><i data-i="terminal"></i>Agent in</span>
           <input id="agentFolder" placeholder="Project folder, e.g. /home/me/project or C:\Users\me\project" aria-label="Project folder for the agent" spellcheck="false" autocomplete="off">
           <button class="btn small-btn" id="agentRevoke" type="button" title="Forget “Allow for this chat”: ask again before every change, command and tool">Ask again</button>
         </div>
         <div class="agent-bar hidden" id="imagineBar">
-          <span title="Your message is the description of the picture">🎨 Make a picture</span>
+          <span title="Your message is the description of the picture"><i data-i="image"></i>Make a picture</span>
           <select id="imagineAspect" aria-label="Format">
             <option value="square">Square</option>
             <option value="portrait">Portrait</option>
@@ -89,13 +89,13 @@
           <input id="imagineNegative" placeholder="Leave out (optional), e.g. blurry, text" aria-label="What the picture should not show" autocomplete="off">
         </div>
         <div class="composer-row">
-          <label class="icon-btn" title="Attach files or images (text, PDF, Word, PowerPoint, PNG, JPEG…). You can also paste a screenshot.">📎<input type="file" id="fileInput" multiple hidden></label>
-          <button class="icon-btn kb-toggle" id="kbToggle" type="button" aria-pressed="false" title="Answer with my knowledge base">📚</button>
-          <button class="icon-btn kb-toggle" id="webToggle" type="button" aria-pressed="false" title="Search the web for answers">🌐</button>
-          <button class="icon-btn kb-toggle hidden admin-only" id="agentToggle" type="button" aria-pressed="false" title="Agent mode: let the model work in a project folder">🛠</button>
-          <button class="icon-btn kb-toggle hidden admin-only" id="mcpToggle" type="button" aria-pressed="false" title="Tools (MCP): let the model use your MCP servers">🔌</button>
-          <button class="icon-btn kb-toggle hidden" id="imagineToggle" type="button" aria-pressed="false" title="Make a picture with your image generator">🎨</button>
-          <button class="icon-btn mic-btn hidden" id="micBtn" type="button" aria-pressed="false" title="Speak instead of typing">🎤</button>
+          <label class="icon-btn" title="Attach files or images (text, PDF, Word, PowerPoint, PNG, JPEG…). You can also paste a screenshot."><i data-i="paperclip"></i><input type="file" id="fileInput" multiple hidden></label>
+          <button class="icon-btn kb-toggle" id="kbToggle" type="button" aria-pressed="false" title="Answer with my knowledge base"><i data-i="book"></i></button>
+          <button class="icon-btn kb-toggle" id="webToggle" type="button" aria-pressed="false" title="Search the web for answers"><i data-i="globe"></i></button>
+          <button class="icon-btn kb-toggle hidden admin-only" id="agentToggle" type="button" aria-pressed="false" title="Agent mode: let the model work in a project folder"><i data-i="terminal"></i></button>
+          <button class="icon-btn kb-toggle hidden admin-only" id="mcpToggle" type="button" aria-pressed="false" title="Tools (MCP): let the model use your MCP servers"><i data-i="plug"></i></button>
+          <button class="icon-btn kb-toggle hidden" id="imagineToggle" type="button" aria-pressed="false" title="Make a picture with your image generator"><i data-i="image"></i></button>
+          <button class="icon-btn mic-btn hidden" id="micBtn" type="button" aria-pressed="false" title="Speak instead of typing"><i data-i="mic"></i></button>
           <textarea id="prompt" rows="1" placeholder="Message Sunak…" title="Enter to send, Shift+Enter for a new line"></textarea>
           <button class="btn primary" id="sendBtn" type="submit">Send</button>
         </div>
@@ -137,7 +137,7 @@
     <section class="view" id="view-documents">
       <div class="docs">
         <div class="doc-list">
-          <button class="btn primary wide" id="newDoc">＋ New document</button>
+          <button class="btn primary wide" id="newDoc"><i data-i="plus"></i>New document</button>
           <div id="docList"></div>
         </div>
         <div class="doc-editor hidden" id="docEditor">
@@ -145,13 +145,13 @@
             <input id="docTitle" class="title-input" placeholder="Title">
             <span class="muted small" id="docSaved"></span>
             <button class="btn" id="docPreviewBtn">Preview</button>
-            <button class="btn" id="docExport" title="Download as Markdown">⬇</button>
-            <button class="btn danger" id="docDelete" title="Delete">🗑</button>
+            <button class="btn" id="docExport" title="Download as Markdown"><i data-i="download" class="solo"></i></button>
+            <button class="btn danger" id="docDelete" title="Delete"><i data-i="trash" class="solo"></i></button>
           </div>
           <textarea id="docContent" class="doc-content" placeholder="Start writing… (Markdown supported)"></textarea>
           <article id="docPreview" class="md doc-preview hidden"></article>
           <form id="docAiForm" class="inline-form">
-            <input id="docAi" placeholder="✨ Ask AI: “make it shorter”, “fix grammar”, “continue writing”…  (select text to edit only that)">
+            <input id="docAi" placeholder="Ask AI: “make it shorter”, “fix grammar”, “continue writing”…  (select text to edit only that)">
             <button class="btn primary" type="submit">Apply</button>
           </form>
         </div>
@@ -162,7 +162,7 @@
     <!-- KNOWLEDGE -->
     <section class="view" id="view-knowledge">
       <div class="pad narrow">
-        <p class="muted">Add your files and ask about them in the chat: switch on <b>📚</b> next to the message box. Everything stays on this computer.</p>
+        <p class="muted">Add your files and ask about them in the chat: switch on <b>Knowledge base</b> (the book button) next to the message box. Everything stays on this computer.</p>
         <label class="dropzone" id="kbDrop">
           <input type="file" id="kbInput" multiple hidden>
           <b>Drop files here</b> or click to choose
@@ -188,12 +188,12 @@
           </div>
           <div class="mail-bar">
             <input id="mailSearch" type="search" placeholder="Search mail…" aria-label="Search mail">
-            <button class="icon-btn" id="mailUnread" type="button" aria-pressed="false" title="Only unread">●</button>
-            <button class="icon-btn" id="mailRefresh" type="button" title="Refresh">⟳</button>
+            <button class="icon-btn" id="mailUnread" type="button" aria-pressed="false" title="Only unread"><i data-i="dot"></i></button>
+            <button class="icon-btn" id="mailRefresh" type="button" title="Refresh"><i data-i="refresh"></i></button>
           </div>
           <div class="mail-bar">
-            <button class="btn primary" id="mailNew" type="button">✎ New mail</button>
-            <button class="btn" id="mailOverview" type="button" title="Let the AI sort this list: what needs a reply, what can wait">✨ Overview</button>
+            <button class="btn primary" id="mailNew" type="button"><i data-i="edit"></i>New mail</button>
+            <button class="btn" id="mailOverview" type="button" title="Let the AI sort this list: what needs a reply, what can wait"><i data-i="sparkles"></i>Overview</button>
           </div>
           <div id="mailItems" class="mail-items"></div>
         </div>
@@ -202,19 +202,19 @@
           <article id="mailReader" class="mail-reader hidden"></article>
           <form id="mailCompose" class="mail-compose hidden" autocomplete="off">
             <div class="row"><b id="mailFrom" class="mail-from"></b><span class="spacer"></span>
-              <button class="icon-btn" type="button" id="mailClose" title="Discard">✕</button></div>
+              <button class="icon-btn" type="button" id="mailClose" title="Discard"><i data-i="x"></i></button></div>
             <input id="mailTo" placeholder="To (several: separate with commas)" aria-label="To">
             <input id="mailCc" placeholder="Cc" aria-label="Cc">
             <input id="mailBcc" placeholder="Bcc" aria-label="Bcc">
             <input id="mailSubject" placeholder="Subject" aria-label="Subject">
             <textarea id="mailBody" rows="12" aria-label="Message"></textarea>
             <div class="row mail-files">
-              <label class="btn" title="At most 17 MB together">📎 Attach files<input type="file" id="mailFiles" multiple hidden></label>
+              <label class="btn" title="At most 17 MB together"><i data-i="paperclip"></i>Attach files<input type="file" id="mailFiles" multiple hidden></label>
               <div id="mailAttach" class="sources"></div>
             </div>
             <div class="inline-form" id="mailAiRow">
-              <input id="mailAiHint" placeholder="✨ Optional: what should the reply say? e.g. “yes, but next week”">
-              <button class="btn" type="button" id="mailAiBtn">✨ Draft reply</button>
+              <input id="mailAiHint" placeholder="Optional: what should the reply say? e.g. “yes, but next week”">
+              <button class="btn" type="button" id="mailAiBtn"><i data-i="sparkles"></i><span>Draft reply</span></button>
             </div>
             <div class="row">
               <button class="btn primary" type="submit" id="mailSend">Send</button>
@@ -230,16 +230,16 @@
     <section class="view" id="view-calendar">
       <div class="pad cal-wrap">
         <div class="row cal-head">
-          <button class="icon-btn" id="calPrev" type="button" title="Previous month">‹</button>
+          <button class="icon-btn" id="calPrev" type="button" title="Previous month"><i data-i="chevron-left"></i></button>
           <h3 id="calTitle"></h3>
-          <button class="icon-btn" id="calNext" type="button" title="Next month">›</button>
+          <button class="icon-btn" id="calNext" type="button" title="Next month"><i data-i="chevron-right"></i></button>
           <button class="btn" id="calToday" type="button">Today</button>
           <span class="spacer"></span>
-          <button class="btn primary" id="calNew" type="button">＋ New event</button>
+          <button class="btn primary" id="calNew" type="button"><i data-i="plus"></i>New event</button>
         </div>
         <form class="row cal-quick" id="calQuick">
           <input id="calQuickText" placeholder="Describe an event, e.g. “Dentist next Tuesday 10am”" aria-label="Describe an event" autocomplete="off">
-          <button class="btn" type="submit" title="The model fills in the form, you check it and save">✨ Add</button>
+          <button class="btn" type="submit" title="The model fills in the form, you check it and save"><i data-i="sparkles"></i>Add</button>
         </form>
         <div id="calErrors"></div>
         <div class="cal-main">
@@ -280,12 +280,12 @@
         <form class="row" id="pullForm">
           <input id="pullName" placeholder="Any Ollama model, e.g. llama3.2:1b or qwen3:4b" autocomplete="off" spellcheck="false">
           <button class="btn primary" type="submit">Download</button>
-          <a class="small" href="https://ollama.com/library" target="_blank" rel="noopener">Browse all models on ollama.com ↗</a>
+          <a class="small" href="https://ollama.com/library" target="_blank" rel="noopener">Browse all models on ollama.com<i data-i="external" class="after"></i></a>
         </form>
         <div id="downloads" class="downloads"></div>
         <form class="row model-search" id="modelSearchForm" role="search">
           <input id="modelSearch" type="search" placeholder="Search models, e.g. qwen, llama, sdxl" aria-label="Search models" autocomplete="off" spellcheck="false">
-          <button class="btn" type="submit" title="Also search the Ollama library (ollama.com) and Hugging Face">🌐 Search online</button>
+          <button class="btn" type="submit" title="Also search the Ollama library (ollama.com) and Hugging Face"><i data-i="globe"></i>Search online</button>
         </form>
         <div class="row cat-filters" id="catFilters"></div>
         <div id="onlineResults"></div>
@@ -309,7 +309,7 @@
         <p class="muted small">Ollama runs models on your computer. Add Claude with an Anthropic API key, or any OpenAI-compatible API (OpenAI, OpenRouter, Groq, LM Studio, llama.cpp, vLLM). Keys are stored only on this computer and never sent back to the browser.</p>
         <div id="providerList"></div>
         <div class="row">
-          <button class="btn" id="addProvider">＋ Add provider</button>
+          <button class="btn" id="addProvider"><i data-i="plus"></i>Add provider</button>
           <select id="providerPreset" aria-label="Preset">
             <option value="">Preset…</option>
             <option value="anthropic|Claude|https://api.anthropic.com">Claude (Anthropic)</option>
@@ -330,7 +330,7 @@
         <label class="check"><input type="checkbox" id="useMemory"> Use memory notes in chats</label>
 
         <h2>Voice</h2>
-        <p class="muted small">🎤 next to the message box turns speech into text, 🔊 under an answer reads it aloud.</p>
+        <p class="muted small">The microphone next to the message box turns speech into text, the speaker under an answer reads it aloud.</p>
         <div class="admin-only">
         <label>Speech input<select id="speechInput">
           <option value="local">Only on this computer: Whisper server, or the browser’s offline recognition</option>
@@ -344,22 +344,22 @@
         </div>
         <div class="row voice-row">
           <label>Voice for reading aloud (this device)<select id="ttsVoice"></select></label>
-          <button class="btn" id="ttsTest" type="button">▶ Test</button>
+          <button class="btn" id="ttsTest" type="button"><i data-i="play"></i>Test</button>
         </div>
 
         <h2>Personas</h2>
         <p class="muted small">Pick a persona above the chat to change how Sunak answers, e.g. as a coder or translator. Edit them or add your own.</p>
         <div id="personaList"></div>
-        <button class="btn" id="addPersona">＋ Add persona</button>
+        <button class="btn" id="addPersona"><i data-i="plus"></i>Add persona</button>
 
         <h2>Mail accounts</h2>
         <p class="muted small">Link as many e-mail accounts as you like (Gmail, Outlook, iCloud, GMX, WEB.DE, your own server…). Most providers need an <b>app password</b> instead of your normal password. Passwords stay on this computer and are never sent back to the browser. Sunak reads your mail without marking it as read and sends only when you click Send.</p>
         <div id="mailAccountList"></div>
         <div id="mailAccountForm"></div>
-        <button class="btn" id="addMailAccount" type="button">＋ Add mail account</button>
+        <button class="btn" id="addMailAccount" type="button"><i data-i="plus"></i>Add mail account</button>
         <label class="check"><input type="checkbox" id="mailNotify"> Tell me about new mail (Sunak looks every 2 minutes while it is open)</label>
         <div class="row">
-          <button class="btn" id="mailDesktop" type="button">🔔 Also as desktop notification</button>
+          <button class="btn" id="mailDesktop" type="button"><i data-i="bell"></i>Also as desktop notification</button>
           <span class="muted small" id="mailDesktopState"></span>
         </div>
 
@@ -367,24 +367,24 @@
         <p class="muted small">Sunak has its own calendar. Add your calendars from iCloud, GMX, WEB.DE, Nextcloud, mailbox.org and others (CalDAV), often with the login of a linked mail account, or subscribe to any calendar address (ICS, read-only), e.g. from Google or Outlook. Passwords stay on this computer.</p>
         <div id="calSourceList"></div>
         <div id="calSourceForm"></div>
-        <button class="btn" id="addCalSource" type="button">＋ Add calendar</button>
+        <button class="btn" id="addCalSource" type="button"><i data-i="plus"></i>Add calendar</button>
 
         <div class="admin-only">
         <h2>Agent</h2>
-        <p class="muted small">In agent mode (🛠 next to the message box) the model works in a project folder you choose: it lists, reads and searches files on its own, and asks you before it writes a file or runs a command. It cannot reach files outside that folder.</p>
+        <p class="muted small">In agent mode (the terminal button next to the message box) the model works in a project folder you choose: it lists, reads and searches files on its own, and asks you before it writes a file or runs a command. It cannot reach files outside that folder.</p>
         <label class="check"><input type="checkbox" id="agentEnabled"> Enable agent mode</label>
-        <p class="agent-warn small">⚠️ Commands run on this computer with your user rights and are not sandboxed: a command can do anything you could do in a terminal. Read each command and change before you allow it, and use agent mode only with folders and models you trust. From other devices it only works with a password.</p>
+        <p class="agent-warn small"><i data-i="alert"></i>Commands run on this computer with your user rights and are not sandboxed: a command can do anything you could do in a terminal. Read each command and change before you allow it, and use agent mode only with folders and models you trust. From other devices it only works with a password.</p>
         <div class="row">
           <label>Command time limit (seconds)<input type="number" id="agentTimeout" min="5" max="3600" step="1"></label>
           <label>Steps per answer<input type="number" id="agentSteps" min="1" max="200" step="1"></label>
         </div>
 
         <h2>Tools (MCP)</h2>
-        <p class="muted small">MCP servers give the model tools, e.g. for your files, web pages or other apps. Switch them on with 🔌 next to the message box (they also work in agent mode). Sunak asks you before every tool call. Environment values and tokens stay on this computer and are never sent back to the browser.</p>
-        <p class="agent-warn small">⚠️ A server of type “Program” runs on this computer with your user rights. Add only servers you trust. From other devices tools only work with a password.</p>
+        <p class="muted small">MCP servers give the model tools, e.g. for your files, web pages or other apps. Switch them on with the plug button next to the message box (they also work in agent mode). Sunak asks you before every tool call. Environment values and tokens stay on this computer and are never sent back to the browser.</p>
+        <p class="agent-warn small"><i data-i="alert"></i>A server of type “Program” runs on this computer with your user rights. Add only servers you trust. From other devices tools only work with a password.</p>
         <div id="mcpList"></div>
         <div class="row">
-          <button class="btn" id="addMcp" type="button">＋ Add server</button>
+          <button class="btn" id="addMcp" type="button"><i data-i="plus"></i>Add server</button>
           <select id="mcpPreset" aria-label="Preset">
             <option value="">Preset…</option>
             <option value="Files|npx -y @modelcontextprotocol/server-filesystem /path/to/folder">Files in a folder (Node.js)</option>
@@ -397,7 +397,7 @@
 
         <div class="admin-only">
         <h2>Image generation</h2>
-        <p class="muted small">Make pictures with 🎨 next to the message box. Easiest: Sunak’s own image program (stable-diffusion.cpp), which you set up with a click on the Models page. Or connect a Stable Diffusion program running on this computer or in your network: <b>Automatic1111</b> (also Forge or SD.Next, started with <code>--api</code>) or <b>ComfyUI</b>.</p>
+        <p class="muted small">Make pictures with the picture button next to the message box. Easiest: Sunak’s own image program (stable-diffusion.cpp), which you set up with a click on the Models page. Or connect a Stable Diffusion program running on this computer or in your network: <b>Automatic1111</b> (also Forge or SD.Next, started with <code>--api</code>) or <b>ComfyUI</b>.</p>
         <div class="row">
           <label>Program<select id="imageGen">
             <option value="off">Off</option>
@@ -409,7 +409,7 @@
         </div>
         <div class="row local-gen">
           <label>Image model<select id="imageGenLocal"></select></label>
-          <button class="btn" id="imageGenModels" type="button">🧩 Download image models</button>
+          <button class="btn" id="imageGenModels" type="button"><i data-i="box"></i>Download image models</button>
         </div>
         <div class="row remote-gen">
           <label>Model<input id="imageGenModel" list="imageGenModelList" spellcheck="false" autocomplete="off" placeholder="empty = the program’s current model"></label>
@@ -435,7 +435,7 @@
 
         <h2>Data</h2>
         <p class="muted small">All chats, documents, notes and your knowledge base in one JSON file. API keys and the password are not included.</p>
-        <div class="row"><a class="btn" href="/api/export" download>⬇ Download backup</a></div>
+        <div class="row"><a class="btn" href="/api/export" download><i data-i="download"></i>Download backup</a></div>
 
         <div class="admin-only">
         <h2>Updates</h2>
@@ -458,12 +458,13 @@
           <span class="muted small" id="settingsMsg"></span>
         </div>
         <div class="row"><p class="muted small" id="aboutLine" style="flex:1;margin:0"></p>
-          <button class="btn danger admin-only" id="stopBtn" title="Stop the Sunak server on this computer">⏻ Stop Sunak</button></div>
+          <button class="btn danger admin-only" id="stopBtn" title="Stop the Sunak server on this computer"><i data-i="power"></i>Stop Sunak</button></div>
       </div>
     </section>
   </main>
 </div>
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
+<script src="/icons.js"></script>
 <script src="/app.js"></script>
 </body>
 </html>

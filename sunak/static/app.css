@@ -109,6 +109,15 @@ a { color: var(--accent); }
 .narrow { max-width: 820px; width: 100%; margin: 0 auto; }
 
 /* controls */
+.ic { width: 1.15em; height: 1.15em; flex: none; vertical-align: -0.2em; fill: none; stroke: currentColor; stroke-width: 2;
+  stroke-linecap: round; stroke-linejoin: round; margin-inline-end: 0.45em; }
+.ic.after { margin-inline: 0.35em 0; }
+.ic.before { margin-inline: 0.35em 0; }
+.ic.solo, .icon-btn .ic, .chip button .ic, .avatar .ic, .step-icon .ic { margin: 0; }
+.icon-btn .ic { width: 20px; height: 20px; display: block; }
+label.icon-btn { display: inline-block; }
+.avatar .ic { width: 17px; height: 17px; }
+.chip button .ic { width: 13px; height: 13px; vertical-align: -0.15em; }
 .btn { border: 1px solid var(--border); background: var(--panel-2); padding: 8px 14px; border-radius: 10px; cursor: pointer; white-space: nowrap; }
 .btn:hover { border-color: var(--accent); }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
@@ -361,7 +370,6 @@ a.btn { text-decoration: none; color: inherit; display: inline-block; }
 .persona-select { max-width: 170px; }
 .card.persona { margin: 8px 0; padding: 10px 12px; }
 .card.persona .row { margin: 0 0 6px; }
-.card.persona input.emoji { width: 52px; min-width: 0; flex: none; text-align: center; }
 .card.persona textarea { width: 100%; }
 .card.mcp > input, .card.mcp > textarea { display: block; width: 100%; margin-top: 6px; }
 .card.mcp .row { flex-wrap: wrap; }
@@ -524,8 +532,10 @@ body.not-admin .admin-only { display: none !important; }
   background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); color: inherit; font: inherit; cursor: pointer; }
 .profile-tile:hover, .profile-tile:focus-visible { border-color: var(--accent); }
 .profile-tile span:nth-child(2) { overflow-wrap: anywhere; }
+input.emoji { width: 52px; min-width: 0; flex: none; text-align: center; }
 .profile-emoji { font-size: 2.2em; line-height: 1; }
 .profile-row .profile-emoji { font-size: 1.4em; }
+.profile-chip .profile-emoji { font-size: 1em; margin-inline-end: 6px; }
 .profile-row .row { align-items: center; margin: 0; }
 #profileBox { margin-bottom: 28px; }
 

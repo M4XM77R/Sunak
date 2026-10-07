@@ -72,18 +72,18 @@ LANGUAGES = ("en", "de")
 
 # Built-in personas; the user can edit, add and delete them in Settings → Personas.
 DEFAULT_PERSONAS = [
-    {"id": "assistant", "icon": "⛵", "name": "Assistant", "prompt": ""},
-    {"id": "coder", "icon": "💻", "name": "Coder",
+    {"id": "assistant", "icon": "", "name": "Assistant", "prompt": ""},
+    {"id": "coder", "icon": "", "name": "Coder",
      "prompt": "You are an expert software engineer. Give working, idiomatic code with short explanations. "
                "Point out bugs and edge cases. Ask for the language or framework only if it really matters."},
-    {"id": "writer", "icon": "✍️", "name": "Writer",
+    {"id": "writer", "icon": "", "name": "Writer",
      "prompt": "You are a skilled writer and editor. Write clear, natural, engaging text in the user's language "
                "and tone. When editing, keep the meaning and explain bigger changes briefly."},
-    {"id": "translator", "icon": "🌍", "name": "Translator",
+    {"id": "translator", "icon": "", "name": "Translator",
      "prompt": "You are a professional translator. Translate the user's text faithfully and idiomatically. "
                "If no target language is given, translate German to English and any other language to German. "
                "Reply with the translation only, unless asked for notes."},
-    {"id": "teacher", "icon": "🎓", "name": "Teacher",
+    {"id": "teacher", "icon": "", "name": "Teacher",
      "prompt": "You are a patient teacher. Explain step by step with simple words and examples, check "
                "understanding with a short question at the end, and never make the user feel bad for asking."},
 ]
@@ -532,7 +532,7 @@ class App:
         """All profiles (with their PIN hashes); the main profile ("default") always exists and is an admin."""
         out = self.main.get_setting("profiles") or []
         if not any(p["id"] == "default" for p in out):
-            out = [{"id": "default", "name": "", "emoji": "🙂", "admin": True, "pin_hash": ""}] + out
+            out = [{"id": "default", "name": "", "emoji": "", "admin": True, "pin_hash": ""}] + out
         return out
 
     def profile_info(self, pid):
@@ -1017,7 +1017,7 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError("Give the profile a name")
             p["name"] = name.strip()[:40]
         if "emoji" in d:
-            p["emoji"] = str(d["emoji"] or "").strip()[:8] or "🙂"
+            p["emoji"] = str(d["emoji"] or "").strip()[:8]
         if "pin" in d:
             pin = d["pin"]
             if pin is not None and not isinstance(pin, str):
@@ -1032,7 +1032,7 @@ class Handler(BaseHTTPRequestHandler):
         profiles = self.app.profiles()
         if len(profiles) >= MAX_PROFILES:
             raise ValueError(f"At most {MAX_PROFILES} profiles")
-        p = {"id": secrets.token_hex(6), "name": "", "emoji": "🙂", "admin": self.flag(d, "admin"), "pin_hash": ""}
+        p = {"id": secrets.token_hex(6), "name": "", "emoji": "", "admin": self.flag(d, "admin"), "pin_hash": ""}
         self.clean_profile_fields(dict(d, name=d.get("name", "")), p)
         self.app.main.set_setting("profiles", profiles + [p])
         self.send_json(self.profile_public(p))
@@ -1205,7 +1205,7 @@ class Handler(BaseHTTPRequestHandler):
         refs = images.existing(self.app.user_dir, d.get("image_refs"))
         if d.get("images") or refs:
             if not allow_images:
-                raise ValueError("Agent mode and tools (MCP) cannot look at images yet. Switch them off (🛠, 🔌) to ask about the image.")
+                raise ValueError("Agent mode and tools (MCP) cannot look at images yet. Switch them off to ask about the image.")
             if self.app.vision(prov, model) is False:
                 raise ValueError(f"{model} cannot see images. Pick a model with vision: on the Models page e.g. "
                                  "qwen2.5vl, gemma3 or llama3.2-vision, or Claude.")
@@ -1849,7 +1849,7 @@ class Handler(BaseHTTPRequestHandler):
         db.add_message(sid, "user", prompt, meta={"imagine": {"aspect": aspect, **({"negative": negative} if negative else {})}})
         title = session["title"]
         if title == "New chat":
-            title = "🎨 " + ((prompt[:55] + "…") if len(prompt) > 56 else prompt)
+            title = (prompt[:55] + "…") if len(prompt) > 56 else prompt
             db.update_session(sid, title=title)
         self.start_stream()
         self.emit({"type": "start", "title": title})
