@@ -2794,6 +2794,7 @@ function renderSettings() {
   $('#speechInput').value = s.speech_input;
   $('#whisperUrl').value = s.whisper_url;
   $('#whisperModel').value = s.whisper_model;
+  $('#aiImageDetect').checked = s.ai_image_detect;
   $('#imageGen').value = s.image_gen;
   $('#imageGenUrl').value = s.image_gen_url;
   $('#imageGenModel').value = s.image_gen === 'local' ? '' : s.image_gen_model;
@@ -2950,6 +2951,7 @@ $('#saveSettings').onclick = async () => {
       agent_enabled: $('#agentEnabled').checked, agent_timeout: Number($('#agentTimeout').value),
       agent_max_steps: Number($('#agentSteps').value),
       speech_input: $('#speechInput').value, whisper_url: $('#whisperUrl').value, whisper_model: $('#whisperModel').value,
+      ai_image_detect: $('#aiImageDetect').checked,
       image_gen: $('#imageGen').value, image_gen_url: $('#imageGenUrl').value,
       image_gen_model: $('#imageGen').value === 'local' ? $('#imageGenLocal').value : $('#imageGenModel').value,
       image_gen_size: Number($('#imageGenSize').value), image_gen_steps: Number($('#imageGenSteps').value),

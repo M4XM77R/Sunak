@@ -2,6 +2,7 @@
 
 import base64
 import binascii
+import contextlib
 import datetime
 import hashlib
 import hmac
@@ -60,6 +61,7 @@ DEFAULT_SETTINGS = {
     "image_gen_model": "",   # checkpoint ("" = the program's current one / ComfyUI's first)
     "image_gen_size": 512,   # side of a square picture: 512 (SD 1.5), 768, 1024 (SDXL, Flux)
     "image_gen_steps": 25,
+    "ai_image_detect": True, # ask the chat model whether a message wants a picture, when pictures are set up (intent.py)
     "error_reports": "off",  # unexpected errors as GitHub issues (reports.py): "off", "ask" (the user sends each one), "auto"
     "mail_notify": True,     # 📬 look for new mail every few minutes while Sunak is open, and say so
 }
@@ -67,7 +69,7 @@ INT_PREFS = {"agent_timeout": (5, 3600), "agent_max_steps": (1, 200), "image_gen
              "image_gen_steps": (1, imagegen.MAX_STEPS)}  # allowed ranges
 # Settings of the whole installation (only admin profiles change them); all other prefs are per profile.
 GLOBAL_PREFS = {"check_updates", "agent_enabled", "agent_timeout", "agent_max_steps", "speech_input", "whisper_url", "whisper_model",
-                "image_gen", "image_gen_url", "image_gen_model", "image_gen_size", "image_gen_steps", "error_reports"}
+                "image_gen", "image_gen_url", "image_gen_model", "image_gen_size", "image_gen_steps", "error_reports", "ai_image_detect"}
 GLOBAL_KEYS = GLOBAL_PREFS | {"providers", "mcp_servers", "password"}
 MAX_PROFILES = 20
 
@@ -329,6 +331,40 @@ class App:
         personas = self.db.get_setting("personas")
         s["personas"] = DEFAULT_PERSONAS if personas is None else personas
         return s
+
+    def ask_intent(self, model_id, text, timeout=15.0):
+        """Ask the chat model whether `text` is a request for a picture: True, False, or None when it cannot say (no model,
+        it is busy with other requests, an error, or no answer within `timeout` seconds). Only the first words of the
+        answer are read, so the model is stopped right away."""
+        try:
+            prov, model = self.resolve(model_id)
+        except (providers.ProviderError, ValueError):
+            return None
+        running, waiting = jobqueue.snapshot().get(providers.queue_key(prov), (0, 0))
+        if waiting or running >= providers.queue_slots(prov):
+            log_image.debug("The chat model is busy, picture requests are told by the rules this time")
+            return None
+        result, done = [], threading.Event()
+
+        def run():
+            answer = ""
+            try:
+                with contextlib.closing(providers.chat_stream(prov, model, intent.messages(text), {"temperature": 0})) as chunks:
+                    for kind, chunk in chunks:
+                        if kind == "text":
+                            answer += chunk
+                            if len(answer.strip()) >= 3:
+                                break
+                result.append(intent.parse(answer))
+            except (providers.ProviderError, OSError, ValueError) as e:
+                log_image.info("Picture request check by the chat model failed (%s), the rules decide", str(e)[:150])
+            finally:
+                done.set()
+        threading.Thread(target=run, daemon=True).start()
+        if not done.wait(timeout):
+            log_image.info("Picture request check by the chat model took longer than %.0fs, the rules decide", timeout)
+            return None
+        return result[0] if result else None
 
     def mcp_servers(self):
         """The MCP servers with their secrets (environment values, tokens); never send these to the browser."""
@@ -1961,23 +1997,23 @@ class Handler(BaseHTTPRequestHandler):
             raise ValueError(f"Hugging Face is not reachable ({e})") from None
 
     def imagine_intent(self):
-        """POST /api/imagine/intent {text, model}: does this chat message ask for a picture? Answer: {image, subject, via}.
-        `via` is "rules" (clear), or "model" when the rules were unsure and the chat model decided (only when pictures
-        are set up; a model that cannot be reached means "no")."""
+        """POST /api/imagine/intent {text, model, quick}: does this chat message ask for a picture? Answer: {image, subject, via}.
+        A clear request (rules "yes") is painted without asking anyone. Any other message is put to the chat model when pictures
+        are set up (and `ai_image_detect` is on): a short YES/NO question about the last message only (`via` "model"); only
+        YES makes a picture. Without that, or when the model does not answer in time, is busy with other requests or fails,
+        the message is a normal one (`via` "rules"). `quick` skips the model."""
         d = self.body()
         text = self.text(d, "text").strip()
         verdict = intent.classify(text)
-        out = {"image": verdict == "yes", "subject": intent.subject(text) if verdict != "no" else "", "via": "rules"}
+        out = {"image": verdict == "yes", "via": "rules"}
         s = self.app.settings()
         ready = s["image_gen"] != "off" and not sdcpp.status(self.app.data_dir, s)["problem"]
-        if verdict == "maybe" and ready and not self.flag(d, "quick"):
-            try:
-                prov, model = self.app.resolve(d.get("model") or s["default_model"])
-                out["image"] = intent.parse(providers.chat_once(prov, model, intent.messages(text), {"temperature": 0}))
-                out["via"] = "model"
-            except (providers.ProviderError, ValueError, OSError) as e:
-                log_image.info("Picture request check by the chat model failed (%s), treated as a normal message", str(e)[:150])
-        if verdict != "no":
+        if verdict != "yes" and ready and s["ai_image_detect"] and not self.flag(d, "quick") and 2 < len(text) <= intent.MAX_LENGTH:
+            answer = self.app.ask_intent(d.get("model") or s["default_model"], text)
+            if answer is not None:
+                out.update(image=answer, via="model")
+        out["subject"] = intent.subject(text) if out["image"] else ""
+        if out["image"] or verdict != "no" or out["via"] == "model":
             log_image.info("Picture request check: %s (%s%s)", "recognised" if out["image"] else "not a picture request", out["via"],
                            "" if ready else ", pictures are not set up")
         self.send_json(out)

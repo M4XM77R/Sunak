@@ -393,7 +393,8 @@
 
         <div class="admin-only">
         <h2>Image generation</h2>
-        <p class="muted small">Make pictures with the picture button next to the message box. Easiest: Sunak’s own image program (stable-diffusion.cpp), which you set up with a click on the Models page. Or connect a Stable Diffusion program running on this computer or in your network: <b>Automatic1111</b> (also Forge or SD.Next, started with <code>--api</code>) or <b>ComfyUI</b>.</p>
+        <p class="muted small">Ask for a picture in the chat and Sunak paints it. Easiest: Sunak’s own image program (stable-diffusion.cpp), which you set up with a click on the Models page. Or connect a Stable Diffusion program running on this computer or in your network: <b>Automatic1111</b> (also Forge or SD.Next, started with <code>--api</code>) or <b>ComfyUI</b>.</p>
+        <label class="check"><input type="checkbox" id="aiImageDetect"> Recognise picture requests with the AI (a short extra question to the chat model before each message, only when pictures are set up)</label>
         <div class="row">
           <label>Program<select id="imageGen">
             <option value="off">Off</option>
