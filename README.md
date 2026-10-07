@@ -37,9 +37,6 @@ Der Installer
 
 Beim ersten Start erkennt Sunak deinen Arbeitsspeicher und schlägt ein passendes Modell vor. Ein Klick lädt es herunter, danach kannst du sofort chatten.
 
-> **Privates Repository?** Die Ein-Zeilen-Befehle funktionieren nur, solange das Repo öffentlich ist. Bei einem privaten Repo:
-> `git clone https://github.com/M4XM77R/sunak.git && cd sunak && ./install.sh` (Windows: `.\install.ps1`).
-> Der Installer merkt sich den Klon, `sunak update` holt Neuerungen dann per `git pull` mit deinen Git-Zugangsdaten. Sunak prüft beim Start und danach höchstens alle 6 Stunden per `git fetch`, ob es Neuerungen gibt, und zeigt dann oben links „Update available“. Installiert wird nur, wenn du auf **Update** klickst.
 
 ### Deinstallieren
 
