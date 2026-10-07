@@ -3131,6 +3131,7 @@ function renderReports(r) {
     list.append(el('div', { class: 'card report' },
       el('strong', { 'data-no-i18n': '' }, p.title),
       el('div', { class: 'muted small', 'data-no-i18n': '' }, `${tr('Seen {n}×', { n: p.count })} · ${new Date(p.last * 1000).toLocaleString()}`),
+      el('div', { class: 'muted small' }, 'Public on GitHub: everyone can read this report.'),
       el('details', {}, el('summary', {}, 'Show what would be sent'), el('pre', { class: 'report-body', 'data-no-i18n': '' }, p.body)),
       el('div', { class: 'row' }, r.token_set ? send : null,
         el('a', { class: 'btn', href: p.url, target: '_blank', rel: 'noopener' }, 'Open on GitHub'), dismiss)));
@@ -3141,6 +3142,11 @@ function renderReports(r) {
         el('a', { href: x.url, target: '_blank', rel: 'noopener', 'data-no-i18n': '' }, `#${x.number}`), ' ', el('span', { class: 'muted small', 'data-no-i18n': '' }, x.title)))));
   }
 }
+$('#reportMode').onchange = (e) => {  // the issues are public: ask before everything is sent without a look
+  if (e.target.value === 'auto' && !confirm(tr('Reports are sent to a PUBLIC GitHub repository, so everyone can read them, and without you looking at each one first. Send automatically?'))) {
+    e.target.value = state.settings.error_reports === 'auto' ? 'auto' : 'ask';
+  }
+};
 $('#reportTokenSave').onclick = () => {
   const input = $('#reportToken');
   loadReports(api('/api/reports/token', { method: 'POST', body: { token: input.value } }).then((r) => { input.value = ''; return r; }));

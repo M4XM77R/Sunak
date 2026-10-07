@@ -91,7 +91,17 @@ class AnonymizeTest(unittest.TestCase):
                              ("Authorization: Bearer abcdefgh12345678", "abcdefgh12345678"), ("token=" + TOKEN, TOKEN)):
             self.assertNotIn(hidden, reports.anonymize(text), text)
         self.assertIn("127.0.0.1", reports.anonymize("http://127.0.0.1:8000"))
-        self.assertEqual(reports.anonymize("/home/maria/x.py"), "~/x.py")
+        self.assertEqual(reports.anonymize("/home/maria/x.py"), "<path>")
+        self.assertEqual(reports.anonymize("GET /api/sessions/abc 200 0.1s"), "GET /api/sessions/abc 200 0.1s")  # not a private path
+
+    def test_the_issues_are_public_so_masking_is_strict(self):
+        for text, hidden in (("not found: /home/maria/Documents/Steuer 2025.pdf", "Steuer"), ("open C:\\Users\\Maria\\mein geheimes.txt", "geheimes"),
+                             ("connect to http://nas.local:11434/api failed", "nas"), ("see http://meinserver.example.org/x", "meinserver"),
+                             ("KeyError: 'Das ist ein langer privater Satz aus einem Chat darüber'", "Chat darüber"),
+                             ("device aa:bb:cc:dd:ee:ff", "aa:bb"), ("addr fe80::1:2:3:4", "fe80"), ("Log: /tmp/x/sunak.log", "sunak.log")):
+            self.assertNotIn(hidden, reports.anonymize(text), text)
+        self.assertIn("https://api.github.com/x", reports.anonymize("https://api.github.com/x"))
+        self.assertIn("http://127.0.0.1:7000", reports.anonymize("http://127.0.0.1:7000"))
 
     def test_own_home_and_host_name_are_masked(self):
         text = f"file {Path.home() / 'secret-folder' / 'a.txt'}"
@@ -111,6 +121,7 @@ class BuildTest(unittest.TestCase):
         r = reports.build(info, lines=["12:00:00 INFO    http     GET /api/status 200 0.0s"])
         self.assertIn("KeyError", r["title"])
         self.assertIn(r["fp"], r["title"])
+        self.assertIn("public", r["body"])
         for text in ("Sunak", "Python", "Stack trace", "GET /api/status", f"sunak-fingerprint: {r['fp']}"):
             self.assertIn(text, r["body"])
         self.assertNotIn("correct-horse-battery", r["body"])

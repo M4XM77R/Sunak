@@ -5,8 +5,9 @@ dismisses each one) and "auto" (an error is sent at once when an access token is
 
 What a report contains: Sunak version, operating system, Python version, the error type and message, the stack
 trace (file names inside Sunak, function names and Sunak's own source lines, no variable values) and the last log
-lines. Never chats, prompts, mail or file contents, API keys, passwords or tokens. Everything passes `anonymize`
-(user names in paths, host name, IP addresses, e-mail addresses) and `log.redact` before it is stored or shown.
+lines. Never chats, prompts, mail or file contents, API keys, passwords or tokens. The issues are PUBLIC (the repository
+is open), so everything passes a strict `anonymize` (private paths, user and host names, host names in addresses except well
+known ones, IP and MAC addresses, e-mail addresses, long quoted texts) and `log.redact` before it is stored or shown.
 
 Same error = same fingerprint (error type + the Sunak functions of the stack, no line numbers, so it survives
 updates): the first report opens an issue, later ones add a short comment (at most one per day per error).
@@ -43,7 +44,7 @@ MAX_PENDING = 20
 MAX_ISSUES_PER_HOUR = 3
 COMMENT_EVERY = 24 * 3600   # a known error adds at most one comment per day
 LOG_LINES = 30
-MAX_MESSAGE = 300
+MAX_MESSAGE = 200
 MAX_TRACE_FRAMES = 25
 URL_LIMIT = 6000            # the prefilled issue address must stay short enough for browsers and GitHub
 TIMEOUT = 20
@@ -60,20 +61,34 @@ class ReportError(ValueError):
 
 
 # --- anonymising -------------------------------------------------------------------------------
+# The issues are public: everybody can read them. So this is strict: private paths, host names, addresses and anything
+# that looks like quoted text (it could be part of a chat or a document) are replaced before a report is stored.
+SAFE_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "github.com", "api.github.com", "raw.githubusercontent.com", "huggingface.co",
+              "ollama.com", "registry.ollama.ai", "api.anthropic.com", "api.openai.com", "duckduckgo.com", "html.duckduckgo.com"}
+_FILE_END = r"[^\n\"'`:,;)\]]{0,160}?\.(?:pdf|docx?|xlsx?|pptx?|odt|txt|md|csv|json|png|jpe?g|gif|webp|zip|py|js|html?|log|eml)\b"
+_PRIVATE_PATH = re.compile(r"(?:(?<![\w./-])(?:/(?:home|Users|root|tmp|var|mnt|opt|etc|usr|srv|media|private|Volumes)\b|~)(?:" + _FILE_END + r"|[^\s\"'`:,;)\]]*)"
+                           r"|\b[A-Za-z]:[\\/](?:" + _FILE_END + r"|[^\s\"'`:,;)\]]*))", re.I)
+_URL_HOST = re.compile(r"(?i)(\bhttps?://)([^/\s:@\"'`]+)")
 _PATTERNS = (
-    (re.compile(r"(?i)(?<![\w.])(?:/home|/Users)/[^/\s\"'`:]+"), "~"),
-    (re.compile(r"(?i)\b[A-Z]:[\\/]+Users[\\/]+[^\\/\s\"'`:]+"), "~"),
     (re.compile(r"(?<=://)[^/\s@:]+:[^/\s@]+@"), "***@"),                     # user:password@host
     (re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+"), "<email>"),
     (re.compile(r"\b(?!127\.0\.0\.1\b|0\.0\.0\.0\b)\d{1,3}(?:\.\d{1,3}){3}\b"), "<ip>"),
+    (re.compile(r"(?i)\b[0-9a-f]{1,4}(?::[0-9a-f]{0,4}){3,7}\b"), "<ip>"),    # IPv6
+    (re.compile(r"(?i)\b[0-9a-f]{2}(?:[:-][0-9a-f]{2}){5}\b"), "<mac>"),
+    (re.compile(r"(?i)\b[\w-]+\.(?:local|lan|home|internal|intranet|fritz\.box|localdomain)\b"), "<host>"),
 )
+_QUOTED = re.compile(r"([\"'`])(?:(?!\1)[^\n]){25,}\1")   # a long quoted text could be part of a chat or a document
+
+
+def _mask_host(m):
+    return m.group(1) + (m.group(2) if m.group(2).lower() in SAFE_HOSTS else "<host>")
 
 
 def anonymize(text, extra=()):
-    """`text` without user names in paths, host name, IP addresses, e-mail addresses and secrets."""
-    text = str(text)
+    """`text` without private paths, user names, host names, addresses, long quoted texts and secrets."""
+    text = _PRIVATE_PATH.sub("<path>", str(text))
     names = {str(n): "<user>" for n in extra}
-    for getter, mark in ((lambda: str(Path.home()), "~"), (socket.gethostname, "<host>"),
+    for getter, mark in ((lambda: str(Path.home()), "<path>"), (socket.gethostname, "<host>"),
                          (lambda: os.environ.get("USER") or os.environ.get("USERNAME") or "", "<user>")):
         try:
             names[getter()] = mark
@@ -81,8 +96,10 @@ def anonymize(text, extra=()):
             pass
     for name in sorted((n for n in names if len(n) >= 3 and n.lower() not in SKIP_NAMES), key=len, reverse=True):
         text = text.replace(name, names[name])
+    text = _URL_HOST.sub(_mask_host, text)
     for pattern, repl in _PATTERNS:
         text = pattern.sub(repl, text)
+    text = _QUOTED.sub("<text>", text)
     return log.redact(text)
 
 
@@ -144,8 +161,8 @@ def build(exc_info, lines=None):
         "", "## Error", "", f"`{error}`", "", "## Stack trace", "", "```", trace, "```", "",
         "## Last log lines", "", "```", "\n".join(recent) or "(none)", "```", "",
         f"<!-- sunak-fingerprint: {fp} -->",
-        "_Sent by Sunak's error reports. It contains no chats, prompts, mail contents, keys or passwords; "
-        "user names in paths and IP addresses are masked._",
+        "_Sent by Sunak's error reports (this issue is public). It contains no chats, prompts, mail contents, keys or passwords; "
+        "private paths, host names, IP addresses and long quoted texts are masked._",
     ])
     return {"fp": fp, "title": title, "body": body, "error": error}
 

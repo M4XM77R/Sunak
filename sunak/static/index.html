@@ -440,7 +440,8 @@
         <div class="row"><button class="btn" id="checkNow" type="button"><i data-i="refresh"></i>Check for updates now</button><span class="muted small" id="checkResult" role="status"></span><button class="btn primary hidden" id="installNow" type="button">Install update</button></div>
 
         <h2>Error reports</h2>
-        <p class="muted small">When Sunak hits an unexpected error, it can turn it into an issue on GitHub so it can be fixed. A report contains the Sunak version, system, Python version, the error with its stack trace and the last log lines. It never contains chats, prompts, mail or file contents, API keys or passwords; user names in paths and IP addresses are masked.</p>
+        <p class="muted small">When Sunak hits an unexpected error, it can turn it into an issue on GitHub so it can be fixed. A report contains the Sunak version, system, Python version, the error with its stack trace and the last log lines. It never contains chats, prompts, mail or file contents, API keys or passwords; private paths, host names, IP addresses and long quoted texts are masked.</p>
+        <p class="small"><b>These issues are public: everyone can read them on GitHub.</b></p>
         <label>Error reports<select id="reportMode"><option value="off">Off</option><option value="ask">Ask me first (I send or dismiss each one)</option><option value="auto">Send automatically</option></select></label>
         <div class="row"><input type="password" id="reportToken" autocomplete="off" placeholder="GitHub token (only “Issues: Read and write”)" aria-label="GitHub token"><button class="btn" id="reportTokenSave" type="button">Save token</button><button class="btn" id="reportTokenCheck" type="button">Check access</button></div>
         <p class="muted small" id="reportTokenInfo" role="status"></p>
