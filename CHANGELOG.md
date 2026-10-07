@@ -12,6 +12,16 @@ Format: one section per version, `## [a.b.c] – YYYY-MM-DD`, followed by short 
 - `sunak changelog` shows the changes of the next update without installing anything; when Sunak is up to date, it shows those of the installed version.
 - If `CHANGELOG.md` is missing or broken, the update still works and Sunak says "No changelog available".
 
+## [0.13.1] – 2026-10-07
+
+### Fixed
+- Old chats show the commands and diffs of earlier tool steps again.
+- Picture requests are painted again while MCP tools are on.
+- German translation for the 30-step stop notice.
+
+### Removed
+- Unused agent strings.
+
 ## [0.13.0] – 2026-10-07
 
 ### Removed
