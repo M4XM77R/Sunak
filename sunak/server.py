@@ -7,6 +7,7 @@ import hashlib
 import hmac
 import ipaddress
 import json
+import logging
 import mimetypes
 import os
 import platform
@@ -21,15 +22,18 @@ import sqlite3
 import subprocess
 import threading
 import time
-import traceback
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlparse
 
-from . import (__version__, agent, cal, extract, gpu, imagegen, images, jobqueue, knowledge, mail, mcp, memory, modelsearch,
+from . import (__version__, agent, cal, extract, gpu, imagegen, images, jobqueue, knowledge, log, mail, mcp, memory, modelsearch,
                ollama, providers, qr, research, sdcpp, speech, updates)
 from .db import DB, new_id
+
+log_http = log.get("http")
+log_app = log.get("app")
+log_image = log.get("image")
 
 STATIC = Path(__file__).parent / "static"
 ATTACHED_RE = re.compile(r"File `([^`\n]+)`:\n```\n.*?\n```\s*", re.S)  # files attached in the chat
@@ -253,7 +257,7 @@ class App:
         try:
             self.gpu = gpu.summary(gpu.detect())
         except Exception:  # noqa: BLE001 - no GPU info is fine, the app works without it
-            traceback.print_exc()
+            log_app.warning("Graphics card detection failed", exc_info=True)
 
     # updates ----------------------------------------------------------
     def check_updates(self):
@@ -270,6 +274,10 @@ class App:
                 behind = updates.check()
                 checked = time.time() if behind is not None else time.time() - updates.CHECK_EVERY + updates.RETRY_AFTER
                 self.update = {"behind": behind, "checked": checked}
+                if behind:
+                    log_app.info("Update check: %d new change%s available", behind, "" if behind == 1 else "s")
+                else:
+                    log_app.debug("Update check: %s", "up to date" if behind == 0 else "not possible (offline or no git clone)")
             finally:
                 self._checking = False
         threading.Thread(target=run, daemon=True).start()
@@ -287,6 +295,8 @@ class App:
             self._checking = False
         checked = time.time() if r["behind"] is not None else time.time() - updates.CHECK_EVERY + updates.RETRY_AFTER
         self.update = {"behind": r["behind"], "checked": checked}
+        log_app.info("Update check (button): %s", "failed (%s)" % r["error"] if r["behind"] is None else
+                     "%d new change%s, remote version %s" % (r["behind"], "" if r["behind"] == 1 else "s", r["version"] or "unknown") if r["behind"] else "up to date")
         return {"behind": r["behind"] or 0, "available": bool(r["behind"]), "known": r["behind"] is not None,
                 "version": r["version"], "current": __version__, "error": r["error"],
                 "can_update": updates.update_command() is not None}
@@ -452,6 +462,7 @@ class App:
         """Look up a configured provider by id."""
         for p in self.settings()["providers"]:
             if p["id"] == pid:
+                log.add_secret(p.get("api_key"))  # never to be written to the log
                 return p
         raise providers.ProviderError(f"Unknown provider '{pid}'. Check Settings.")
 
@@ -693,8 +704,15 @@ class Handler(BaseHTTPRequestHandler):
     timeout = 120  # a client that stops sending in the middle of a request must not hold a thread forever
 
     def log_message(self, fmt, *args):
-        if os.environ.get("SUNAK_DEBUG"):
-            super().log_message(fmt, *args)
+        """http.server's own notes (bad request lines, timeouts); requests themselves are logged by `route`."""
+        log_http.debug("%s %s", self.address_string(), fmt % args)
+
+    _status = 0
+    _stream_error = ""
+
+    def send_response(self, code, message=None):
+        self._status = code
+        super().send_response(code, message)
 
     # helpers ----------------------------------------------------------
     def send_json(self, obj, status=200):
@@ -777,6 +795,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def emit(self, obj):
         """Write one NDJSON event and flush it to the browser."""
+        if obj.get("type") == "error" and not self._stream_error:
+            self._stream_error = str(obj.get("error") or "")[:200]  # shows up in the request's log line
         self.wfile.write((json.dumps(obj) + "\n").encode())
         self.wfile.flush()
 
@@ -805,6 +825,29 @@ class Handler(BaseHTTPRequestHandler):
         self.route("DELETE")
 
     def route(self, method):
+        """Handle one request and log it: method, path (no query), status, duration. Never the contents."""
+        started = time.monotonic()
+        self._status, self._stream_error = 0, ""
+        try:
+            self.dispatch(method)
+        finally:
+            took = time.monotonic() - started
+            path = urlparse(self.path).path
+            status = self._status or 0
+            if status >= 500:
+                level = logging.ERROR
+            elif status >= 400 and not (status in (401, 404) and (method == "GET" or not path.startswith("/api/"))):
+                level = logging.WARNING
+            elif self._stream_error:
+                level = logging.WARNING
+            else:
+                level = logging.INFO if method != "GET" and path.startswith("/api/") else logging.DEBUG
+            if log_http.isEnabledFor(level):
+                who = "" if self.is_direct_local() else f" from {self.client_address[0]}"
+                err = f" (stream error: {self._stream_error})" if self._stream_error else ""
+                log_http.log(level, "%s %s %s %.1fs%s%s", method, path[:200], status, took, who, err)
+
+    def dispatch(self, method):
         """Dispatch a request: static files, CSRF header check, login, auth check, then ROUTES."""
         path = urlparse(self.path).path
         try:
@@ -848,7 +891,7 @@ class Handler(BaseHTTPRequestHandler):
         except (ValueError, providers.ProviderError) as e:
             self.fail(str(e), 400)
         except Exception as e:  # noqa: BLE001 - never leave the browser without an answer
-            traceback.print_exc()
+            log_http.error("Internal error in %s %s", method, path[:200], exc_info=True)
             self.fail(f"Internal error: {type(e).__name__}: {e}", 500)
 
     def fail(self, msg, status):
@@ -906,6 +949,7 @@ class Handler(BaseHTTPRequestHandler):
         if updates.update_command() is None:
             raise ValueError("Sunak cannot update itself here. Run git pull and the installer in your Sunak folder.")
         host, port = self.server.server_address[:2]
+        log_app.info("Update requested: Sunak stops, installs the new version and starts again")
         updates.spawn_helper(port, host, self.app.data_dir)
         self.send_json({"ok": True})
         threading.Thread(target=self.server.shutdown, daemon=True).start()
@@ -1322,8 +1366,10 @@ class Handler(BaseHTTPRequestHandler):
             return save()
         except Exception as e:  # noqa: BLE001 - keep the partial answer and tell the browser
             save()
-            if not isinstance(e, providers.ProviderError):
-                traceback.print_exc()
+            if isinstance(e, providers.ProviderError):
+                log_app.warning("Model %s: %s", model_id, str(e)[:200])
+            else:
+                log_app.error("Unexpected error while answering with %s", model_id, exc_info=True)
             hint = ""
             if self.sent_images and not chunks and prov["type"] == "openai":
                 hint = " (If this model cannot see images, pick one with vision.)"
@@ -1444,8 +1490,10 @@ class Handler(BaseHTTPRequestHandler):
             pass
         except Exception as e:  # noqa: BLE001 - keep what was done and tell the browser
             save()
-            if not isinstance(e, providers.ProviderError):
-                traceback.print_exc()
+            if isinstance(e, providers.ProviderError):
+                log_app.warning("Model %s: %s", model_id, str(e)[:200])
+            else:
+                log_app.error("Unexpected error while answering with %s", model_id, exc_info=True)
             return self.emit({"type": "error", "error": str(e)})
         finally:
             if run:
@@ -1929,6 +1977,8 @@ class Handler(BaseHTTPRequestHandler):
                 gone.set()
 
         prompt = request
+        began = time.monotonic()
+        log_image.info("Picture requested (%s, %s%s)", cfg["type"], aspect, ", prompt improved by the chat model" if improve else "")
         if improve and prov is not None:
             fallback = self.text(d, "fallback").strip()[:4000] or request
             prompt = fallback
@@ -1936,8 +1986,10 @@ class Handler(BaseHTTPRequestHandler):
                 self.emit({"type": "status", "t": "Improving the description for the image model…"})
                 answer = providers.chat_once(prov, model, imagegen.improve_messages(request), {"temperature": 0.7})
                 prompt = imagegen.clean_prompt(answer, fallback)
-            except providers.ProviderError:
-                pass  # the plain description still makes a picture
+                log_image.info("Prompt written by %s::%s in %.1fs%s", prov["id"], model, time.monotonic() - began,
+                               "" if prompt != fallback else " (not usable, the plain description is used)")
+            except providers.ProviderError as e:
+                log_image.warning("Prompt improvement failed (%s), the plain description is used", str(e)[:200])
             except OSError:  # the browser went away while waiting
                 return
         elif improve:
@@ -1948,8 +2000,10 @@ class Handler(BaseHTTPRequestHandler):
         except OSError:
             return
 
+        painting = time.monotonic()
         try:
             with jobqueue.slot("image"):
+                painting = time.monotonic()
                 if cfg["type"] == "local":
                     data, info = sdcpp.generate(self.app.data_dir, cfg["model"], prompt, negative,
                                                 lambda size: imagegen.dimensions(aspect, size), seed,
@@ -1964,8 +2018,12 @@ class Handler(BaseHTTPRequestHandler):
             return self.emit({"type": "error", "error": "The image generator was busy with other requests for too long. Please try again."})
         except (imagegen.ImageGenError, sdcpp.SdError, ValueError) as e:
             if gone.is_set():
+                log_image.info("Picture stopped by the user after %.1fs", time.monotonic() - painting)
                 return
+            log_image.warning("Picture failed after %.1fs: %s", time.monotonic() - painting, str(e)[:300])
             return self.emit({"type": "error", "error": str(e)})
+        log_image.info("Picture done in %.1fs (%dx%d, %s, %s)", time.monotonic() - painting, info.get("width", 0), info.get("height", 0),
+                       info.get("steps", "?"), info.get("model") or cfg["type"])
         info["prompt"] = prompt
         if improve:
             info["request"] = request

@@ -16,6 +16,10 @@ import threading
 import time
 from collections import deque
 
+from . import log
+
+logger = log.get("queue")
+
 POLL = 1.0           # seconds between two looks at the queue while waiting
 NOTIFY_EVERY = 2.0   # a waiting request is told its place at least this often (this also notices a closed browser)
 MAX_WAIT = 900.0     # seconds after which a request gives up waiting
@@ -41,7 +45,8 @@ def local_slots():
 class Gate:
     """`slots` places, a FIFO line of waiting requests."""
 
-    def __init__(self, slots=1):
+    def __init__(self, slots=1, name="queue"):
+        self.name = name
         self.slots = slots
         self.running = 0
         self.waiting = deque()
@@ -54,8 +59,11 @@ class Gate:
                 self.running += 1
                 return
             self.waiting.append(me)
+            ahead = len(self.waiting)
         last, told = None, 0.0
-        deadline = time.monotonic() + timeout
+        began = time.monotonic()
+        deadline = began + timeout
+        logger.info("%s: busy, the request waits (place %d)", self.name, ahead)
 
         def my_turn():
             return self.waiting[0] is me and self.running < self.slots
@@ -73,6 +81,7 @@ class Gate:
                             raise Timeout
                 now = time.monotonic()
                 if place == 0:
+                    logger.info("%s: its turn after %.1fs", self.name, now - began)
                     if notify and last is not None:
                         try:
                             notify(0)
@@ -90,7 +99,11 @@ class Gate:
                     last, told = place, now
                 with self.cv:
                     self.cv.wait_for(my_turn, POLL)
-        except BaseException:
+        except BaseException as e:
+            if isinstance(e, Timeout):
+                logger.warning("%s: gave up after %.0fs in the queue", self.name, time.monotonic() - began)
+            elif isinstance(e, Cancelled):
+                logger.info("%s: left the queue after %.1fs (cancelled or the browser went away)", self.name, time.monotonic() - began)
             with self.cv:
                 if me in self.waiting:
                     self.waiting.remove(me)
@@ -116,7 +129,7 @@ local = threading.local()   # per request thread: `notify` (set by the HTTP hand
 def gate(key, slots=1):
     with _lock:
         if key not in _gates:
-            _gates[key] = Gate(slots)
+            _gates[key] = Gate(slots, key)
         return _gates[key]
 
 

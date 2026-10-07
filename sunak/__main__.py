@@ -4,13 +4,14 @@ one of the commands in COMMANDS. `sunak -h` shows them all, `sunak <command> -h`
 import argparse
 import difflib
 import os
+import platform
 import shutil
 import sys
 import threading
 import webbrowser
 from pathlib import Path
 
-from . import __version__, desktop, gpu
+from . import __version__, desktop, gpu, log
 from .server import make_server
 
 
@@ -61,6 +62,13 @@ COMMANDS = {
                                  "  --yes            do not ask before starting\n"
                                  "Gmail: turn on 2-Step Verification and create an app password at\n"
                                  "https://myaccount.google.com/apppasswords"},
+    "logs": {"group": "Manage", "args": "[LINES] [--data-dir PATH]", "summary": "Where the log file is, and its last lines",
+             "example": "sunak logs 100",
+             "details": "Sunak writes what it does (start, requests, queue, pictures, errors) to the terminal it was\n"
+                        "started from and to <data folder>/logs/sunak.log: five files of at most 10 MB, so 50 MB in all.\n"
+                        "Never prompts, answers, passwords or keys. SUNAK_DEBUG=1 adds details (every request).\n"
+                        "  LINES            how many lines to show (default 40)\n"
+                        "  --data-dir PATH  Sunak's data folder (default ~/.sunak)"},
     "autostart": {"group": "Desktop", "args": "on|off|status", "summary": "Start Sunak when you log in (on|off|status)",
                   "example": "sunak autostart on",
                   "details": "  on      start Sunak in the background when you log in\n  off     do not start it any more\n"
@@ -164,6 +172,27 @@ def gpu_report(info):
     return [f"GPU: {info['name']} ({mem}). {how}"]
 
 
+def logs_command(rest):
+    """sunak logs [LINES] [--data-dir PATH]: where the log file is and its last lines."""
+    data_dir, lines = os.environ.get("SUNAK_DATA", str(Path.home() / ".sunak")), 40
+    i = 0
+    while i < len(rest):
+        if rest[i] == "--data-dir" and i + 1 < len(rest):
+            data_dir, i = rest[i + 1], i + 2
+        elif rest[i].isdigit():
+            lines, i = max(1, min(int(rest[i]), 5000)), i + 1
+        else:
+            return fail(f"Unknown option '{rest[i]}'. Usage: sunak logs [LINES] [--data-dir PATH]")
+    path = log.log_path(data_dir)
+    last = log.tail(data_dir, lines)
+    print(f"Log file: {path}")
+    if last is None:
+        print("There is no log yet. Start Sunak first.")
+        return 0
+    print("\n".join(last))
+    return 0
+
+
 def run_command(cmd, rest, port):
     """Commands besides starting the server. Returns the exit code."""
     if cmd == "version":
@@ -222,6 +251,8 @@ def main(argv=None):
         return 0
     if argv and argv[0] == "update":
         sys.exit("'update' is part of the installed sunak command. Without installing: git pull in this folder.")
+    if argv and argv[0] == "logs":
+        return logs_command(argv[1:])
     if argv and argv[0] == "mail-selftest":
         from . import mailtest
         return mailtest.main(argv[1:])
@@ -264,6 +295,7 @@ def main(argv=None):
             webbrowser.open(url)
         return 0
 
+    log_file = log.setup(args.data_dir)
     srv = None
     for port in range(args.port, args.port + 10):
         try:
@@ -278,9 +310,13 @@ def main(argv=None):
     url = f"http://{shown}:{port}"
     print(f"\n  {PINK}⛵ Sunak {__version__}{RESET} is running at {PINK}{url}{RESET}")
     print(f"  Data: {args.data_dir}")
+    if log_file:
+        print(f"  Log:  {log_file} (sunak logs shows the end)")
     if args.host == "0.0.0.0":
         print("  Reachable from other devices on your network. Set a password in Settings!")
     print("  Press Ctrl+C to stop.\n")
+    log.get("main").info("Sunak %s started on %s (Python %s, %s, data folder %s)", __version__, url,
+                         platform.python_version(), platform.system(), args.data_dir)
     if not args.no_browser:
         threading.Timer(0.8, lambda: webbrowser.open(url)).start()
     app = srv.RequestHandlerClass.app
@@ -294,6 +330,7 @@ def main(argv=None):
         pass
     srv.server_close()
     app.mcp.close_all()
+    log.get("main").info("Sunak stopped")
     print("\n  Bye 👋")
     return 0
 

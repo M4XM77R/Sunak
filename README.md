@@ -270,6 +270,7 @@ Die Einstellung bleibt nach einem Neustart erhalten. Startest du Sunak mit `--ho
 | `sunak update` | Neueste Version installieren und ein laufendes Sunak beenden (danach `sunak` starten) |
 | `sunak version` | Installierte Version (auch `sunak --version`, und unten in den Settings) |
 | `sunak gpu` | Welche Grafikkarte Ollama nutzen kann |
+| `sunak logs [ZEILEN]` | Wo die Logdatei liegt, und ihre letzten Zeilen (Standard 40; `--data-dir PFAD` für einen anderen Datenordner) |
 | `sunak mail-selftest` | Ein echtes Mail-Konto von Anfang bis Ende testen, siehe [E-Mail](#e-mail) |
 | `sunak autostart on\|off\|status` | Sunak beim Anmelden im Hintergrund starten |
 | `sunak shortcut` | Desktop-Icon neu anlegen |
@@ -289,7 +290,7 @@ Alles Wichtige stellst du in der Oberfläche ein (Settings). Optional per Umgebu
 | `SUNAK_DATA` | `~/.sunak` | Ordner für die Datenbank (Windows: `C:\Users\<Name>\.sunak`) |
 | `SUNAK_PASSWORD` | – | Passwort beim Start setzen |
 | `SUNAK_NO_BROWSER` | – | Auf einen beliebigen Wert setzen: Browser nicht öffnen |
-| `SUNAK_DEBUG` | – | Auf einen beliebigen Wert setzen: Zugriffslog im Terminal |
+| `SUNAK_DEBUG` | – | Auf einen beliebigen Wert setzen: ausführlicheres Log (Stufe DEBUG: auch jede lesende Anfrage, Seiten und Abfragen im Hintergrund). Nie Inhalte von Chats, Prompts oder Schlüssel |
 | `SUNAK_MODEL_SLOTS` | `1` | Wie viele Anfragen ein lokales Modell (Ollama auf diesem Rechner oder im LAN) gleichzeitig bearbeitet; weitere warten in der Reihe. Modelle im Internet (Claude, OpenAI) nehmen vier gleichzeitig |
 | `SUNAK_ALLOWED_HOSTS` | – | Weitere Hostnamen, unter denen Sunak erreichbar ist, kommagetrennt (`*` für alle). Erlaubt sind sonst `localhost`, IP-Adressen, Namen ohne Punkt und `*.local` (Schutz gegen DNS-Rebinding) |
 | `SUNAK_GPU` | – | Nur für Docker: `nvidia` oder `amd`, damit die CPU-Warnung auch dort greift (setzen die GPU-Compose-Dateien selbst) |
@@ -297,6 +298,8 @@ Alles Wichtige stellst du in der Oberfläche ein (Settings). Optional per Umgebu
 | `ANTHROPIC_API_KEY` | – | Richtet beim ersten Start automatisch Claude als Anbieter ein |
 | `SEARXNG_URL` | – | eigene SearXNG-Instanz für Web-Suche und Research statt DuckDuckGo |
 | `NO_COLOR` | – | Keine Farben in der Terminal-Ausgabe |
+
+**Log:** Sunak schreibt, was es tut, in das Terminal, aus dem es gestartet wurde, und in die Datei `~/.sunak/logs/sunak.log` (im Datenordner, nur für dich lesbar). Jede Zeile hat Uhrzeit, Stufe und Bereich, zum Beispiel `13:11:54 INFO    http     POST /api/chat 200 3.4s`. Protokolliert werden Start und Ende, Anfragen, die etwas ändern (Methode, Pfad, Status, Dauer; Fehler als WARNING oder ERROR), die Warteschlange („busy, the request waits“), Bildaufträge, Update-Prüfungen und Fehler mit ihrer Ursache. **Nie** stehen darin Chats, Prompts, Antworten, Mails, Dateiinhalte, Passwörter, API-Schlüssel oder Query-Texte (auch nicht mit `SUNAK_DEBUG`). Die Datei ist auf **50 MB** begrenzt: fünf Dateien (`sunak.log`, `sunak.log.1` bis `.4`) zu je höchstens 10 MB, die älteste wird überschrieben. `sunak logs` zeigt Ort und Ende der Datei.
 
 **Wo liegen meine Daten?** In `~/.sunak` (SQLite-Datei `sunak.db`, Bilder in `images/`, weitere Profile in `profiles/`), bei Docker im Ordner `data/`. Das Programm selbst liegt unter Linux und macOS in `~/.sunak/app`, unter Windows in `%LOCALAPPDATA%\sunak\app`.
 
@@ -366,7 +369,7 @@ Voraussetzung ist nur Python 3.9+. Es gibt nichts zu installieren und keinen Bui
 git clone https://github.com/M4XM77R/sunak.git && cd sunak
 SUNAK_DATA=./data python3 -m sunak --no-browser   # Server mit eigenem Datenordner starten
 python3 -m unittest discover tests -v             # Tests mit simulierten Backends (Ollama, Claude, OpenAI)
-SUNAK_DEBUG=1 python3 -m sunak                    # mit Zugriffslog
+SUNAK_DEBUG=1 python3 -m sunak                    # mit ausführlichem Log
 ```
 
 Änderungen an `sunak/static/` sind nach einem Neuladen im Browser sichtbar. Änderungen an Python-Dateien brauchen einen Neustart. Die Tests laufen in GitHub Actions auf Linux, macOS und Windows.
