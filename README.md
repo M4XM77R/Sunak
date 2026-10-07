@@ -155,6 +155,7 @@ Sunak rechnet nicht selbst, die Modelle laufen in Ollama. Ollama nutzt eine pass
 | Automatisch beim Anmelden starten | `sunak autostart on` (aus: `sunak autostart off`) |
 | Desktop-Icon neu anlegen | `sunak shortcut` |
 | Aktualisieren | Bei „Update available“ oben links auf **Update** klicken: Sunak installiert die neue Version und startet neu. Oder im Terminal `sunak update` (holt die neueste Version und beendet ein laufendes Sunak, damit der nächste Start sie nutzt) |
+| Sofort nach Updates suchen | Settings → Updates → **Check for updates now** (auch wenn der Hinweis abgeschaltet ist). Das Ergebnis steht daneben: „Sunak … ist aktuell“, „Neue Version x.y.z verfügbar“ mit dem Knopf **Install update**, oder „Check failed“ mit dem Grund (kein Git-Klon, Update-Quelle nicht erreichbar, kein Vergleichszweig) |
 | Update-Hinweis abschalten | Settings → Updates → Haken bei „Check for updates“ entfernen → Save settings |
 | Version anzeigen | `sunak version` (steht auch unter Settings → About). Jede Änderung erhöht die Version (`sunak/__init__.py`): Patch für Fehlerbehebungen, Minor für neue Funktionen; Sunak bleibt unter 1.0, bis der Maintainer 1.0 freigibt |
 | Deinstallieren | `sunak uninstall`: entfernt das Programm und fragt einzeln nach Daten, Ollama und Modellen (Standard: behalten). Details unter [Deinstallieren](#deinstallieren) |

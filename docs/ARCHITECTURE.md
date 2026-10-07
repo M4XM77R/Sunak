@@ -69,6 +69,7 @@ Alle Endpunkte liegen unter `/api/`. Schreibende Anfragen brauchen den Header `X
 |---|---|---|
 | `GET /api/status` | Version, Login-Status, RAM, empfohlenes Modell | JSON |
 | `GET /api/update` | Update verfügbar? (`available`, `behind`, `can_update`, einmalig `result` des letzten Updates); stößt die Prüfung im Hintergrund an | JSON |
+| `POST /api/update/check` | Knopf „Check for updates now“ (Admin): prüft sofort, auch bei abgeschaltetem Hinweis, mit derselben Prüfung (`updates.inspect`) und aktualisiert deren Ergebnis. Antwort: `behind`, `available`, `known` (false = Prüfung nicht möglich), `version` (Version auf dem Remote), `current`, `error` (`no_clone`, `no_remote`, `no_upstream`), `can_update` | JSON |
 | `POST /api/update` | Update-Knopf: startet den Hilfsprozess und beendet den Server | JSON |
 | `POST /api/shutdown` | Server beenden (`sunak stop`, Knopf in Settings); von diesem Rechner ohne Login, von anderen Geräten und über einen Reverse-Proxy (`X-Forwarded-For`, `Forwarded`) nur angemeldet | JSON |
 | `POST /api/login`, `POST /api/logout` | Anmelden, Abmelden | JSON |
