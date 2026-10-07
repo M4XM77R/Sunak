@@ -256,6 +256,8 @@ Damit Fehler gefunden und behoben werden können, kann Sunak unerwartete Fehler 
 
 **Das Token:** Lege auf GitHub unter Settings → Developer settings → Personal access tokens → Fine-grained tokens ein Token an, das **nur dieses Repository** und nur die Berechtigung „Issues: Read and write“ hat, und speichere es unter „Save token“. Es bleibt auf deinem Computer (nur in der Datenbank, nie im Log, im Backup oder im Browser). „Check access“ prüft, ob es funktioniert. **Ohne Token** öffnet „Open on GitHub“ ein vorausgefülltes Issue im Browser, das du selbst abschickst.
 
+**Wer braucht ein GitHub-Konto?** Nur der Admin, der das Token einrichtet (oder wer „Open on GitHub“ nutzt). Das Token ist eine Einstellung der Sunak-Installation und liegt nur auf dem Server; Fehler anderer Profile und Geräte derselben Installation werden darüber gemeldet, ohne dass sie ein Konto verbinden. Jede Installation braucht ihr eigenes Token, denn ein Token im Programm mitzuliefern wäre nicht sicher. Das Repository muss für den Token-Besitzer erreichbar sein (bei einem privaten Repository nur für Mitarbeitende).
+
 **Doppelte und Menge:** Jeder Fehler hat einen Fingerabdruck (Fehlerart plus die beteiligten Funktionen, ohne Zeilennummern). Gibt es dazu schon ein offenes Issue, bekommt es nur einen kurzen Kommentar („Seen again“, höchstens einen pro Tag); ein bereits geschlossenes Issue wird nicht geöffnet, sondern es entsteht ein neues, das darauf verweist. Pro Stunde entstehen höchstens drei neue Issues. „Create a sample report“ legt einen harmlosen Beispielbericht an, mit dem du die Vorschau und das Senden ausprobieren kannst.
 
 ### Handy und Tablet
