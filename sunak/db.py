@@ -68,6 +68,7 @@ MIGRATIONS = [
     ("messages", "meta", "TEXT NOT NULL DEFAULT ''"),
     ("sessions", "persona", "TEXT NOT NULL DEFAULT ''"),
     ("sessions", "use_web", "INTEGER NOT NULL DEFAULT 0"),
+    ("notes", "source", "TEXT NOT NULL DEFAULT ''"),  # chat id of a memory Sunak picked up by itself
 ]
 
 
@@ -294,15 +295,17 @@ class DB:
 
     # notes / memory ---------------------------------------------------
     def list_notes(self):
-        """All notes, newest first."""
-        return self._q("SELECT * FROM notes ORDER BY created DESC")
+        """All notes, newest first; `source_title` is the title of the chat a memory came from."""
+        return self._q("SELECT notes.*, sessions.title AS source_title FROM notes "
+                       "LEFT JOIN sessions ON notes.source != '' AND sessions.id = notes.source ORDER BY notes.created DESC")
 
-    def add_note(self, content, is_memory=False):
-        """Create a note; `is_memory` notes are added to every chat's system prompt."""
+    def add_note(self, content, is_memory=False, source=""):
+        """Create a note; `is_memory` notes are added to every chat's system prompt. `source` is the
+        chat id when Sunak remembered it by itself (see memory.py)."""
         nid = new_id()
         self._q(
-            "INSERT INTO notes(id, content, is_memory, created) VALUES(?,?,?,?)",
-            (nid, content, int(bool(is_memory)), time.time()),
+            "INSERT INTO notes(id, content, is_memory, created, source) VALUES(?,?,?,?,?)",
+            (nid, content, int(bool(is_memory)), time.time(), source),
         )
         return self._q("SELECT * FROM notes WHERE id = ?", (nid,), one=True)
 

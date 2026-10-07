@@ -230,7 +230,11 @@ details.think summary { cursor: pointer; user-select: none; }
 .notes { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
 .note { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 14px; display: flex; gap: 10px; align-items: flex-start; }
 .note.memory { border-left: 3px solid var(--accent); }
-.note .c { flex: 1; white-space: pre-wrap; word-wrap: break-word; outline: none; }
+.note .note-main { flex: 1; min-width: 0; }
+.note .c { white-space: pre-wrap; word-wrap: break-word; outline: none; }
+.note .origin { display: flex; align-items: center; margin-top: 4px; }
+.note .origin.link { cursor: pointer; }
+.note .origin.link:hover { color: var(--accent); }
 .note .tools { display: flex; gap: 6px; align-items: center; font-size: 13px; }
 
 /* settings */
