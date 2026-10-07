@@ -76,6 +76,33 @@ class UpdateCheckTest(unittest.TestCase):
         r = updates.inspect(self.clone)
         self.assertEqual((r["behind"], r["error"]), (None, "no_remote"))
 
+    def push_version(self, version, changelog_text):
+        """A commit on the remote with sunak/__init__.py at `version` and a CHANGELOG.md (None = no file)."""
+        (self.other / "sunak").mkdir(exist_ok=True)
+        (self.other / "sunak" / "__init__.py").write_text(f'__version__ = "{version}"\n', encoding="utf-8")
+        if changelog_text is not None:
+            (self.other / "CHANGELOG.md").write_text(changelog_text, encoding="utf-8")
+        git(self.other, "add", "-A")
+        git(self.other, "commit", "-q", "-m", version)
+        git(self.other, "push", "-q", "origin", "main")
+
+    def test_inspect_reads_the_changelog_from_the_remote(self):
+        current = __import__("sunak").__version__
+        self.assertEqual(updates.inspect(self.clone)["changelog"], [])  # up to date: nothing to show
+        self.push_version("99.1.0", f"# Changelog\n\n## [99.1.0] \u2013 2030-01-02\n- new\n\n## [99.0.5]\n- fix\n\n## [{current}] \u2013 2020-01-01\n- old\n")
+        r = updates.inspect(self.clone)
+        self.assertEqual([e["version"] for e in r["changelog"]], ["99.1.0", "99.0.5"])  # not the installed one
+        self.assertEqual((r["changelog"][0]["date"], r["changelog"][0]["body"]), ("2030-01-02", "- new"))
+        self.assertFalse((self.clone / "CHANGELOG.md").exists())  # read from the remote, not from the working copy
+
+    def test_inspect_without_a_usable_changelog(self):
+        self.push_version("99.1.0", None)  # the remote has no CHANGELOG.md
+        r = updates.inspect(self.clone)
+        self.assertEqual((r["behind"], r["version"], r["changelog"], r["error"]), (1, "99.1.0", [], ""))
+        self.push_version("99.2.0", "\x00\xff not a changelog\n## ???\n")  # broken file
+        r = updates.inspect(self.clone)
+        self.assertEqual((r["behind"], r["changelog"]), (2, []))
+
     def test_installed_copy_uses_remembered_clone_and_commit(self):
         home = Path(self.tmp.name) / "home"
         app = home / "app"
@@ -175,12 +202,14 @@ class UpdateApiTest(unittest.TestCase):
             time.sleep(0.05)
 
     def test_hint_setting_and_result(self):
-        with unittest.mock.patch.object(updates, "check", return_value=3) as check, \
+        entry = {"version": "9.9.9", "date": "2030-01-01", "body": "- x"}
+        with unittest.mock.patch.object(updates, "inspect", return_value={"behind": 3, "version": "9.9.9", "changelog": [entry], "error": ""}) as check, \
                 unittest.mock.patch.object(updates, "update_command", return_value=["true"]):
             self.call("GET", "/api/update")  # starts the background check
             self.wait_for_check()
             u = self.call("GET", "/api/update")
             self.assertEqual((u["available"], u["behind"], u["can_update"], u["enabled"]), (True, 3, True, True))
+            self.assertEqual((u["version"], u["changelog"]), ("9.9.9", [entry]))
             self.assertEqual(check.call_count, 1)  # not again within CHECK_EVERY
             self.call("PUT", "/api/settings", {"check_updates": False})
             u = self.call("GET", "/api/update")
@@ -194,19 +223,21 @@ class UpdateApiTest(unittest.TestCase):
 
     def test_check_now_works_even_when_the_hint_is_off(self):
         self.call("PUT", "/api/settings", {"check_updates": False})
-        ok = {"behind": 2, "version": "9.9.9", "error": ""}
+        entry = {"version": "9.9.9", "date": "", "body": "- x"}
+        ok = {"behind": 2, "version": "9.9.9", "changelog": [entry], "error": ""}
         with unittest.mock.patch.object(updates, "inspect", return_value=ok), \
                 unittest.mock.patch.object(updates, "update_command", return_value=["true"]):
             r = self.call("POST", "/api/update/check")
         self.assertEqual((r["available"], r["known"], r["behind"], r["version"], r["can_update"]), (True, True, 2, "9.9.9", True))
+        self.assertEqual(r["changelog"], [entry])
         self.assertEqual(r["current"], __import__("sunak").__version__)
-        bad = {"behind": None, "version": "", "error": "no_remote"}
+        bad = {"behind": None, "version": "", "changelog": [], "error": "no_remote"}
         with unittest.mock.patch.object(updates, "inspect", return_value=bad):
             r = self.call("POST", "/api/update/check")
         self.assertEqual((r["known"], r["available"], r["error"]), (False, False, "no_remote"))
 
     def test_failed_check_is_silent(self):
-        with unittest.mock.patch.object(updates, "check", return_value=None):
+        with unittest.mock.patch.object(updates, "inspect", return_value={"behind": None, "version": "", "changelog": [], "error": "no_remote"}):
             self.call("GET", "/api/update")
             self.wait_for_check()
             u = self.call("GET", "/api/update")

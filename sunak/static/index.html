@@ -446,6 +446,7 @@
         <h2>Updates</h2>
         <label class="check"><input type="checkbox" id="checkUpdates"> Check for updates and show a hint (never installs without your click)</label>
         <div class="row"><button class="btn" id="checkNow" type="button"><i data-i="refresh"></i>Check for updates now</button><span class="muted small" id="checkResult" role="status"></span><button class="btn primary hidden" id="installNow" type="button">Install update</button></div>
+        <div id="checkChangelog"></div>
 
         <h2>Error reports</h2>
         <p class="muted small">When Sunak hits an unexpected error, it can turn it into an issue on GitHub so it can be fixed. A report contains the Sunak version, system, Python version, the error with its stack trace and the last log lines. It never contains chats, prompts, mail or file contents, API keys or passwords; private paths, host names, IP addresses and long quoted texts are masked.</p>
@@ -479,6 +480,12 @@
     </section>
   </main>
 </div>
+<dialog id="changelogDlg" class="changelog-dlg" aria-labelledby="changelogTitle">
+  <h3 id="changelogTitle">Update Sunak</h3>
+  <p class="muted small">What changes with this update:</p>
+  <div id="changelogBody"></div>
+  <div class="row"><button class="btn" id="changelogCancel" type="button">Cancel</button><button class="btn primary" id="changelogInstall" type="button">Install update</button></div>
+</dialog>
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
 <script src="/icons.js"></script>
 <script src="/app.js"></script>

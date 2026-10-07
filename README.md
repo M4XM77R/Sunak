@@ -295,7 +295,8 @@ Die Einstellung bleibt nach einem Neustart erhalten. Startest du Sunak mit `--ho
 | `sunak` | Sunak starten und im Browser öffnen (läuft es schon, wird nur der Browser geöffnet) |
 | `sunak status` | Läuft Sunak? Adresse und Autostart |
 | `sunak stop` | Das laufende Sunak beenden |
-| `sunak update` | Neueste Version installieren und ein laufendes Sunak beenden (danach `sunak` starten) |
+| `sunak update` | Zeigt die Änderungen (Changelog), fragt nach, installiert dann die neueste Version und beendet ein laufendes Sunak (danach `sunak` starten); `--yes` fragt nicht |
+| `sunak changelog` | Was das nächste Update ändert, ohne etwas zu installieren |
 | `sunak version` | Installierte Version (auch `sunak --version`, und unten in den Settings) |
 | `sunak gpu` | Welche Grafikkarte Ollama nutzen kann |
 | `sunak logs [ZEILEN]` | Wo die Logdatei liegt, und ihre letzten Zeilen (Standard 40; `--data-dir PFAD` für einen anderen Datenordner) |
@@ -348,9 +349,10 @@ Beim Pipen hängt man Optionen mit `bash -s --` an: `curl -fsSL …/install.sh |
 
 ### Aktualisieren
 
-- **In der App:** Gibt es neue Versionen, erscheint oben links „Update available“. Ein Klick auf **Update** installiert sie und startet Sunak neu. Ohne Klick wird nie etwas installiert.
-- **Im Terminal:** `sunak update` holt die neueste Version und beendet ein laufendes Sunak, damit der nächste Start sie nutzt. Ohne Installation (Klon): `git pull`.
-- **Jetzt prüfen:** Settings → Updates → „Check for updates now“ schaut sofort nach (auch wenn der Hinweis abgeschaltet ist) und zeigt „ist aktuell“, „Neue Version x.y.z verfügbar“ oder „Check failed“ mit dem Grund, warum die Prüfung nicht ging (kein Klon, kein Netz, kein Upstream-Branch). Gibt es eine neue Version, erscheint daneben „Install update“.
+- **In der App:** Gibt es neue Versionen, erscheint oben links „Update available“. Ein Klick auf **Update** zeigt zuerst die Änderungen aus dem Changelog; erst **Install update** installiert und startet Sunak neu. Ohne Klick wird nie etwas installiert.
+- **Im Terminal:** `sunak update` zeigt zuerst die Änderungen und fragt „Install the update now? [y/N]“ (`j` und `ja` gehen auch). Bei Ja holt es die neueste Version und beendet ein laufendes Sunak, damit der nächste Start sie nutzt. `sunak update --yes` (oder `-y`) fragt nicht; ohne Terminal (Skripte, Autostart, der Update-Knopf) wird nie gefragt. Nur ansehen: `sunak changelog`. Ohne Installation (Klon): `git pull`.
+- **Changelog:** [`CHANGELOG.md`](CHANGELOG.md) im Hauptordner, ein Abschnitt je Version (`## [0.14.0] – 2026-10-07`, darunter kurze Punkte unter Neu, Geändert, Behoben, Entfernt). Bei der Update-Prüfung liest Sunak die Datei aus dem Stand auf dem Remote (`git show`) und zeigt die Abschnitte zwischen deiner und der neuen Version, noch bevor etwas installiert wird, in der App (Update-Knopf, Settings → Updates) und im Terminal. Fehlt die Datei oder ist sie kaputt, geht das Update trotzdem, mit dem Hinweis „No changelog available“. Jede Änderung an Sunak bekommt eine neue Version **und** einen Eintrag dort.
+- **Jetzt prüfen:** Settings → Updates → „Check for updates now“ schaut sofort nach (auch wenn der Hinweis abgeschaltet ist) und zeigt „ist aktuell“, „Neue Version x.y.z verfügbar“ oder „Check failed“ mit dem Grund, warum die Prüfung nicht ging (kein Klon, kein Netz, kein Upstream-Branch). Gibt es eine neue Version, erscheinen darunter ihre Änderungen und daneben „Install update“.
 - **Prüfung:** Sunak schaut beim Start und danach alle 6 Stunden per `git fetch` nach, still und ohne Rückfragen; ohne Netz oder Klon gibt es einfach keinen Hinweis. Abschalten: Settings → Updates → Haken bei „Check for updates“ entfernen → Save settings.
 - Der Installer merkt sich den Klon, aus dem installiert wurde, und `sunak update` zieht dort per `git pull`. Für das öffentliche Repository braucht das keine Zugangsdaten (nur bei einem privaten Fork).
 - **Versionsnummer:** `sunak version` (steht auch unten in Settings). Die Version hat die Form **a.b.c** (`sunak/__init__.py`) und steigt bei jeder Änderung: **c** bei kleinen Fixes und Doku-Korrekturen (0.8.0 → 0.8.1), **b** bei kleineren Updates wie neuen Funktionen (0.8.1 → 0.9.0, c wird 0), **a** nur für große Updates, und die entscheidet allein der Maintainer. Solange er 1.0 nicht freigibt, bleibt a bei 0.
@@ -421,7 +423,7 @@ SUNAK_DEBUG=1 python3 -m sunak                    # mit ausführlichem Log
 | `sunak/memory.py` | Automatisches Gedächtnis |
 | `sunak/images.py`, `imagegen.py`, `sdcpp.py` | Bilder im Chat, Bildgenerierung (Automatic1111, ComfyUI) und eigenes Bildprogramm |
 | `sunak/speech.py`, `qr.py` | Whisper-Anbindung, QR-Code für den Handy-Zugriff |
-| `sunak/desktop.py`, `updates.py`, `uninstall.py` | Autostart und Icons, Update-Prüfung und -Knopf, Deinstallation |
+| `sunak/desktop.py`, `updates.py`, `changelog.py`, `uninstall.py` | Autostart und Icons, Update-Prüfung und -Knopf, Changelog lesen, Deinstallation |
 | `sunak/db.py` | SQLite-Speicher |
 | `sunak/static/` | Oberfläche (HTML, CSS, ein JavaScript-File, Sprachdateien) |
 

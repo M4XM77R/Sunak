@@ -11,7 +11,7 @@ import threading
 import webbrowser
 from pathlib import Path
 
-from . import __version__, desktop, gpu, log
+from . import __version__, changelog, desktop, gpu, log, updates
 from .server import make_server
 
 
@@ -45,9 +45,16 @@ COMMANDS = {
     "status": {"group": "Manage", "args": "[--port N]", "summary": "Is Sunak running? Address and autostart",
                "example": "sunak status"},
     "stop": {"group": "Manage", "args": "[--port N]", "summary": "Stop the running Sunak", "example": "sunak stop"},
-    "update": {"group": "Manage", "args": "", "summary": "Install the newest version", "example": "sunak update",
-               "details": "Stops a running Sunak; start it again afterwards. In the app, the Update button does the same.\n"
+    "update": {"group": "Manage", "args": "[--yes]", "summary": "Install the newest version", "example": "sunak update",
+               "details": "Shows what is new (the changelog) and asks before it installs. Stops a running Sunak; start it\n"
+                          "again afterwards. In the app, the Update button does the same.\n"
+                          "  --yes, -y  do not ask (for scripts; without a terminal Sunak never asks)\n"
                           "Part of the installed sunak command. Without installing: run git pull in the Sunak folder."},
+    "changelog": {"group": "Manage", "args": "[--confirm] [--yes]", "summary": "What the next update changes", "example": "sunak changelog",
+                  "details": "Looks for a newer version and shows its changes from CHANGELOG.md, without installing anything.\n"
+                             "When Sunak is up to date, it shows the changes of the installed version.\n"
+                             "  --confirm  ask \"Install the update now? [y/N]\" afterwards (what `sunak update` does; exit code 3\n"
+                             "             means no). With --yes, or without a terminal, it does not ask."},
     "version": {"group": "Manage", "args": "", "summary": "Print the installed version", "example": "sunak version"},
     "gpu": {"group": "Manage", "args": "", "summary": "Which graphics card Ollama can use", "example": "sunak gpu"},
     "mail-selftest": {"group": "Manage", "args": "[--account EMAIL] [--new] [--data-dir PATH] [--keep] [--yes]",
@@ -193,6 +200,48 @@ def logs_command(rest):
     return 0
 
 
+def changelog_command(rest):
+    """sunak changelog [--confirm] [--yes]: the changes of the next update, optionally asking before it installs
+    (the `sunak update` launcher runs it first). Exit code 3 = the user said no; a check that does not work
+    never stops an update."""
+    flags = [a for a in rest if a in ("--confirm", "--yes", "-y")]
+    if len(flags) != len(rest):
+        return fail(f"Unknown option '{next(a for a in rest if a not in flags)}'. Usage: sunak changelog [--confirm] [--yes]")
+    r = updates.inspect()
+    confirm, behind = "--confirm" in flags, r["behind"]
+    if behind is None:
+        print("Could not look for a newer version (" + {"no_clone": "Sunak was not installed from a git clone",
+              "no_remote": "no network or no access to the update source", "no_upstream": "the clone has no branch to compare with"}
+              .get(r["error"], "unknown reason") + ").")
+        if not confirm:
+            return 1
+    elif behind:
+        print(f"Sunak {r['version'] or 'update'} is available (you have {__version__}, {behind} new change{'' if behind == 1 else 's'}).\n")
+    elif not confirm:
+        print(f"Sunak {__version__} is up to date.")
+    if behind or behind is None:
+        print(changelog.to_text(r["changelog"]) if r["changelog"] else "No changelog available.")
+    elif not confirm:
+        try:
+            entries = changelog.between(changelog.parse((desktop.PKG_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")), "0.0.0", __version__)[:1]
+        except OSError:
+            entries = []
+        if entries:
+            print("\n" + changelog.to_text(entries))
+    if not confirm or not behind:
+        return 0
+    if "--yes" in flags or "-y" in flags or not (sys.stdin.isatty() and sys.stdout.isatty()):
+        return 0
+    try:
+        answer = input("\nInstall the update now? [y/N] ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        answer = ""
+    if answer in ("y", "yes", "j", "ja"):
+        return 0
+    print("Update cancelled.")
+    return 3
+
+
 def run_command(cmd, rest, port):
     """Commands besides starting the server. Returns the exit code."""
     if cmd == "version":
@@ -253,6 +302,8 @@ def main(argv=None):
         sys.exit("'update' is part of the installed sunak command. Without installing: git pull in this folder.")
     if argv and argv[0] == "logs":
         return logs_command(argv[1:])
+    if argv and argv[0] == "changelog":
+        return changelog_command(argv[1:])
     if argv and argv[0] == "mail-selftest":
         from . import mailtest
         return mailtest.main(argv[1:])
