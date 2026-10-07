@@ -166,8 +166,8 @@ class PictureEverywhereTest(unittest.TestCase):
     """Every path a typed message can take asks the server first (the browser side lives in app.js)."""
     JS = (Path(__file__).resolve().parent.parent / "sunak" / "static" / "app.js").read_text(encoding="utf-8")
 
-    def test_chat_and_agent_ask_before_sending(self):
-        self.assertIn("await pictureIntent(text, agentOn(), agentOn() ? 'agent' : 'chat')", self.JS)
+    def test_chat_and_tools_ask_before_sending(self):
+        self.assertIn("await pictureIntent(text, mcpOn(), mcpOn() ? 'tools' : 'chat')", self.JS)
 
     def test_research_asks_before_searching(self):
         form = self.JS.split("$('#researchForm').onsubmit")[1][:400]

@@ -12,6 +12,14 @@ Format: one section per version, `## [a.b.c] – YYYY-MM-DD`, followed by short 
 - `sunak changelog` shows the changes of the next update without installing anything; when Sunak is up to date, it shows those of the installed version.
 - If `CHANGELOG.md` is missing or broken, the update still works and Sunak says "No changelog available".
 
+## [0.13.0] – 2026-10-07
+
+### Removed
+- Agent mode: the folder tools, `/api/agent`, the agent toggle and its settings.
+
+### Changed
+- MCP tools now run through `/api/tools` (`sunak/toolrun.py`).
+
 ## [0.12.3] – 2026-10-07
 
 ### Fixed

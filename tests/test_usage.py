@@ -11,7 +11,7 @@ import unittest
 import urllib.request
 from unittest import mock
 
-from sunak import agent, providers, usage
+from sunak import providers, toolrun, usage
 from sunak.db import DB
 from sunak.server import make_server, usage_kind
 
@@ -149,27 +149,27 @@ class CounterTest(unittest.TestCase):
         usage.ollama_usage(usage.Meter(OLLAMA, "m"), {"eval_count": "many"})
         usage.anthropic_usage(None, {"input_tokens": 1})  # even a broken meter
 
-    # the agent has its own streams ---------------------------------------
-    def test_agent_ollama_turn(self):
-        t = agent.OllamaTurns(OLLAMA, "m", MSGS, {}, [])
+    # the tool loop has its own streams ---------------------------------------
+    def test_tools_ollama_turn(self):
+        t = toolrun.OllamaTurns(OLLAMA, "m", MSGS, {}, [])
         lines = ndjson({"message": {"content": "x"}}, {"message": {}, "done": True, "prompt_eval_count": 5, "eval_count": 7, "eval_duration": 1_000_000_000})
         with mock.patch.object(providers, "_request", return_value=FakeResponse(lines)):
             drain(t.turn())
         (r,) = self.rows()
         self.assertEqual((r["input_tokens"], r["output_tokens"], r["tokens_per_second"]), (5, 7, 7.0))
 
-    def test_agent_openai_turn(self):
-        t = agent.OpenAITurns(OPENAI, "m", MSGS, {}, [])
+    def test_tools_openai_turn(self):
+        t = toolrun.OpenAITurns(OPENAI, "m", MSGS, {}, [])
         lines = sse({"choices": [{"delta": {"content": "x"}}]}, {"choices": [], "usage": {"prompt_tokens": 9, "completion_tokens": 3}}, done=True)
         with mock.patch.object(providers, "_request", return_value=FakeResponse(lines)):
             drain(t.turn())
         (r,) = self.rows()
         self.assertEqual((r["input_tokens"], r["output_tokens"], r["cache_read_tokens"]), (9, 3, None))
 
-    def test_agent_claude_tool_call_counts_as_output_for_the_speed(self):
-        t = agent.ClaudeTurns(CLAUDE, "claude-x", MSGS, {}, [])
+    def test_tools_claude_tool_call_counts_as_output_for_the_speed(self):
+        t = toolrun.ClaudeTurns(CLAUDE, "claude-x", MSGS, {}, [])
         lines = sse({"type": "message_start", "message": {"usage": {"input_tokens": 4}}},
-                    {"type": "content_block_start", "index": 0, "content_block": {"type": "tool_use", "id": "t1", "name": "read_file"}},
+                    {"type": "content_block_start", "index": 0, "content_block": {"type": "tool_use", "id": "t1", "name": "Fake__echo"}},
                     {"type": "content_block_delta", "index": 0, "delta": {"type": "input_json_delta", "partial_json": "{\"path\":"}},
                     {"type": "content_block_delta", "index": 0, "delta": {"type": "input_json_delta", "partial_json": "\"a\"}"}},
                     {"type": "message_delta", "delta": {"stop_reason": "tool_use"}, "usage": {"output_tokens": 50}},
@@ -180,8 +180,8 @@ class CounterTest(unittest.TestCase):
         self.assertEqual((r["output_tokens"], r["ok"]), (50, 1))
         self.assertIsNotNone(r["tokens_per_second"])  # the tool arguments streamed for a while: that is output time too
 
-    def test_agent_claude_turn(self):
-        t = agent.ClaudeTurns(CLAUDE, "claude-x", MSGS, {}, [])
+    def test_tools_claude_turn(self):
+        t = toolrun.ClaudeTurns(CLAUDE, "claude-x", MSGS, {}, [])
         lines = sse({"type": "message_start", "message": {"usage": {"input_tokens": 4}}},
                     {"type": "content_block_start", "index": 0, "content_block": {"type": "text"}},
                     {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "x"}},
@@ -263,7 +263,7 @@ class CounterTest(unittest.TestCase):
         self.assertNotIn("goal", s)
 
     def test_kinds_by_path(self):
-        want = {"/api/chat": "chat", "/api/agent": "agent", "/api/research": "research", "/api/compare": "compare",
+        want = {"/api/chat": "chat", "/api/tools": "tools", "/api/research": "research", "/api/compare": "compare",
                 "/api/documents/ai": "document", "/api/mail/ai": "mail", "/api/calendar/parse": "calendar",
                 "/api/imagine": "image_prompt", "/api/imagine/intent": "image_check", "/api/sessions/abc123/remember": "memory",
                 "/api/settings": "other"}
