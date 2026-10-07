@@ -114,6 +114,40 @@ class CounterTest(unittest.TestCase):
         # no eval_duration: measured between the first and the last output chunk (0.1 s) → about 770 tok/s
         self.assertTrue(300 < r["tokens_per_second"] < 800, r["tokens_per_second"])
 
+    def test_anthropic_stopped_stream_keeps_no_placeholder_output(self):
+        events = sse({"type": "message_start", "message": {"usage": {"input_tokens": 12, "output_tokens": 1}}},
+                     {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "A"}},
+                     {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "B"}})
+        with mock.patch.object(providers, "_request", return_value=FakeResponse(events)):
+            gen = providers.chat_stream(CLAUDE, "m", MSGS)
+            next(gen)
+            gen.close()  # stopped before message_delta (Stop button, the picture check, a broken connection)
+        (r,) = self.rows()
+        self.assertEqual((r["input_tokens"], r["output_tokens"], r["ok"]), (12, None, 0))  # the 1 of message_start is a placeholder
+
+    def test_anthropic_zero_in_message_delta_does_not_replace_real_numbers(self):
+        events = sse({"type": "message_start", "message": {"usage": {"input_tokens": 12, "cache_read_input_tokens": 300}}},
+                     {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "A"}},
+                     {"type": "message_delta", "delta": {"stop_reason": "end_turn"},
+                      "usage": {"input_tokens": 0, "cache_read_input_tokens": 0, "output_tokens": 5}},
+                     {"type": "message_stop"})
+        self.chat(CLAUDE, events)
+        (r,) = self.rows()
+        self.assertEqual((r["input_tokens"], r["cache_read_tokens"], r["output_tokens"], r["ok"]), (12, 300, 5, 1))
+
+    def test_odd_usage_objects_never_reach_the_stream(self):
+        lines = sse({"choices": [{"delta": {"content": "Hi"}}], "usage": {"prompt_tokens": 7, "completion_tokens": 2,
+                                                                          "prompt_tokens_details": "unexpected"}}, done=True)
+        self.assertEqual(self.chat(OPENAI, lines), [("text", "Hi")])
+        (r,) = self.rows()
+        self.assertEqual((r["input_tokens"], r["output_tokens"], r["cache_read_tokens"]), (7, 2, None))
+        for bad in ("text", 5, [1], {"prompt_tokens": "x", "completion_tokens": {}}):
+            usage.openai_usage(usage.Meter(OPENAI, "m"), bad)  # no exception
+            usage.anthropic_usage(usage.Meter(CLAUDE, "m"), bad)
+            usage.ollama_usage(usage.Meter(OLLAMA, "m"), bad)
+        usage.ollama_usage(usage.Meter(OLLAMA, "m"), {"eval_count": "many"})
+        usage.anthropic_usage(None, {"input_tokens": 1})  # even a broken meter
+
     # the agent has its own streams ---------------------------------------
     def test_agent_ollama_turn(self):
         t = agent.OllamaTurns(OLLAMA, "m", MSGS, {}, [])
@@ -130,6 +164,20 @@ class CounterTest(unittest.TestCase):
             drain(t.turn())
         (r,) = self.rows()
         self.assertEqual((r["input_tokens"], r["output_tokens"], r["cache_read_tokens"]), (9, 3, None))
+
+    def test_agent_claude_tool_call_counts_as_output_for_the_speed(self):
+        t = agent.ClaudeTurns(CLAUDE, "claude-x", MSGS, {}, [])
+        lines = sse({"type": "message_start", "message": {"usage": {"input_tokens": 4}}},
+                    {"type": "content_block_start", "index": 0, "content_block": {"type": "tool_use", "id": "t1", "name": "read_file"}},
+                    {"type": "content_block_delta", "index": 0, "delta": {"type": "input_json_delta", "partial_json": "{\"path\":"}},
+                    {"type": "content_block_delta", "index": 0, "delta": {"type": "input_json_delta", "partial_json": "\"a\"}"}},
+                    {"type": "message_delta", "delta": {"stop_reason": "tool_use"}, "usage": {"output_tokens": 50}},
+                    {"type": "message_stop"})
+        with mock.patch.object(providers, "_request", return_value=FakeResponse(lines, pause=0.06)):
+            drain(t.turn())
+        (r,) = self.rows()
+        self.assertEqual((r["output_tokens"], r["ok"]), (50, 1))
+        self.assertIsNotNone(r["tokens_per_second"])  # the tool arguments streamed for a while: that is output time too
 
     def test_agent_claude_turn(self):
         t = agent.ClaudeTurns(CLAUDE, "claude-x", MSGS, {}, [])
@@ -193,10 +241,13 @@ class CounterTest(unittest.TestCase):
         self.assertEqual(["stream_options" in c for c in calls], [True, False, False])  # asked once, then remembered
 
     def test_other_errors_are_not_retried(self):
-        with mock.patch.object(providers, "_request", side_effect=providers.ProviderError("HTTP 401: bad key")) as req:
-            with self.assertRaises(providers.ProviderError):
-                list(providers.chat_stream(dict(OPENAI, base_url="http://127.0.0.1:98/v1"), "m", MSGS))
-        self.assertEqual(req.call_count, 1)
+        for msg in ("HTTP 401: bad key", "HTTP 400: This model's maximum context length is 8192 tokens", "HTTP 422: model not found",
+                    "HTTP 400: tools are not supported"):
+            with mock.patch.object(providers, "_request", side_effect=providers.ProviderError(msg)) as req:
+                with self.assertRaises(providers.ProviderError) as cm:
+                    list(providers.chat_stream(dict(OPENAI, base_url="http://127.0.0.1:98/v1"), "m", MSGS))
+            self.assertEqual((req.call_count, str(cm.exception)), (1, msg))  # a real error is passed on at once, once
+        self.assertNotIn("http://127.0.0.1:98/v1", providers._NO_STREAM_USAGE)
 
     def test_sums_and_last(self):
         for kind, i, o, c in (("chat", 10, 20, 5), ("memory", 1, 2, None), ("chat", 100, 50, 25)):

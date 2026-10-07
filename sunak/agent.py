@@ -529,9 +529,10 @@ class ClaudeTurns:
                     elif dt == "signature_delta":
                         b["signature"] = b.get("signature", "") + d.get("signature", "")
                     elif dt == "input_json_delta":
+                        meter.tick()
                         partial[ev.get("index", 0)] = partial.get(ev.get("index", 0), "") + d.get("partial_json", "")
                 elif kind == "message_start":
-                    usage.anthropic_usage(meter, (ev.get("message") or {}).get("usage"))
+                    usage.anthropic_usage(meter, (ev.get("message") or {}).get("usage"), start=True)
                 elif kind == "message_delta":
                     usage.anthropic_usage(meter, ev.get("usage"))
                     stop = (ev.get("delta") or {}).get("stop_reason") or stop

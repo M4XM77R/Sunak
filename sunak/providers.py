@@ -238,7 +238,7 @@ _NO_STREAM_USAGE = set()  # OpenAI-compatible servers that refused `stream_optio
 
 def open_openai_stream(p, path, payload):
     """POST a streaming request to an OpenAI-compatible server and return the response. It asks for the token counts
-    (`stream_options.include_usage`); a server that refuses the option is asked again without it, and remembered."""
+    (`stream_options.include_usage`); a server whose error names the option is asked again without it, and remembered; any other error is passed on."""
     base = _base(p)
     if base in _NO_STREAM_USAGE:
         return _request(base + path, payload, p.get("api_key", ""))
@@ -246,8 +246,9 @@ def open_openai_stream(p, path, payload):
     try:
         return _request(base + path, asked, p.get("api_key", ""))
     except ProviderError as e:
-        if not str(e).lower().startswith(("http 400", "http 422")):
-            raise
+        msg = str(e).lower()
+        if not (msg.startswith(("http 400", "http 422")) and ("stream_options" in msg or "include_usage" in msg)):
+            raise  # a real error (context too long, unknown model, tools): not ours to hide
     resp = _request(base + path, payload, p.get("api_key", ""))  # a real error is raised again here
     _NO_STREAM_USAGE.add(base)
     return resp
@@ -418,7 +419,7 @@ def anthropic_stream(p, model, messages, meter=usage.NONE):
                 elif delta.get("type") == "thinking_delta" and delta.get("thinking"):
                     yield "think", delta["thinking"]
             elif kind == "message_start":
-                usage.anthropic_usage(meter, (ev.get("message") or {}).get("usage"))
+                usage.anthropic_usage(meter, (ev.get("message") or {}).get("usage"), start=True)
             elif kind == "message_delta":
                 usage.anthropic_usage(meter, ev.get("usage"))
                 if (ev.get("delta") or {}).get("stop_reason") == "refusal":

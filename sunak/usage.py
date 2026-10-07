@@ -49,6 +49,7 @@ class Meter:
         self.t0 = time.monotonic()
         self.first = self.last = None
         self.v = {}
+        self.partial = False  # a Claude stream that started but never reached its final numbers (stopped, broken off)
         self.done = False
 
     def tick(self):
@@ -78,7 +79,7 @@ class Meter:
         return {"ts": time.time(), "provider": str(self.p.get("id") or self.p.get("type") or ""), "model": str(self.model or ""),
                 "kind": self.target[2] if self.target else "other", **{k: self.v.get(k) for k in FIELDS},
                 "seconds": round(time.monotonic() - self.t0, 3), "tokens_per_second": round(rate, 2) if rate else None,
-                "ok": 1 if ok else 0}
+                "ok": 1 if ok and not self.partial else 0}
 
     def finish(self, ok=True):
         """Store the record. Called when the request ends, also when it fails or is stopped; never raises."""
@@ -103,23 +104,52 @@ class _NoMeter:
 NONE = _NoMeter()
 
 
-def anthropic_usage(meter, u):
-    """Numbers from a Claude `usage` object (message_start, message_delta)."""
-    if isinstance(u, dict):
-        meter.put(input_tokens=u.get("input_tokens"), output_tokens=u.get("output_tokens"),
-                  cache_read_tokens=u.get("cache_read_input_tokens"), cache_creation_tokens=u.get("cache_creation_input_tokens"))
+def _safe(fn):
+    """The adapters' helpers must never let an odd answer of a backend get out into the stream."""
+    def wrapper(*args, **kw):
+        try:
+            return fn(*args, **kw)
+        except Exception:  # noqa: BLE001 - counting must never break a model request
+            log.debug("Could not read the token numbers of a backend", exc_info=True)
+    wrapper.__name__ = fn.__name__
+    wrapper.__doc__ = fn.__doc__
+    return wrapper
 
 
+@_safe
+def anthropic_usage(meter, u, start=False):
+    """Numbers from a Claude `usage` object. `message_start` (start=True) has the input and cache numbers, but its output
+    count is only a placeholder, so that is not taken; `message_delta` has the final output count. Some proxies send 0 for
+    the input or cache numbers in `message_delta`: a 0 never replaces a number that is already known."""
+    if not isinstance(u, dict):
+        return
+    if start:
+        meter.partial = True  # until the final numbers arrive
+        values = {"input_tokens": u.get("input_tokens"), "cache_read_tokens": u.get("cache_read_input_tokens"),
+                  "cache_creation_tokens": u.get("cache_creation_input_tokens")}
+    else:
+        meter.partial = False
+        values = {"input_tokens": u.get("input_tokens"), "output_tokens": u.get("output_tokens"),
+                  "cache_read_tokens": u.get("cache_read_input_tokens"), "cache_creation_tokens": u.get("cache_creation_input_tokens")}
+        known = getattr(meter, "v", {})
+        values = {k: v for k, v in values.items() if not (v == 0 and k != "output_tokens" and known.get(k))}
+    meter.put(**values)
+
+
+@_safe
 def openai_usage(meter, u):
     """Numbers from an OpenAI-style `usage` object. prompt_tokens includes the cached ones, so they are taken out of the
     input count (cache reads are counted on their own)."""
     if not isinstance(u, dict):
         return
-    prompt, cached = _count(u.get("prompt_tokens")), _count((u.get("prompt_tokens_details") or {}).get("cached_tokens"))
+    details = u.get("prompt_tokens_details")
+    prompt = _count(u.get("prompt_tokens"))
+    cached = _count(details.get("cached_tokens")) if isinstance(details, dict) else None
     meter.put(input_tokens=prompt - cached if prompt is not None and cached is not None and cached <= prompt else prompt,
               output_tokens=u.get("completion_tokens"), cache_read_tokens=cached)
 
 
+@_safe
 def ollama_usage(meter, obj):
     """Numbers from the last (done) message of Ollama: prompt_eval_count, eval_count, eval_duration (nanoseconds)."""
     meter.put(input_tokens=obj.get("prompt_eval_count"), output_tokens=obj.get("eval_count"), eval_ns=obj.get("eval_duration"))
