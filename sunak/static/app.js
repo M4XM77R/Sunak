@@ -547,9 +547,8 @@ async function sendNow() {
   let text = promptEl.value.trim();
   if (!text && !state.attachments.length) return;
   if (!state.attachments.length) {
-    const ask = await pictureIntent(text, mcpOn(), mcpOn() ? 'tools' : 'chat');
-    if (ask && mcpOn()) toast('This looks like a request for a picture, but tools (MCP) are on, so the model gets it. Switch tools off (+ menu) to have it painted.');
-    else if (ask && await pictureRequest(text, ask.subject)) return;
+    const ask = await pictureIntent(text, false, 'chat');
+    if (ask && await pictureRequest(text, ask.subject)) return;
   }
   if (!currentModel()) { toast('Install or connect a model first'); show('settings'); return; }
   if (state.attachments.some((a) => a.loading)) { toast('Still reading your files…'); return; }
@@ -790,10 +789,17 @@ $('#toolsRevoke').onclick = async () => {
 
 const STEP_ICONS = { running: 'clock', waiting: 'help', done: 'check-circle', error: 'alert', denied: 'hand', stopped: 'stop' };
 // one tool call; with onDecide it is a question with Allow / Allow in this chat / Deny
+// `command` and `diff` only exist in steps of chats stored before 0.13.0 (the removed agent mode)
+function diffEl(diff) {
+  return el('pre', { class: 'diff' }, diff.split('\n').map((line) => el('span', {
+    class: line.startsWith('@@') ? 'hunk' : /^\+(?!\+\+ )/.test(line) ? 'add' : /^-(?!-- )/.test(line) ? 'del' : '' }, line + '\n')));
+}
 function stepEl(st, onDecide) {
   const status = onDecide ? 'waiting' : st.status;
   const kids = [];
+  if (st.command) kids.push(el('pre', { class: 'cmd' }, `$ ${st.command}`));
   if (st.input) kids.push(el('pre', { class: 'cmd' }, st.input));
+  if (st.diff) kids.push(diffEl(st.diff));
   if (st.output && !onDecide) kids.push(el('pre', { class: 'step-out' }, st.output));
   const box = el('details', { class: `step ${status}`, open: !!onDecide || status === 'error' },
     el('summary', {}, el('span', { class: 'step-icon' }, icon(STEP_ICONS[status] || 'dot')), el('code', {}, st.title || st.tool)), kids);
