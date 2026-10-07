@@ -17,7 +17,7 @@ from sunak import mcp
 from sunak.server import make_server
 
 import test_server
-from test_agent import FakeAgentBackend
+from toolbackend import FakeToolBackend
 
 FAKE_STDIO = r'''
 import json, os, sys, time
@@ -269,7 +269,7 @@ class ServerTest(Base):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
-        cls.backend = ThreadingHTTPServer(("127.0.0.1", 0), FakeAgentBackend)
+        cls.backend = ThreadingHTTPServer(("127.0.0.1", 0), FakeToolBackend)
         threading.Thread(target=cls.backend.serve_forever, daemon=True).start()
         cls.srv = make_server("127.0.0.1", 0, os.path.join(cls.tmp.name, "data"))
         threading.Thread(target=cls.srv.serve_forever, daemon=True).start()
@@ -288,7 +288,7 @@ class ServerTest(Base):
         super().tearDownClass()
 
     def setUp(self):
-        FakeAgentBackend.bodies = []
+        FakeToolBackend.bodies = []
         self.call("PUT", "/api/settings", {"mcp_servers": [
             {"name": "Fake", "type": "stdio", "command": self.cmd, "env": "SECRET_X=hidden-value"}]})
 
@@ -318,10 +318,10 @@ class ServerTest(Base):
         code, err = self.error("POST", "/api/mcp/test", {"server": {"name": "N", "type": "stdio", "command": "no-such-program-xyz"}})
         self.assertEqual((code, "Program not found" in err), (400, True))
 
-    def chat(self, script, decide, folder=""):
+    def chat(self, script, decide):
         s = self.call("POST", "/api/sessions", {"system": "SCRIPT" + json.dumps(script) + "END"})
-        req = urllib.request.Request(self.base + "/api/agent", json.dumps(
-            {"session_id": s["id"], "model": "claude::claude-opus-5-5", "content": "Go", "folder": folder, "mcp": True}).encode(),
+        req = urllib.request.Request(self.base + "/api/tools", json.dumps(
+            {"session_id": s["id"], "model": "claude::claude-opus-5-5", "content": "Go"}).encode(),
             {"Content-Type": "application/json", "X-Requested-With": "sunak"}, method="POST")
         events, run = [], None
         with urllib.request.urlopen(req, timeout=60) as r:
@@ -331,7 +331,7 @@ class ServerTest(Base):
                 if ev["type"] == "start":
                     run = ev["run"]
                 if ev["type"] == "confirm":
-                    self.call("POST", "/api/agent/confirm", {"run": run, "id": ev["id"], "decision": decide(ev)})
+                    self.call("POST", "/api/tools/confirm", {"run": run, "id": ev["id"], "decision": decide(ev)})
         return s, events
 
     def test_chat_with_mcp_tools(self):
@@ -350,46 +350,29 @@ class ServerTest(Base):
         self.assertEqual(done[2]["output"], "echo: two")  # "Allow in this chat" covered the second echo
         self.assertIn("needs the argument text", done[3]["output"])
         self.assertEqual(done[4]["output"], "Error: it broke")
-        self.assertIn("Unknown tool write_file", done[5]["output"])  # no folder: no file tools
+        self.assertIn("Unknown tool write_file", done[5]["output"])  # not a tool of an MCP server
         self.assertNotIn("hidden-value", json.dumps(events))
         self.assertEqual(events[-1], {"type": "done", "stopped": False})
-        body = FakeAgentBackend.bodies[0][1]
+        body = FakeToolBackend.bodies[0][1]
         self.assertEqual([t["name"] for t in body["tools"]], ["Fake__echo", "Fake__fail", "Fake__env", "Fake__slow", "Fake__crash"])
         self.assertEqual(body["tools"][0]["input_schema"]["required"], ["text"])
         self.assertIn("MCP servers", body["system"])
         stored = self.call("GET", f"/api/sessions/{s['id']}")["messages"][-1]
-        self.assertEqual(len([p for p in stored["meta"]["agent"]["parts"] if "step" in p]), 6)
-
-    def test_agent_mode_with_mcp(self):
-        self.call("PUT", "/api/settings", {"agent_enabled": True})
-        self.addCleanup(self.call, "PUT", "/api/settings", {"agent_enabled": False})
-        folder = tempfile.mkdtemp(dir=self.tmp.name)
-        with open(os.path.join(folder, "notes.txt"), "w") as f:
-            f.write("x")
-        s, events = self.chat([["Fake__echo", {"text": "x"}], ["list_files", {}]], lambda ev: "allow", folder)
-        self.assertEqual([e["kind"] for e in events if e["type"] == "confirm"], ["tool:Fake__echo"])  # reading needs no question
-        done = [e for e in events if e["type"] == "step_done"]
-        self.assertEqual([(d["status"], d["output"]) for d in done], [("done", "echo: x"), ("done", "notes.txt  (1 bytes)")])
-        body = FakeAgentBackend.bodies[0][1]
-        names = [t["name"] for t in body["tools"]]
-        self.assertIn("read_file", names)
-        self.assertIn("Fake__echo", names)
-        self.assertIn("project folder", body["system"])
-        self.assertIn("MCP server", body["system"])
+        self.assertEqual(len([p for p in stored["meta"]["tools"]["parts"] if "step" in p]), 6)
 
     def test_chat_needs_a_server(self):
         self.call("PUT", "/api/settings", {"mcp_servers": [
             {"name": "Fake", "type": "stdio", "command": self.cmd, "enabled": False}]})
         s = self.call("POST", "/api/sessions", {})
-        code, err = self.error("POST", "/api/agent", {"session_id": s["id"], "content": "Go", "mcp": True,
+        code, err = self.error("POST", "/api/tools", {"session_id": s["id"], "content": "Go",
                                                       "model": "claude::claude-opus-5-5"})
         self.assertEqual((code, "No MCP server" in err), (400, True))
         self.call("PUT", "/api/settings", {"mcp_servers": [{"name": "Nope", "type": "stdio", "command": "no-such-program-xyz"}]})
-        events = self.call("POST", "/api/agent", {"session_id": s["id"], "content": "Go", "mcp": True,
+        events = self.call("POST", "/api/tools", {"session_id": s["id"], "content": "Go",
                                                   "model": "claude::claude-opus-5-5"})
         self.assertIn("Program not found", " ".join(e.get("t", "") for e in events))
         self.assertEqual(events[-1], {"type": "error", "error": "None of the MCP servers is available."})
-        code, err = self.error("POST", "/api/agent", {"session_id": s["id"], "content": "Go", "mcp": True,
+        code, err = self.error("POST", "/api/tools", {"session_id": s["id"], "content": "Go",
                                                       "model": "claude::claude-opus-5-5"}, headers={"X-Forwarded-For": "203.0.113.5"})
         self.assertEqual(code, 403)
 

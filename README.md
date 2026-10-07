@@ -96,7 +96,6 @@ Die Daten liegen dann im Ordner `data/` neben der Compose-Datei (Ollama-Modelle 
 | ✉️ **Mail** | Mehrere Konten per IMAP/SMTP, KI fasst zusammen, entwirft Antworten und sortiert den Posteingang |
 | 📅 **Kalender** | Eigener Kalender, CalDAV und abonnierte Kalender; Termine aus einem Satz oder einer Mail |
 | 🔢 **Token-Zähler** | Zählt je Profil die Tokens jeder Modellanfrage (Eingabe, Ausgabe, Cache) mit Tokens pro Sekunde und einer Gesamtsumme |
-| 🛠 **Agent** | Agentisches Coding in einem Projektordner, jede Änderung nur nach deinem Klick |
 | 🔌 **Werkzeuge (MCP)** | Beliebige MCP-Server als Werkzeuge für das Modell |
 | 🎨 **Bilder erzeugen** | Mit Sunaks eigenem Bildprogramm (stable-diffusion.cpp), Automatic1111 oder ComfyUI |
 | 🖼 **Bilder verstehen** | Fotos und Screenshots an Vision-Modelle schicken |
@@ -128,7 +127,7 @@ Die Daten liegen dann im Ordner `data/` neben der Compose-Datei (Ollama-Modelle 
 | Chat exportieren | Download-Knopf oben rechts → Markdown, JSON oder Drucken/PDF |
 | Alles sichern | Settings → Data → Download backup: eine JSON-Datei mit Chats, Dokumenten, Notizen, Wissensbasis, Einstellungen, Mail- und Kalender-Konten, aber ohne API-Keys und Passwörter |
 
-**Das Eingabefeld:** Links daneben stehen die Büroklammer (Dateien und Bilder anhängen), das **+** und rechts Senden. Das **+**-Menü klappt nach oben auf und enthält Knowledge base, Web search, Agent mode, Tools (MCP) und Speak, jeweils mit Ein-/Aus-Schalter. Agent mode erscheint nur, wenn er in den Settings eingeschaltet ist, Tools (MCP) nur, wenn ein Server eingeschaltet ist, beide nur für Admin-Profile; Speak, solange die Spracheingabe nicht ausgeschaltet ist. So bleibt am Handy Platz zum Tippen.
+**Das Eingabefeld:** Links daneben stehen die Büroklammer (Dateien und Bilder anhängen), das **+** und rechts Senden. Das **+**-Menü klappt nach oben auf und enthält Knowledge base, Web search, Tools (MCP) und Speak, jeweils mit Ein-/Aus-Schalter. Tools (MCP) erscheint nur, wenn ein Server eingeschaltet ist, und nur für Admin-Profile; Speak, solange die Spracheingabe nicht ausgeschaltet ist. So bleibt am Handy Platz zum Tippen.
 
 **Dateien anhängen:** Büroklammer oder Drag & Drop. Text, PDF, Word und PowerPoint werden gelesen und zur Nachricht gelegt. Für viele Dateien dauerhaft ist die Wissensbasis besser.
 
@@ -142,7 +141,7 @@ Die Daten liegen dann im Ordner `data/` neben der Compose-Datei (Ollama-Modelle 
 
 ### Automatisches Gedächtnis
 
-Nach einer Antwort schaut das Modell des Chats, ob die letzte Frage und Antwort dauerhafte Fakten über dich enthalten (Name, Beruf, Vorlieben für Antworten) und legt sie als Notiz mit Markierung „memory“ ab, höchstens drei pro Antwort. Du siehst es als Hinweis mit **Undo** und unter Notes & Memory, dort mit dem Herkunftschat. Alle Gedächtnis-Notizen kennt die KI in jedem Chat. „Merk dir …“ oder „Remember that …“ wird immer gespeichert, Passwörter, Schlüssel, PINs und Kartennummern nie. Im Agent-Modus, nach Bildern und bei ausgeschaltetem Gedächtnis läuft das nicht. Ausschalten: Settings → Chat → „Remember things about me from chats by itself“ (nur die automatische Hälfte) oder „Use memory notes in chats“ (gar kein Gedächtnis).
+Nach einer Antwort schaut das Modell des Chats, ob die letzte Frage und Antwort dauerhafte Fakten über dich enthalten (Name, Beruf, Vorlieben für Antworten) und legt sie als Notiz mit Markierung „memory“ ab, höchstens drei pro Antwort. Du siehst es als Hinweis mit **Undo** und unter Notes & Memory, dort mit dem Herkunftschat. Alle Gedächtnis-Notizen kennt die KI in jedem Chat. „Merk dir …“ oder „Remember that …“ wird immer gespeichert, Passwörter, Schlüssel, PINs und Kartennummern nie. Mit Werkzeugen (MCP), nach Bildern und bei ausgeschaltetem Gedächtnis läuft das nicht. Ausschalten: Settings → Chat → „Remember things about me from chats by itself“ (nur die automatische Hälfte) oder „Use memory notes in chats“ (gar kein Gedächtnis).
 
 ### Modelle, GPU und Suche
 
@@ -155,16 +154,6 @@ Sunak rechnet nicht selbst, die Modelle laufen in Ollama. Ollama nutzt eine pass
 - **Modelle suchen:** Das Suchfeld filtert sofort Sunaks Katalog (Filter: Chat, Bilder verstehen, Programmieren, Logik, Bild; Größe; „passt zu meinem Computer“). „Search online“ fragt zusätzlich ollama.com und Hugging Face; ohne Netz bleibt es still beim eigenen Katalog. Bei Hugging-Face-Treffern zeigt „Show files“ Größe, Quantisierung und Lizenz, Download lädt das GGUF-Modell über Ollama (`hf.co/…`) bzw. ein Bildmodell in Sunaks Bildprogramm. Modelle, die eine Anmeldung bei Hugging Face verlangen, kann Sunak nicht laden.
 - AMD-Karten, die ROCm nicht offiziell unterstützt, laufen oft mit `HSA_OVERRIDE_GFX_VERSION` (zum Beispiel `10.3.0` für RX 6000, `11.0.0` für RX 7000), gesetzt für den Ollama-Dienst bzw. im `ollama`-Container. Details: [docs.ollama.com/gpu](https://docs.ollama.com/gpu).
 
-### Agent-Modus (agentisches Coding)
-
-Das Modell arbeitet in einem Projektordner, den du auswählst: Es liest, sucht und listet Dateien selbst, legt Dateien an, bearbeitet sie (als Diff sichtbar) und führt Befehle aus, etwa die Tests. Jeder Schritt erscheint live im Chat. Schreiben und Befehle nur nach deinem Klick („Apply“, „Allow … in this chat“ oder „Deny“), Stop jederzeit. Kein Zugriff außerhalb des Ordners; verboten sind ein ganzes Laufwerk, dein Home-Ordner und Sunaks Datenordner.
-
-1. Settings → Agent → „Enable agent mode“ → Save settings (nur Admin-Profile; Standard: aus).
-2. Im Chat über das **+** „Agent mode“ einschalten und den vollen Pfad des Projektordners eintragen.
-3. Sagen, was zu tun ist. „Ask again“ nimmt eine Freigabe „für diesen Chat“ zurück; sie gilt sonst nur, bis Sunak neu startet.
-
-Funktioniert mit Claude, Ollama-Modellen mit Tool-Support (z. B. Qwen 3, Llama 3.1+) und OpenAI-kompatiblen APIs; Modelle ohne Tool-Support nutzen ein einfaches Textprotokoll. Ein Befehl darf höchstens 120 Sekunden laufen, eine Antwort höchstens 30 Werkzeugrunden (beides in Settings → Agent änderbar). **Achtung:** Befehle laufen mit deinen Rechten und sind nicht abgeschottet. Lies, was du freigibst. Von anderen Geräten (Handy-Zugriff) geht der Agent nur mit Passwort.
-
 ### Werkzeuge (MCP)
 
 MCP-Server (Model Context Protocol) geben dem Modell Werkzeuge: Dateien, Webseiten lesen, Uhrzeit, Gedächtnis oder jeden anderen MCP-Server, als Programm auf dem Computer (stdio) oder über eine Adresse (Streamable HTTP).
@@ -173,17 +162,17 @@ MCP-Server (Model Context Protocol) geben dem Modell Werkzeuge: Dateien, Webseit
 2. Name, Typ „Program“ mit dem Startbefehl (z. B. `npx -y @modelcontextprotocol/server-memory`, braucht Node.js; `uvx mcp-server-fetch` braucht uv) oder „Address (HTTP)“ mit der URL und optional einem Token.
 3. Geheimnisse wie API-Keys des Servers als `NAME=Wert` unter den Umgebungsvariablen eintragen. Sie bleiben auf dem Computer und gehen nie zurück an den Browser.
 4. „Test“ startet den Server einmal und zeigt seine Werkzeuge, dann Save settings.
-5. Im Chat über das **+** „Tools (MCP)“ einschalten, auch zusammen mit dem Agent-Modus.
+5. Im Chat über das **+** „Tools (MCP)“ einschalten.
 
 Vor jedem Werkzeugaufruf fragt Sunak („Allow“, „Allow … in this chat“, „Deny“) und zeigt die Eingabe. Nur Admin-Profile richten Server ein und nutzen sie; ein Programm-Server läuft mit deinen Rechten.
 
 ### Mehrere Nutzer gleichzeitig
 
-Sunak kann von mehreren Personen gleichzeitig benutzt werden (Handy-Zugriff und Profile siehe oben). Damit ein Rechner nicht an mehreren großen Anfragen gleichzeitig erstickt, stehen Anfragen an ein Modell in einer Warteschlange, **first in, first out**: Wer zuerst fragt, wird zuerst bedient. Jedes Backend hat seine eigene Reihe (jedes Chatmodell-Programm für sich, der Bildgenerator für sich). Wartet deine Anfrage, steht im Chat „Waiting in the queue: place n“ (im Agent-Modus als Hinweis, bei Bildern im Platzhalter); sobald sie dran ist, läuft sie wie gewohnt. **Stop** oder das Schließen der Seite nimmt eine wartende Anfrage aus der Reihe. Ein lokales Modell bearbeitet eine Anfrage nach der anderen (`SUNAK_MODEL_SLOTS` ändert das), ein Modell im Internet vier gleichzeitig. Im Agent-Modus zählt jeder Modellaufruf einzeln; das Warten auf deine Bestätigung blockiert niemanden.
+Sunak kann von mehreren Personen gleichzeitig benutzt werden (Handy-Zugriff und Profile siehe oben). Damit ein Rechner nicht an mehreren großen Anfragen gleichzeitig erstickt, stehen Anfragen an ein Modell in einer Warteschlange, **first in, first out**: Wer zuerst fragt, wird zuerst bedient. Jedes Backend hat seine eigene Reihe (jedes Chatmodell-Programm für sich, der Bildgenerator für sich). Wartet deine Anfrage, steht im Chat „Waiting in the queue: place n“ (mit Werkzeugen als Hinweis, bei Bildern im Platzhalter); sobald sie dran ist, läuft sie wie gewohnt. **Stop** oder das Schließen der Seite nimmt eine wartende Anfrage aus der Reihe. Ein lokales Modell bearbeitet eine Anfrage nach der anderen (`SUNAK_MODEL_SLOTS` ändert das), ein Modell im Internet vier gleichzeitig. Mit Werkzeugen (MCP) zählt jeder Modellaufruf einzeln; das Warten auf deine Bestätigung blockiert niemanden.
 
 ### Bilder erzeugen
 
-Bildwünsche im Chat macht Sunak von selbst, ohne Rückfrage und mit jedem Chatmodell: Schreibst du „mach mir ein Bild von einem Leuchtturm im Querformat“, „mal mir eine Katze“, „Bild von einem Fuchs“, „a picture of: a snowy landscape“ oder „generate an image of …“ (Deutsch und Englisch; nicht bei Anhängen und im Agent-Modus), schreibt zuerst das Chatmodell aus deiner Bitte einen besseren englischen Prompt, und der geht an das Bildmodell. Sobald Bilder eingerichtet sind, fragt Sunak bei jeder Nachricht, die nicht schon eindeutig ein Bildwunsch ist („generiere mir ein Bild von …“ wird ohne Rückfrage gemalt), das Chatmodell kurz mit Ja oder Nein, ob sie einer ist (nur die letzte Nachricht, nur die ersten Wörter der Antwort; so werden auch Sätze ohne Bildwort wie „Ein Fuchs im Schnee, fotorealistisch“ erkannt, und „Wie erstelle ich ein Bild in Photoshop?“ bleibt ein Chat). Das kostet einen kleinen Zusatzaufruf je Nachricht und lässt sich in Settings → Image generation unter „Recognise picture requests with the AI“ abschalten. Antwortet das Modell nicht (Fehler, über 15 Sekunden, oder es ist gerade mit anderen Anfragen beschäftigt), entscheiden Muster: alles, was nicht eindeutig ist, geht als normaler Chat. Eindeutig sind Bitten wie „generiere mir ein Bild von …“, „a picture of: …“ oder „draw a cat“. Unter dem Bild stehen der „Improved prompt“, Größe, Seed und Schritte; „Again“ malt mit demselben Prompt eine neue Variante, Download und Stop (bricht auch eine wartende Anfrage ab) gibt es auch. Das Format folgt dem Wunsch (Querformat/landscape, Hochformat/portrait, sonst quadratisch). Klappt die Verbesserung nicht, geht deine Beschreibung unverändert an das Bildmodell. Die Bilder bleiben im Chat. Standardmäßig ist die Bildgenerierung aus; solange sie nicht eingerichtet ist, nennt ein Hinweis bei einem Bildwunsch den fehlenden Schritt, und die Nachricht geht als normaler Chat an das Modell. **Im Agent-Modus** wird nichts automatisch gemalt (der Agent bekommt die Bitte, ein Hinweis sagt es); dafür den Agent-Schalter im +-Menü ausschalten.
+Bildwünsche im Chat macht Sunak von selbst, ohne Rückfrage und mit jedem Chatmodell: Schreibst du „mach mir ein Bild von einem Leuchtturm im Querformat“, „mal mir eine Katze“, „Bild von einem Fuchs“, „a picture of: a snowy landscape“ oder „generate an image of …“ (Deutsch und Englisch; nicht bei Anhängen und mit eingeschalteten Werkzeugen), schreibt zuerst das Chatmodell aus deiner Bitte einen besseren englischen Prompt, und der geht an das Bildmodell. Sobald Bilder eingerichtet sind, fragt Sunak bei jeder Nachricht, die nicht schon eindeutig ein Bildwunsch ist („generiere mir ein Bild von …“ wird ohne Rückfrage gemalt), das Chatmodell kurz mit Ja oder Nein, ob sie einer ist (nur die letzte Nachricht, nur die ersten Wörter der Antwort; so werden auch Sätze ohne Bildwort wie „Ein Fuchs im Schnee, fotorealistisch“ erkannt, und „Wie erstelle ich ein Bild in Photoshop?“ bleibt ein Chat). Das kostet einen kleinen Zusatzaufruf je Nachricht und lässt sich in Settings → Image generation unter „Recognise picture requests with the AI“ abschalten. Antwortet das Modell nicht (Fehler, über 15 Sekunden, oder es ist gerade mit anderen Anfragen beschäftigt), entscheiden Muster: alles, was nicht eindeutig ist, geht als normaler Chat. Eindeutig sind Bitten wie „generiere mir ein Bild von …“, „a picture of: …“ oder „draw a cat“. Unter dem Bild stehen der „Improved prompt“, Größe, Seed und Schritte; „Again“ malt mit demselben Prompt eine neue Variante, Download und Stop (bricht auch eine wartende Anfrage ab) gibt es auch. Das Format folgt dem Wunsch (Querformat/landscape, Hochformat/portrait, sonst quadratisch). Klappt die Verbesserung nicht, geht deine Beschreibung unverändert an das Bildmodell. Die Bilder bleiben im Chat. Standardmäßig ist die Bildgenerierung aus; solange sie nicht eingerichtet ist, nennt ein Hinweis bei einem Bildwunsch den fehlenden Schritt, und die Nachricht geht als normaler Chat an das Modell. **Mit eingeschalteten Werkzeugen (MCP)** wird nichts automatisch gemalt (das Modell bekommt die Bitte, ein Hinweis sagt es); dafür den Werkzeug-Schalter im +-Menü ausschalten.
 
 **Mit Sunaks eigenem Bildprogramm (stable-diffusion.cpp), ohne Python-Pakete:**
 
@@ -242,12 +231,12 @@ Mehrere Personen an einem Sunak: Jedes Profil hat eigene Chats, Dokumente, Notiz
 
 - **Anlegen:** Settings → Profile → „Add profile“: Name, optional ein eigenes Emoji, optional PIN (mindestens 4 Zeichen) und ob das Profil Admin sein soll. Beim nächsten Öffnen fragt Sunak „Who is using Sunak?“; gewechselt wird über den Namen oben links.
 - Das erste Profil ist das Hauptprofil mit allen bisherigen Daten, es bleibt immer Admin und lässt sich nicht löschen.
-- **Rechte:** Nur Admin-Profile ändern Anbieter, Modelle, Agent, Werkzeuge, Bildgenerierung, Spracheingabe, Updates, Fehlerberichte, Handy-Zugriff, Passwort und Profile.
+- **Rechte:** Nur Admin-Profile ändern Anbieter, Modelle, Werkzeuge, Bildgenerierung, Spracheingabe, Updates, Fehlerberichte, Handy-Zugriff, Passwort und Profile.
 - Eine PIN trennt die Profile in der App, schützt aber nicht vor jemandem, der am Computer die Dateien unter `~/.sunak` öffnen kann. Das Passwort (Security) gilt für die ganze Installation.
 
 ### Token-Zähler
 
-Sunak zählt für jede Modellanfrage die Tokens und merkt sich: Zeitpunkt, Anbieter, Modell, Eingabe, Ausgabe, Cache gelesen, Cache geschrieben, Dauer und Tokens pro Sekunde. Das gilt für Ollama, Claude und OpenAI-kompatible Anbieter, auch im Agent-Modus. Die Zahlen liegen in der Datenbank des Profils und bleiben nach einem Neustart erhalten.
+Sunak zählt für jede Modellanfrage die Tokens und merkt sich: Zeitpunkt, Anbieter, Modell, Eingabe, Ausgabe, Cache gelesen, Cache geschrieben, Dauer und Tokens pro Sekunde. Das gilt für Ollama, Claude und OpenAI-kompatible Anbieter, auch mit Werkzeugen (MCP). Die Zahlen liegen in der Datenbank des Profils und bleiben nach einem Neustart erhalten.
 
 - **Anzeige:** Unter dem Eingabefeld steht nach der ersten gezählten Anfrage eine Zeile mit den Tokens und Tokens pro Sekunde der letzten Anfrage und der Gesamtsumme; ein Klick öffnet Settings → Token counter. Dort stehen die letzte Anfrage im Detail, die Gesamtsumme, Eingabe, Ausgabe, Cache gelesen und geschrieben getrennt und der Teil, den Sunak von selbst angefragt hat. Admin-Profile sehen zusätzlich die Summe aller Profile.
 - **Je Profil:** Jedes Profil hat seinen eigenen Zähler und sieht nur den eigenen.
@@ -384,7 +373,7 @@ Ohne Terminal wird nichts davon gelöscht. Zweimal ausführen schadet nicht.
 | Keine Modelle in der Auswahl | Läuft Ollama? Models → „Start Ollama“ bzw. „Install Ollama“. Oder unter Settings → Providers einen Cloud-Anbieter eintragen |
 | Antworten kommen sehr langsam | Wahrscheinlich läuft das Modell auf dem Prozessor: `sunak gpu` und die Models-Seite zeigen es. Ein kleineres Modell wählen |
 | Research meldet, die Websuche funktioniere nicht | Die Meldung nennt die Suchmaschinen und den Grund (z. B. Robot-Check von DuckDuckGo). Prüfe die Internetverbindung oder setze `SEARXNG_URL` auf eine eigene SearXNG-Instanz. Die Details stehen in `sunak logs` unter „Research:“ |
-| Ein Bildwunsch im Chat wird nicht gemalt | Ein Hinweis nennt den Grund: Bildgenerierung noch nicht eingerichtet (Programm oder Modell fehlt) oder der Agent-Modus ist an (Agent-Schalter im +-Menü ausschalten). Steht kein Hinweis da, zeigt `sunak logs` „Picture request check (chat/agent/research)“; jede Prüfung steht dort, auch bei normalen Nachrichten |
+| Ein Bildwunsch im Chat wird nicht gemalt | Ein Hinweis nennt den Grund: Bildgenerierung noch nicht eingerichtet (Programm oder Modell fehlt) oder Werkzeuge (MCP) sind an (Schalter im +-Menü ausschalten). Steht kein Hinweis da, zeigt `sunak logs` „Picture request check (chat/tools/research)“; jede Prüfung steht dort, auch bei normalen Nachrichten |
 | „Waiting in the queue: place n“ | Das Modell beantwortet gerade andere Anfragen; deine kommt der Reihe nach dran. **Stop** zieht sie zurück |
 | Fehlerbericht lässt sich nicht senden („GitHub refused the token“) | Das Token braucht „Issues: Read and write“ für das Repository `M4XM77R/Sunak` (oder deinen `SUNAK_REPORT_REPO`) und darf nicht abgelaufen sein; „Check access“ prüft es. Ohne Token hilft „Open on GitHub“ |
 | Handy erreicht Sunak nicht | Passwort gesetzt? Selbes WLAN? Firewall des Computers: Python erlauben |
@@ -412,7 +401,7 @@ SUNAK_DEBUG=1 python3 -m sunak                    # mit ausführlichem Log
 | `sunak/providers.py` | Anbindung von Ollama, Claude (Anthropic API) und OpenAI-kompatiblen APIs (Streaming) |
 | `sunak/ollama.py`, `gpu.py` | Ollama-Integration (Katalog, Status, Start, Installation) und GPU-Erkennung |
 | `sunak/modelsearch.py` | Modellsuche in der Ollama-Bibliothek und auf Hugging Face |
-| `sunak/agent.py` | Agent-Modus (Werkzeuge im Projektordner, Freigaben) |
+| `sunak/toolrun.py` | Werkzeug-Schleife fürs Chat: MCP-Werkzeuge je Backend aufrufen, Freigaben |
 | `sunak/mcp.py` | MCP-Client (stdio und Streamable HTTP) |
 | `sunak/mail.py`, `mailtest.py` | E-Mail (IMAP, SMTP) und `sunak mail-selftest` |
 | `sunak/cal.py` | Kalender (iCalendar, CalDAV, ICS-Abos) |

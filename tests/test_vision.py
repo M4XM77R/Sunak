@@ -178,23 +178,18 @@ class VisionTest(unittest.TestCase):
         self.assertIn("damaged", self.error_of({"session_id": sid, "model": "ollama::vis:1b",
                                                 "images": [{"name": "a", "data": "%%%"}]})[1])
 
-    def test_agent_mode_refuses_images(self):
+    def test_tools_refuse_images(self):
         s = self.call("POST", "/api/sessions", {})
-        os.makedirs(Path(self.tmp.name).parent / "sunak-vision-proj", exist_ok=True)
-        self.call("PUT", "/api/settings", {"agent_enabled": True})
+        self.call("PUT", "/api/settings", {"mcp_servers": [{"name": "X", "type": "stdio", "command": "no-such-program-xyz"}]})
+        self.addCleanup(self.call, "PUT", "/api/settings", {"mcp_servers": []})
+        code, err = None, None
         try:
-            code, err = None, None
-            try:
-                self.call("POST", "/api/agent", {"session_id": s["id"], "model": "ollama::vis:1b", "content": "x",
-                                                 "folder": str(Path(self.tmp.name).parent / "sunak-vision-proj"),
-                                                 "images": [{"name": "p", "data": b64(PNG)}]})
-            except urllib.error.HTTPError as e:
-                code, err = e.code, json.load(e)["error"]
-            self.assertEqual(code, 400)
-            self.assertIn("cannot look at images", err)
-        finally:
-            self.call("PUT", "/api/settings", {"agent_enabled": False})
-            os.rmdir(Path(self.tmp.name).parent / "sunak-vision-proj")
+            self.call("POST", "/api/tools", {"session_id": s["id"], "model": "ollama::vis:1b", "content": "x",
+                                             "images": [{"name": "p", "data": b64(PNG)}]})
+        except urllib.error.HTTPError as e:
+            code, err = e.code, json.load(e)["error"]
+        self.assertEqual(code, 400)
+        self.assertIn("cannot look at images", err)
 
     def test_unused_images_are_cleaned_up(self):
         sid, _ = self.chat("ollama::vis:1b")

@@ -1,6 +1,6 @@
 """Token counter: one record per model request in the profile's database (table `usage`).
 
-`providers.chat_stream` and the agent's own streams create a `Meter`, the adapters tell it what the backend reports
+`providers.chat_stream` and the tool-run streams (sunak/toolrun.py) create a `Meter`, the adapters tell it what the backend reports
 (Ollama: prompt_eval_count/eval_count/eval_duration, Anthropic: usage in message_start/message_delta, OpenAI-compatible:
 usage with `stream_options`), and it writes the record when the request ends. A value the backend does not report is
 stored as NULL, never guessed. Nothing here may make a model request fail: every error is logged quietly and dropped."""
@@ -13,7 +13,7 @@ import time
 log = logging.getLogger("sunak.usage")
 
 # What a request was for. Background requests are work Sunak does for the user by itself; they count too, but are told apart.
-FOREGROUND = ("chat", "agent", "research", "compare", "document", "mail", "calendar", "other")
+FOREGROUND = ("chat", "tools", "research", "compare", "document", "mail", "calendar", "other")
 BACKGROUND = ("image_prompt", "image_check", "memory")
 FIELDS = ("input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens")
 
