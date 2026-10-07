@@ -1001,7 +1001,7 @@ class Handler(BaseHTTPRequestHandler):
 
     # error reports (admin profiles only) -----------------------------
     def usage_get(self):
-        """GET /api/usage: the token counter of this profile: {last, total, background, goal}. `last` is the latest request
+        """GET /api/usage: the token counter of this profile: {last, total, background}. `last` is the latest request
         that was not a background one (fields: ts, provider, model, kind, input_tokens, output_tokens, cache_read_tokens,
         cache_creation_tokens, seconds, tokens_per_second, ok; unknown numbers are null), `total` and `background` are
         sums ({requests, the four token counts, all}; `all` includes cache reads and writes; `background` is the part of

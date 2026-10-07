@@ -12,7 +12,6 @@ import time
 
 log = logging.getLogger("sunak.usage")
 
-GOAL = 1_000_000_000  # the mark the progress bar counts towards
 # What a request was for. Background requests are work Sunak does for the user by itself; they count too, but are told apart.
 FOREGROUND = ("chat", "agent", "research", "compare", "document", "mail", "calendar", "other")
 BACKGROUND = ("image_prompt", "image_check", "memory")
@@ -132,14 +131,13 @@ def total(row):
 
 
 def summary(db):
-    """What the counter shows: {last, total: {...}, background: {...}, goal}. `last` is the latest request that was not
+    """What the counter shows: {last, total: {...}, background: {...}}. `last` is the latest request that was not
     a background one."""
     try:
-        return {"last": db.usage_last(BACKGROUND), "total": db.usage_sums(), "background": db.usage_sums(BACKGROUND),
-                "goal": GOAL}
+        return {"last": db.usage_last(BACKGROUND), "total": db.usage_sums(), "background": db.usage_sums(BACKGROUND)}
     except Exception:  # noqa: BLE001
         log.debug("Could not read the token count", exc_info=True)
-        return {"last": None, "total": _empty(), "background": _empty(), "goal": GOAL}
+        return {"last": None, "total": _empty(), "background": _empty()}
 
 
 def _empty():

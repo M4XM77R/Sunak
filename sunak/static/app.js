@@ -85,15 +85,12 @@ function renderUsage() {
   const line = $('#usageLine');
   line.classList.toggle('hidden', !u.total.requests);
   const known = last && ['input_tokens', 'output_tokens', 'cache_read_tokens', 'cache_creation_tokens'].some((k) => last[k] != null);
-  line.textContent = `${last ? `${known ? nf(sum(last)) : '–'} ${tr('tokens')} · ${rate} tok/s · ` : ''}${tr('Total')} ${nfShort(u.total.all)} / ${nfShort(u.goal)}`;
+  line.textContent = `${last ? `${known ? nf(sum(last)) : '–'} ${tr('tokens')} · ${rate} tok/s · ` : ''}${tr('Total')} ${nfShort(u.total.all)}`;
   if (!$('#usageLast')) return;
   $('#usageLast').textContent = last
     ? `${tr('Last request')}: ${tr('Input')} ${nf(last.input_tokens)} · ${tr('Output')} ${nf(last.output_tokens)} · ${tr('Cache read')} ${nf(last.cache_read_tokens)} · ${rate} tok/s · ${last.seconds == null ? '–' : last.seconds.toFixed(1)} s · ${last.model}`
     : tr('No request counted yet.');
-  const pct = u.total.all / u.goal * 100;
-  $('#usageBar').style.width = `${Math.min(100, pct)}%`;
-  $('#usageProgress').setAttribute('aria-valuenow', String(u.total.all));
-  $('#usageTotal').textContent = `${nf(u.total.all)} / ${nf(u.goal)} ${tr('tokens')} (${pct < 0.1 ? pct.toFixed(4) : pct.toFixed(1)} %) · ${nf(u.total.requests)} ${tr('requests')}`;
+  $('#usageTotal').textContent = `${tr('Total')} ${nf(u.total.all)} ${tr('tokens')} · ${nf(u.total.requests)} ${tr('requests')}`;
   $('#usageDetail').textContent = `${tr('Input')} ${nf(u.total.input_tokens)} · ${tr('Output')} ${nf(u.total.output_tokens)} · ${tr('Cache read')} ${nf(u.total.cache_read_tokens)} · ${tr('Cache write')} ${nf(u.total.cache_creation_tokens)} · ${tr('made by Sunak itself')} ${nf(u.background.all)}`;
   const all = $('#usageAll');
   all.classList.toggle('hidden', u.installation == null);

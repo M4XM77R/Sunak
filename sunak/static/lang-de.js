@@ -910,7 +910,6 @@
 "Token counter: open the details in Settings": "Token-Zähler: Details in den Einstellungen öffnen",
 "Token counter": "Token-Zähler",
 "Sunak counts the tokens of every model request in this profile, also of requests it makes by itself (picture check, remembering, improving picture prompts). Cache reads are shown separately and count in the total. A number the model does not report stays empty instead of being guessed.": "Sunak zählt in diesem Profil die Tokens jeder Modellanfrage, auch der Anfragen, die es von selbst stellt (Bildprüfung, Merken, Verbessern von Bildprompts). Cache-Lesezugriffe werden getrennt gezeigt und zählen in der Gesamtsumme mit. Eine Zahl, die das Modell nicht meldet, bleibt leer und wird nicht geraten.",
-"Tokens counted so far": "Bisher gezählte Tokens",
 "tokens": "Tokens",
 "Total": "Gesamt",
 "Last request": "Letzte Anfrage",

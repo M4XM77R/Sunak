@@ -208,7 +208,7 @@ class CounterTest(unittest.TestCase):
         self.assertEqual(s["last"]["input_tokens"], 100)
         self.db._q("DELETE FROM usage WHERE id = 3")
         self.assertEqual(usage.summary(self.db)["last"]["input_tokens"], 10)  # a background request is never "the last request"
-        self.assertEqual(s["goal"], 1_000_000_000)
+        self.assertNotIn("goal", s)
 
     def test_kinds_by_path(self):
         want = {"/api/chat": "chat", "/api/agent": "agent", "/api/research": "research", "/api/compare": "compare",
@@ -260,7 +260,7 @@ class UsageEndpointTest(unittest.TestCase):
 
     def test_chat_is_counted_and_each_profile_has_its_own_counter(self):
         empty = self.req("GET", "/api/usage")
-        self.assertEqual((empty["last"], empty["total"]["all"], empty["goal"]), (None, 0, 1_000_000_000))
+        self.assertEqual((empty["last"], empty["total"]["all"]), (None, 0))
         s = self.call("POST", "/api/sessions", {})
         self.call("POST", "/api/chat", {"session_id": s["id"], "model": "ollama::tiny:1b", "content": "Hey"})
         now = self.req("GET", "/api/usage")
