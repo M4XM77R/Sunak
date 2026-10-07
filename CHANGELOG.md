@@ -4,6 +4,15 @@ All changes to Sunak, newest version first. Sunak shows the entries between your
 
 Format: one section per version, `## [a.b.c] – YYYY-MM-DD`, followed by short points under **Added**, **Changed**, **Fixed** or **Removed**. Every change to Sunak gets a new version and an entry here.
 
+## [0.14.1] – 2026-10-07
+
+### Changed
+- All documentation is now in English: README and `docs/ARCHITECTURE.md`.
+
+### Fixed
+- Documentation checked against the code: the changelog and `sunak changelog`, the tool loop (`/api/tools`), the 20-profile limit, the real menu names of the English interface, the mail attachment name ("E-mail: subject") and the model filters on the Models page.
+- The screenshots in `docs/` come from an early version; the README now says so.
+
 ## [0.14.0] – 2026-10-07
 
 ### Added

@@ -324,6 +324,10 @@ h2.section { font-size: 15px; margin: 24px 0 8px; padding-bottom: 6px; border-bo
 .step.waiting { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .step.error, .step.denied { border-color: color-mix(in srgb, var(--danger) 50%, var(--border)); }
 .step pre { margin: 0 10px 8px; max-height: 360px; overflow: auto; font-size: 12.5px; white-space: pre-wrap; word-break: break-word; }
+.step .diff span { display: block; }
+.step .diff .add { color: var(--ok); background: color-mix(in srgb, var(--ok) 10%, transparent); }
+.step .diff .del { color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent); }
+.step .diff .hunk { color: var(--muted); }
 .step-actions { padding: 0 10px 10px; flex-wrap: wrap; }
 .tools-run .notice { margin: 6px 0; }
 .kb-sources { display: flex; gap: 6px; flex-wrap: wrap; margin: 0 0 8px; }
