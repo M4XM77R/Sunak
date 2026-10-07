@@ -509,6 +509,7 @@ async function sendNow() {
   if (imagineOn()) return sendImagine();
   let text = promptEl.value.trim();
   if (!text && !state.attachments.length) return;
+  if (!state.attachments.length && imageRequest(text) && await offerPicture(text)) return;
   if (!currentModel()) { toast('Install or connect a model first'); show('settings'); return; }
   if (state.attachments.some((a) => a.loading)) { toast('Still reading your files…'); return; }
   if (agentOn() && !agentFolder()) { toast('Enter the project folder for the agent first'); $('#agentFolder').focus(); return; }
@@ -610,6 +611,7 @@ const imagineVisible = () => (state.settings?.image_gen || 'off') !== 'off' || !
 const imagineReady = () => (state.settings?.image_gen || 'off') !== 'off' && !imageProblem();
 const imagineOn = () => imagineReady() && store.get('sunak-imagine') === '1';
 const IMAGE_PROBLEMS = {
+  setup: 'No image generator is set up. Set up Sunak’s own image program on the Models page under Image models, or connect ComfyUI or Automatic1111 in Settings.',
   no_engine: 'The image program is not set up. Set it up on the Models page under Image models.',
   no_model: 'The image program is ready, but no image model is downloaded yet. Download one on the Models page under Image models (SD-Turbo is small and fast).',
 };
@@ -622,7 +624,7 @@ async function imagineSetup() {
     return;
   }
   if (!isAdmin()) { toast('An admin profile has to set up pictures first (Models page, Image models).'); return; }
-  toast(IMAGE_PROBLEMS[p] || 'Pictures are not set up yet. See Settings → Image generation.', { label: 'Open', fn: () => show('models') });
+  toast(IMAGE_PROBLEMS[p || 'setup'], { label: 'Open', fn: () => show('models') });
 }
 function renderImagineToggle() {
   const b = $('#imagineToggle');
@@ -651,8 +653,31 @@ function genFigure(m) {
     el('a', { href: src, target: '_blank', rel: 'noopener' }, el('img', { src, alt: g.prompt, loading: 'lazy', width: g.width, height: g.height, 'data-no-i18n': '' })),
     el('figcaption', { class: 'muted small', 'data-no-i18n': '' }, `${g.width}×${g.height} · ${tr('seed')} ${g.seed} · ${g.steps} ${tr('steps')}${g.model ? ` · ${g.model}` : ''}`));
 }
-async function sendImagine() {
-  const text = promptEl.value.trim();
+// A chat model cannot paint. When the message asks for a picture ("generate an image of …", "mach ein Bild von …"),
+// Sunak offers to make it with the image generator (OK) or to send the message as a normal chat message (Cancel).
+const IMAGE_ASK = /\b(generier\w*|erzeug\w*|erstell\w*|mach\w*|mal\w*|zeichn\w*|gestalt\w*|generate|create|make|draw|paint|render|produce)\b[^.?!\n]{0,50}\b(bild\w*|foto\w*|grafik\w*|zeichnung\w*|illustration\w*|gemälde|logo|picture|image|photo|drawing|painting|illustration|artwork)\b/i;
+const IMAGE_ASK_AFTER = /\b(bild\w*|foto\w*|grafik\w*|zeichnung\w*|illustration\w*|gemälde|picture|image|photo|drawing|painting|artwork)\b[^.!\n]{0,120}\b(generier|erzeug|erstell|mal|zeichn|generate|create|make|draw|paint)\w*/i;
+const imageRequest = (t) => t.length < 600 && (IMAGE_ASK.test(t) || IMAGE_ASK_AFTER.test(t));
+function pictureSubject(t) {  // the description without the request ("a lighthouse at dusk")
+  const m = t.match(/\b(?:bild\w*|foto\w*|grafik\w*|zeichnung\w*|illustration\w*|gemälde|picture|image|photo|drawing|painting|artwork)\s*(?:von|vom|mit|of|showing|with|:|,|-)?\s+([\s\S]{3,})$/i);
+  let out = (m ? m[1] : t).trim();
+  for (let i = 0; i < 2; i++) out = out.replace(/[\s,.!?]*\b(?:generier\w*|erzeug\w*|erstell\w*|mal\w*|zeichn\w*|generate|create|make|draw|paint|bitte|please)[\s.!?]*$/i, '');
+  return out.trim() || t;
+}
+async function offerPicture(text) {
+  const subject = pictureSubject(text);
+  if (imagineReady()) {
+    if (!confirm(`${tr('This looks like a request for a picture. OK makes it with your image generator, Cancel sends it as a normal chat message.')}\n\n“${subject}”`)) return false;
+    promptEl.value = ''; autosize();
+    await sendImagine(subject);
+    return true;
+  }
+  if (!confirm(tr('This looks like a request for a picture, but pictures are not set up yet. OK shows what is missing, Cancel sends it as a normal chat message.'))) return false;
+  imagineSetup();
+  return true;
+}
+async function sendImagine(given) {
+  const text = given || promptEl.value.trim();
   if (!text) { toast('Describe the picture first'); return; }
   if (state.attachments.length) { toast('Pictures are made from your description only. Remove the attachments or switch off the picture button.'); return; }
   if (!state.session) {
