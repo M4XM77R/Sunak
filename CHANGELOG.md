@@ -4,6 +4,17 @@ All changes to Sunak, newest version first. Sunak shows the entries between your
 
 Format: one section per version, `## [a.b.c] – YYYY-MM-DD`, followed by short points under **Added**, **Changed**, **Fixed** or **Removed**. Every change to Sunak gets a new version and an entry here.
 
+## [0.16.0] – 2026-10-08
+
+### Added
+- Calendar reminders: the event form has a new "Reminder" field (at the start, 5 minutes up to 2 days before; for all-day events at 9:00 on the day or the days before). It is stored as a standard iCalendar reminder (`VALARM`), so it also works with CalDAV and shows up in other calendar apps. Reminders that events from CalDAV or ICS calendars already carry are used too.
+- Reminders show as a notice in the page and, if you allow it, as a desktop notification while Sunak is open (Settings → Reminders, off by default).
+- Push messages to your phone through ntfy (https://ntfy.sh or your own server), also when no browser is open, as long as Sunak is running. Set the topic in Settings → Reminders; "Random topic" makes a hard-to-guess one and "Send test" checks it. A failed push is tried again until the event starts. The topic is left out of the backup.
+- New endpoints `GET /api/reminders` and `POST /api/reminders/test`; new module `sunak/reminders.py`; new settings `reminders`, `ntfy_url`, `ntfy_topic` and `reminder_lang`.
+
+### Changed
+- Changing an event keeps its other reminders (for example e-mail reminders set in another app); only the reminder chosen in Sunak is replaced.
+
 ## [0.15.1] – 2026-10-08
 
 ### Fixed

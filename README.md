@@ -214,7 +214,16 @@ Month view with all calendars: Sunak's own calendar, CalDAV accounts (iCloud, GM
 - **Connecting:** Settings → Calendars → "Add calendar". For CalDAV, under "Own login" choose a linked mail account (address and user name are filled in, the mail account's password is used) or enter provider, user name and (app) password. Google and Outlook.com offer no CalDAV with a password: subscribe to their secret iCal address as "ICS address" instead.
 - **Event from text:** In the calendar type a sentence ("dentist next Tuesday 10 am") and click "Add", or in a mail "Add to calendar". The model fills in the form; it is saved only after your click.
 - **From the chat:** Write "trag mir morgen 10 Uhr Zahnarzt ein", "add dentist tomorrow 10am to my calendar" or "remind me to call Tom on Friday" in a normal chat (German and English, not with attachments). Sunak recognizes the request by itself, with any model, reads the event with the same model call as "Event from text" and shows a card with title, date and time. **Save** stores it in the calendar you used last (otherwise Sunak's own), **Edit** opens the event form. An event request needs a date or time, and the card warns when the date is in the past. **Send as normal message** hands your text to the model instead if Sunak guessed wrong. Nothing is saved before your click. Questions ("What is on tomorrow?") stay normal chats. The cards belong to the open chat only and are not stored with it.
+- **Reminders:** In the event form choose "Reminder" (at the start, 5 minutes to 2 days before; for all-day events at 9:00 on the day or before). Turn them on in Settings → Reminders. While Sunak is open you get a notice in the page and, if you allow it, a desktop notification. For push messages on your phone, also when no browser is open, enter an ntfy topic there (see below). Reminders already in events from other calendars (CalDAV, ICS) are used as well.
 - **Limits:** Recurrences by week number or day of the year and hourly recurrences are not supported. ICS subscriptions are cached for 5 minutes.
+
+#### Push messages with ntfy
+
+Real Web Push would need encryption that Python's standard library does not have, so Sunak sends reminders through [ntfy](https://ntfy.sh): install the free ntfy app (Android, iPhone), subscribe to a topic, and enter the same topic in Settings → Reminders ("Random topic" makes a hard-to-guess one). "Send test" checks it. Sunak sends the message itself, so it arrives whenever Sunak is running, even with the browser closed; a computer that is off or asleep sends nothing.
+
+- **Privacy:** On the public server ntfy.sh, title, place and time of the event pass through that server, and anyone who knows the topic can read it. Use a random topic, or run your own ntfy server and enter its address (it must accept messages without a login; passwords are not supported). The topic is not part of the backup.
+- **How it works:** Every 30 seconds Sunak checks the events of the next 8 days in all profiles that turned reminders on (the calendars are read every 10 minutes, Sunak's own calendar right after a change). Each reminder is sent once. If the ntfy server is not reachable it is tried again until the event starts. A reminder that was missed while Sunak was off is shown late only if the event has not started yet.
+- **Limits:** Only reminders relative to the start are used (not "at 9:00 sharp" or relative to the end). All-day events use this computer's time zone.
 
 ### Profiles
 
@@ -397,6 +406,7 @@ Changes to `sunak/static/` become visible after a reload in the browser. Changes
 | `sunak/mcp.py` | MCP client (stdio and Streamable HTTP) |
 | `sunak/toolrun.py` | Tool loop in the chat: calls MCP tools per backend, approvals |
 | `sunak/mail.py`, `mailtest.py` | Mail (IMAP, SMTP) and `sunak mail-selftest` |
+| `sunak/reminders.py` | Calendar reminders and push messages to ntfy |
 | `sunak/cal.py` | Calendar (iCalendar, CalDAV, ICS subscriptions) |
 | `sunak/research.py` | Web search and page analysis for Research and web search in the chat |
 | `sunak/extract.py`, `knowledge.py` | Text from files (own PDF reader) and knowledge base (sections, full-text search) |

@@ -28,6 +28,7 @@ Browser (sunak/static)  ──HTTP/JSON, NDJSON streams──▶  sunak/server.p
 | `sunak/research.py` | Web search, reading pages, prompt for the research report |
 | `sunak/toolrun.py` | Tool loop in the chat: tool calling per backend, text protocol as a fallback, loop with approvals for the MCP tools |
 | `sunak/extract.py` | Text from uploaded files: PDF (own reader), .docx, .odt, .pptx, HTML, text |
+| `sunak/reminders.py` | Calendar reminders. `due(events, now)` returns the reminders that should have gone off (`start - lead <= now < start`; a lead of 0 or less: until `LATE` = 10 minutes after it), key = `<event id>|<lead>`. `message` builds title and text in English or German (`TEXTS`). `send_ntfy` posts JSON (`topic`, `title`, `message`, `tags`) to the ntfy server (`urllib`, 10 s, redirects are not followed, so nothing goes to another address; `ReminderError` is a `ValueError`). `Reminders` is created by `App` and started by `__main__` (tests call `tick` themselves): every `TICK` = 30 s `profile_tick` runs for each profile with `reminders` on: it reads the events of the next 8 days via `App.calendar_load` (cached for `REFRESH` = 10 minutes; `invalidate` after every create, change or delete), and for each due reminder keeps an item for the open pages (`_pending`, kept `KEEP` = 15 minutes) and sends the push message. "Page" and "ntfy" are marked separately in the table `reminders_sent` (`key + "|page"`, `key + "|ntfy"`), so a failed push is tried again at the next look while nothing is shown twice; failures are logged once per reminder as WARNING (the topic is registered with `log.add_secret`). Settings (per profile): `reminders`, `ntfy_url`, `ntfy_topic` (not in the backup), `reminder_lang`. In `sunak/cal.py`, `alarms` reads the reminders of an event (`VALARM`, `DISPLAY`/`AUDIO`, relative to the start) into the `alarms` field (minutes before the start), `build_event`/`update_event` write one (`reminder`; without that key an event keeps its reminders) |
 | `sunak/mail.py` | Mail: check accounts, IMAP (folders, list, search, mail as text, attachments, drafts, move, delete, new mail) and SMTP (send with attachments), provider presets, prompts for the AI |
 | `sunak/mailtest.py` | `sunak mail-selftest`: check a real account step by step, only with its own test mails |
 | `sunak/images.py` | Pictures in the chat: validation (file signature, size, count), storage in `<data>/images`, attaching to the messages for the model, cleanup |
@@ -99,6 +100,8 @@ All endpoints live under `/api/`. Writing requests need the header `X-Requested-
 | `POST /api/calendar/events` | `{source, calendar, event}` create an event | JSON |
 | `PUT /api/calendar/events` | `{source, uid, href, etag, recurring, event}` change an event | JSON |
 | `POST /api/calendar/events/delete` | `{source, uid, href, etag}` delete an event (for a recurrence the whole series) | JSON |
+| `GET /api/reminders?since=<time stamp>` | The reminders of this profile that went off after `since` (without it: in the last 5 minutes): `{now, items: [{id, ts, title, text, start, all_day}]}`; the page asks every 30 seconds with the `now` of the last answer | JSON |
+| `POST /api/reminders/test` | `{ntfy_url, ntfy_topic, lang}` (all optional, else the saved values) sends a test message to the topic; `{ok, pushed, title, text}`; an unreachable server is an error message | JSON |
 | `POST /api/calendar/parse` | `{text, now, model}`: the model reads an event from text, the response fills the form | JSON |
 | `POST /api/assistant/intent` | `{text}`: is the chat message a request to prepare an event or an e-mail? Response `{action: "event"\|"mail"\|""}`; rules only (`intent.action`), no model call, INFO log "Assistant request check (chat)" | JSON |
 | `POST /api/assistant/mail` | `{text, account, model}`: the model writes a new e-mail from a chat request (`mail.draft_messages`, `mail.parse_draft`); response `{to, to_name, subject, body, account}` (`account` given or the first linked one; `to` only a real address, taken from the request first). 400 "Add a mail account first" without an account. Nothing is sent or stored | JSON |
@@ -292,6 +295,7 @@ All data lives in one SQLite file: `~/.sunak/sunak.db`; the folder can be change
 | `usage` | One record per model request (see `GET /api/usage`), in the database of the respective profile; no deletion, the sum is formed per query via SQL |
 | `settings` | Key-value pairs as JSON: `prefs` (including theme, language, image generation), `providers`, `personas` (if the entry is missing, `DEFAULT_PERSONAS` apply), `mail_accounts`, `calendars`, `mcp_servers`, `report_token` (GitHub token for error reports, main database only), `profiles` (main database only), `lan_access`, `password_hash`, `secret` |
 | `calendar_events` | Sunak's own calendar: `uid`, iCalendar text, modification time |
+| `reminders_sent` | Reminders already shown or pushed (`key`, time); entries older than 14 days are deleted |
 
 Every further profile has its own file with the same tables under `profiles/<id>/` (see Profiles).
 
@@ -391,6 +395,7 @@ The tests start Sunak and simulated servers that imitate the Ollama, Anthropic a
 | `test_toolrun.py` | Tool loop: tool calling per backend (Claude, Ollama, OpenAI-compatible) with a simulated MCP server, text protocol, approvals, stop, removed agent endpoints, old chats with agent steps (`toolbackend.py` provides the simulated models) |
 | `test_mcp.py` | MCP: simulated stdio and HTTP server, tool lists, calls, secrets, crash and restart, approvals in the chat |
 | `test_mail.py` | Mail against a simulated IMAP and SMTP server (also without `MOVE`/`UIDPLUS`), attachments, moving, deleting, new mail, self-test |
+| `test_reminders.py` | Reminders: VALARM reading and writing (reminders of other kinds stay), which reminders are due (window, late, all-day, cancelled), the push message against a fake ntfy server (UTF-8, errors, no redirect), the background check (once only, failing push is repeated, off, no topic, new events), test message, settings and backup |
 | `test_calendar.py` | iCalendar, recurrences across daylight saving time, time zones, writing, simulated CalDAV server, ICS subscriptions, event from text |
 | `test_memory.py` | Automatic memory: facts, secrets and duplicates, explicit "merk dir" |
 | `test_profiles.py` | Profiles: choice with a PIN, separate data, own settings, admin rights |
