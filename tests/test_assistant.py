@@ -18,20 +18,53 @@ EVENT = ["trag mir morgen 10 Uhr Zahnarzt ein", "Trag morgen 10 Uhr Zahnarzt in 
          "Vereinbare einen Termin mit Anna am Montag", "erinner mich morgen an die Steuer", "Remind me to call mom tomorrow at 5pm",
          "Add dentist tomorrow 10am to my calendar", "Schedule a meeting with Tom on Friday at 3pm",
          "Please create an appointment for next Tuesday 10am", "Put the barbecue on Saturday into my calendar",
-         "Setz den Zahnarzt auf morgen 10 Uhr in den Kalender"]
+         "Setz den Zahnarzt auf morgen 10 Uhr in den Kalender", "Create an appointment tomorrow 9am", "Leg einen Termin für Freitag 15 Uhr an",
+         "Book a meeting with Sam next Monday", "Remind me in 2 hours to call"]
 MAIL = ["schreib Anna eine Mail, dass ich später komme", "Schreibe eine E-Mail an chef@firma.de wegen Urlaub",
         "Write an email to Tom saying I'm late", "Draft a mail to my landlord about the heating",
         "Kannst du eine Mail an Anna verfassen, dass ich krank bin?", "Mail an Anna: ich komme später", "email Anna that I am late",
-        "Send Anna an email that the meeting is moved", "Bitte schick Tom eine Mail mit der Absage", "Verfasse eine E-Mail an meinen Vermieter"]
+        "Send Anna an email that the meeting is moved", "Bitte schick Tom eine Mail mit der Absage", "Verfasse eine E-Mail an meinen Vermieter",
+        "Schreib meinem Chef eine Mail wegen Urlaub", "Write a short email to Tom"]
 NOT = ["Was steht morgen an?", "Welche Termine habe ich?", "Wie erstelle ich einen Termin in Outlook?", "Wie schreibe ich eine Mail an meinen Chef?",
        "Ich habe eine Mail geschrieben", "Ich schreibe gleich eine Mail an Anna", "Ich habe morgen einen Termin beim Zahnarzt",
        "Schreibe ein Python-Skript, das eine Mail sendet", "Can you explain how to schedule a meeting in code?", "Fasse diese Mail zusammen",
        "Erkläre mir den Termin", "Was ist ein Kalender?", "Soll ich einen Termin machen?", "Hast du eine Mail geschrieben?",
        "Why is my calendar empty?", "Trag ein Hemd", "Schreibe mir ein Gedicht", "Mailand ist schön, schreib mir was darüber",
-       "Erstelle einen Plan für meine Woche", "Generiere ein Bild von einem Fuchs", "Draw a cat", "", "x" * 700 + " Mail schreiben"]
+       "Erstelle einen Plan für meine Woche",
+       # pictures (the picture check must win)
+       "Erstelle ein Bild von einem Meeting", "Mach mir ein Logo für unser Event", "make a picture of a meeting", "create a poster for our event",
+       # events
+       "Create an event loop in node", "Make me a meeting summary", "Erstelle eine Präsentation über Meetings", "Make a plan for the meeting agenda",
+       "Erinnere mich daran, was wir besprochen haben", "Remind me what we discussed", "Trag das bitte ein",
+       # mails
+       "Schreib mir eine Zusammenfassung dieser Mail", "Schreib mir einen Text über Mails", "Please write an email template for customers",
+       "I need to write an email to my landlord, any tips", "Send me the mail list", "Kannst du mir eine Zusammenfassung dieser Mail schreiben?",
+       "Schreibe eine E-Mail-Vorlage für Bewerbungen", "Generiere ein Bild von einem Fuchs", "Draw a cat", "", "x" * 700 + " Mail schreiben"]
+
+
+# review round 2: (text, what it is) one table, positives and negatives side by side
+CASES = [
+    # worked before 0.15.1 and must keep working
+    ("add a dentist appointment tomorrow at 3pm", "event"), ("Leg mir für Montag einen Termin beim Arzt an", "event"),
+    ("Send an email to tom@example.com that I'm late", "mail"), ("Schreib eine Mail an meinen Chef mit einem Beispiel für den Bericht", "mail"),
+    ("Trag mir den Zahnarzt am 12.10. um 9 ein", "event"), ("Could you write an email to Tom saying I'm late?", "mail"),
+    # verb-less event forms
+    ("Termin am Freitag um 14 Uhr mit Tom", "event"), ("Termin morgen 10 Uhr Zahnarzt", "event"), ("Neuer Termin: Freitag 14 Uhr Friseur", "event"),
+    ("Meeting with Tom on Friday at 2pm", "event"), ("Zahnarzt morgen um 10 eintragen", "event"),
+    # not requests
+    ("Remind me tomorrow what a monad is", ""), ("Remind me again how the event loop works today", ""),
+    ("Erinnere mich daran, dass ich morgen nett zu Anna sein soll, was meinst du dazu", ""), ("Erstelle einen Event-Plan für Samstag", ""),
+    ("Create a meeting invite text for Friday", ""), ("Write an email signature for me", ""),
+    ("Write a newsletter mail for customers next Monday", ""), ("Termin verschoben, war gestern", ""),
+    ("Meeting notes from Friday at 2pm", ""), ("Erstelle einen Terminplan für Samstag", ""), ("Make me a meeting summary for Friday at 2pm", ""),
+]
 
 
 class ActionTest(unittest.TestCase):
+    def test_table(self):
+        for text, want in CASES:
+            self.assertEqual(intent.action(text), want, text)
+
     def test_events(self):
         for t in EVENT:
             self.assertEqual(intent.action(t), "event", t)

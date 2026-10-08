@@ -4,6 +4,17 @@ All changes to Sunak, newest version first. Sunak shows the entries between your
 
 Format: one section per version, `## [a.b.c] – YYYY-MM-DD`, followed by short points under **Added**, **Changed**, **Fixed** or **Removed**. Every change to Sunak gets a new version and an entry here.
 
+## [0.15.1] – 2026-10-08
+
+### Fixed
+- Events and e-mails from the chat no longer fire on ordinary messages: picture requests ("Erstelle ein Bild von einem Meeting") stay pictures, and sentences such as "Create an event loop in node", "Make me a meeting summary", "Remind me what we discussed", "Schreib mir eine Zusammenfassung dieser Mail" or "Please write an email template" are normal chats. An event request now needs a date or time, and the recognition works in two steps: an intent (verb or head such as "Termin am Freitag"), then exclusions that only look at the words around the object ("e-mail template", "meeting summary", "Event-Plan"). "Remind me what …" is no reminder.
+- Requests that worked before still work: "add a dentist appointment tomorrow at 3pm", "Leg mir für Montag einen Termin beim Arzt an", addresses such as tom@example.com, "Could you write an email to Tom …?" and dates such as "am 12.10. um 9".
+
+### Added
+- Short forms without a verb: "Termin morgen 10 Uhr Zahnarzt", "Neuer Termin: Freitag 14 Uhr Friseur", "Meeting with Tom on Friday at 2pm", "Zahnarzt morgen um 10 eintragen".
+- Every event and e-mail card has "Send as normal message", which sends your text to the model as a normal chat message when Sunak guessed wrong (it waits while the input box has text).
+- The event card warns when the date is in the past.
+
 ## [0.15.0] – 2026-10-08
 
 ### Added

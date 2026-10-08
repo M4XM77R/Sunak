@@ -539,16 +539,16 @@ function stopBusy() {
 // a request waits for the model while others are served first (sunak/jobqueue.py): say its place
 const queueText = (n) => tr('Waiting in the queue: place {n}', { n });
 let sending = false;
-async function send() {
+async function send(skipAssist) {  // skipAssist: a normal chat message, even if it reads like an event or e-mail request
   if (state.busy || sending) return;
   sending = true;
-  try { await sendNow(); } finally { sending = false; }
+  try { await sendNow(skipAssist); } finally { sending = false; }
 }
-async function sendNow() {
+async function sendNow(skipAssist) {
   let text = promptEl.value.trim();
   if (!text && !state.attachments.length) return;
   if (!state.attachments.length) {
-    const act = await assistantIntent(text);
+    const act = skipAssist ? null : await assistantIntent(text);
     if (act && await assistantRequest(act, text)) return;
     const ask = await pictureIntent(text, false, 'chat');
     if (ask && await pictureRequest(text, ask.subject)) return;
@@ -790,7 +790,7 @@ async function assistantRequest(kind, text) {
   const s = state.session;
   promptEl.value = ''; autosize();
   sending = false;
-  const a = { kind, status: 'working' };
+  const a = { kind, status: 'working', text };
   const reply = { role: 'assistant', content: '', model: currentModel(), meta: { assist: a } };
   s.messages.push({ role: 'user', content: text }, reply);
   const ctrl = new AbortController();
@@ -859,6 +859,18 @@ async function openChatMail(a) {
   if (a.draft.account && state.mail.accounts.some((x) => x.id === a.draft.account)) $('#mailAccount').value = a.draft.account;
   openCompose({ to: a.draft.to, subject: a.draft.subject, start: a.draft.body });
 }
+// "That was a normal question": drop the card and send the message to the chat model as it is
+function sendAsChat(a) {
+  if (state.busy || sending) return;
+  if (promptEl.value.trim() || state.attachments.length) { toast('Send or clear the text in the input box first'); return; }
+  const msgs = state.session.messages, i = msgs.findIndex((x) => x.meta?.assist === a);
+  if (i > 0) msgs.splice(i - 1, 2);
+  renderMessages();
+  promptEl.value = a.text; autosize();
+  send(true);
+}
+const chatInstead = (a) => el('button', { class: 'btn', type: 'button', title: 'Not what you meant? Send your message to the model as a normal chat message', onclick: () => sendAsChat(a) }, 'Send as normal message');
+const eventIsPast = (d) => (d.all_day ? dayOf(d.end.slice(0, 10)) < dayOf(ymd(new Date())) : new Date(d.end) < new Date());
 function assistEl(m) {
   const a = m.meta.assist;
   if (a.status === 'working') return el('div', { class: 'muted small', role: 'status' }, a.kind === 'event' ? 'Preparing the event…' : 'Writing the e-mail…');
@@ -866,7 +878,9 @@ function assistEl(m) {
   if (a.status === 'error') {
     return el('div', { class: 'assist-card' },
       el('div', { class: 'err' }, a.error),
-      a.setup === 'mail' ? el('div', { class: 'row' }, el('button', { class: 'btn', type: 'button', onclick: () => { show('settings'); editMailAccount({}); } }, icon('plus'), 'Add mail account')) : null);
+      el('div', { class: 'row' },
+        a.setup === 'mail' ? el('button', { class: 'btn', type: 'button', onclick: () => { show('settings'); editMailAccount({}); } }, icon('plus'), 'Add mail account') : null,
+        chatInstead(a)));
   }
   const d = a.draft;
   if (a.kind === 'event') {
@@ -876,10 +890,12 @@ function assistEl(m) {
       el('div', { 'data-no-i18n': '' }, eventWhen(d)),
       d.location ? el('div', { class: 'muted small', 'data-no-i18n': '' }, d.location) : null,
       d.description ? el('div', { class: 'muted small', 'data-no-i18n': '' }, d.description) : null,
+      !a.saved && eventIsPast(d) ? el('div', { class: 'err small' }, icon('alert'), 'This date is in the past. Check it before saving, or tell Sunak the date again.') : null,
       a.saved ? el('div', { class: 'ok small' }, icon('check-circle'), tr('Saved in {calendar} ✓', { calendar: a.savedIn }))
         : el('div', { class: 'row' },
           el('button', { class: 'btn primary', type: 'button', onclick: (ev) => saveChatEvent(a, ev.currentTarget) }, 'Save'),
-          el('button', { class: 'btn', type: 'button', title: 'Open the event form to change it', onclick: () => editChatEvent(a) }, 'Edit')));
+          el('button', { class: 'btn', type: 'button', title: 'Open the event form to change it', onclick: () => editChatEvent(a) }, 'Edit'),
+          chatInstead(a)));
   }
   return el('div', { class: 'assist-card' },
     el('div', { class: 'assist-head' }, icon('mail'), 'E-mail ready: nothing is sent'),
@@ -888,7 +904,8 @@ function assistEl(m) {
     el('pre', { class: 'assist-body', 'data-no-i18n': '' }, d.body),
     el('div', { class: 'row' },
       el('button', { class: 'btn primary', type: 'button', title: 'Opens the compose form; sending needs your click and a confirmation there', onclick: () => openChatMail(a) }, 'Open in Mail'),
-      el('button', { class: 'btn', type: 'button', onclick: () => navigator.clipboard.writeText(d.body).then(() => toast('Copied')) }, 'Copy text')));
+      el('button', { class: 'btn', type: 'button', onclick: () => navigator.clipboard.writeText(d.body).then(() => toast('Copied')) }, 'Copy text'),
+      chatInstead(a)));
 }
 
 /* ---------------- Tools (MCP) ----------------
