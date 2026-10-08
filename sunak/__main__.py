@@ -386,11 +386,13 @@ def main(argv=None):
     if app.lan is not None:
         print(f"  Phone access is on: {PINK}{app.lan_info()['url']}{RESET}\n")
     srv.RequestHandlerClass.app.check_updates()  # in the background; the page shows "Update available"
+    app.reminders.start()  # calendar reminders of the profiles that turned them on
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
         pass
     srv.server_close()
+    app.reminders.stop()
     app.mcp.close_all()
     log.get("main").info("Sunak stopped")
     print("\n  Bye 👋")

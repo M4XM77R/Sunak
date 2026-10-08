@@ -29,7 +29,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, quote, urlparse
 
 from . import (__version__, cal, extract, gpu, imagegen, images, intent, jobqueue, knowledge, log, mail, mcp, memory, modelsearch,
-               ollama, providers, qr, reports, research, sdcpp, speech, toolrun, updates, usage)
+               ollama, providers, qr, reminders, reports, research, sdcpp, speech, toolrun, updates, usage)
 from .db import DB, new_id
 
 log_http = log.get("http")
@@ -62,12 +62,17 @@ DEFAULT_SETTINGS = {
     "ai_image_detect": True, # ask the chat model whether a message wants a picture, when pictures are set up (intent.py)
     "error_reports": "off",  # unexpected errors as GitHub issues (reports.py): "off", "ask" (the user sends each one), "auto"
     "mail_notify": True,     # 📬 look for new mail every few minutes while Sunak is open, and say so
+    "reminders": False,      # 🔔 calendar reminders (reminders.py): pages show them, ntfy sends them as push messages
+    "ntfy_url": "",          # ntfy server for the push messages ("" = https://ntfy.sh); of the installation, only admins set it
+    "ntfy_topic": "",        # the topic the phone subscribes to ("" = no push messages); it is the only secret of a public topic
+    "reminder_lang": "en",   # language of the push messages: the interface language the settings were last saved in
 }
 INT_PREFS = {"image_gen_size": (512, 1024),
              "image_gen_steps": (1, imagegen.MAX_STEPS)}  # allowed ranges
 # Settings of the whole installation (only admin profiles change them); all other prefs are per profile.
 GLOBAL_PREFS = {"check_updates", "speech_input", "whisper_url", "whisper_model",
-                "image_gen", "image_gen_url", "image_gen_model", "image_gen_size", "image_gen_steps", "error_reports", "ai_image_detect"}
+                "image_gen", "image_gen_url", "image_gen_model", "image_gen_size", "image_gen_steps", "error_reports", "ai_image_detect",
+                "ntfy_url"}
 GLOBAL_KEYS = GLOBAL_PREFS | {"providers", "mcp_servers", "password"}
 MAX_PROFILES = 20
 
@@ -176,6 +181,14 @@ def _check_pref(key, value, default):
         raise ValueError("error_reports must be one of: off, ask, auto")
     if key == "image_gen" and value not in ("off", "local", *imagegen.BACKENDS):
         raise ValueError("image_gen must be one of: off, local, " + ", ".join(imagegen.BACKENDS))
+    if key == "reminder_lang" and value not in LANGUAGES:
+        raise ValueError("reminder_lang must be one of: " + ", ".join(LANGUAGES))
+    if key in ("ntfy_url", "ntfy_topic"):
+        value = value.strip()[:300]
+    if key == "ntfy_url" and value and not re.match(r"https?://[^\s/]+", value):
+        raise ValueError("The ntfy address must start with http:// or https://")
+    if key == "ntfy_topic" and value and not reminders.TOPIC_RE.fullmatch(value):
+        raise ValueError("The ntfy topic may only contain letters, digits, - and _ (up to 64 characters)")
     if key in ("image_gen_url", "image_gen_model"):
         value = value.strip()[:300]
     if key == "image_gen_url" and value and not re.match(r"https?://[^\s/]+", value):
@@ -250,6 +263,7 @@ class App:
         self._update_lock = threading.Lock()
         self._checking = False
         self.tool_runs = toolrun.Registry()
+        self.reminders = reminders.Reminders(self)  # started by __main__ (tests do not run it)
         self.reports = reports.Reports(self)
         if self.reports.token():
             log.add_secret(self.reports.token())
@@ -576,6 +590,53 @@ class App:
         return self.db.get_setting("mail_accounts") or []
 
     LOCAL_CALENDAR = {"id": "local", "type": "local", "name": "Sunak", "color": "", "enabled": True}
+
+    def calendar_load(self, start, end):
+        """(events, errors) of all shown calendars between the aware datetimes `start` and `end`, recurring ones
+        expanded, sorted. A calendar that fails is listed in `errors` and leaves the others alone."""
+        mails = self.mail_accounts()
+        jobs = [("local", None, None)]
+        for src in self.calendars():
+            if not src.get("enabled", True):
+                continue
+            if src["type"] == "ics":
+                jobs.append((src["id"], src, None))
+            else:
+                jobs += [(src["id"], src, c) for c in src.get("calendars", []) if c.get("enabled", True)]
+        results, errors = [None] * len(jobs), []
+
+        def load(i, sid, src, c):
+            try:
+                if sid == "local":
+                    out = []
+                    for row in self.db.cal_events():
+                        try:
+                            out += [dict(e, writable=True, color="") for e in cal.events_in(row["ics"], start, end, "local")]
+                        except cal.CalendarError:
+                            pass
+                elif src["type"] == "ics":
+                    out = [dict(e, writable=False, color=src["color"]) for e in cal.events_in(cal.fetch_ics(src["url"]), start, end, sid)]
+                else:
+                    user, pw = cal.login(src, mails)
+                    out = []
+                    for href, etag, text in cal.caldav_events(c["href"], user, pw, start, end):
+                        try:
+                            out += [dict(e, href=href, etag=etag, calendar=c["href"], writable=True, color=c.get("color") or src["color"])
+                                    for e in cal.events_in(text, start, end, sid)]
+                        except cal.CalendarError:
+                            pass
+                results[i] = out
+            except (cal.CalendarError, ValueError) as e:
+                errors.append({"source": sid, "name": (c or {}).get("name") or (src or {}).get("name", ""), "error": str(e)})
+
+        threads = [threading.Thread(target=load, args=(i, *job), daemon=True) for i, job in enumerate(jobs)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(cal.TIMEOUT * 3)
+        events = [e for r in results if r for e in r]
+        events.sort(key=lambda e: (e["start"][:10], not e["all_day"], e["start"]))
+        return events, errors
 
     def calendars(self):
         """Calendar accounts (CalDAV and ICS addresses), including passwords (server side only)."""
@@ -1316,6 +1377,7 @@ class Handler(BaseHTTPRequestHandler):
         """GET /api/export: everything as one JSON file (API keys and the password are left out)."""
         data = self.app.db.export_all()
         s = self.app.settings()
+        s["ntfy_topic"] = ""  # the topic works like a password
         s["providers"] = [{k: v for k, v in p.items() if k != "api_key"} for p in s["providers"]]
         data.update(sunak_version=__version__, exported=time.strftime("%Y-%m-%dT%H:%M:%S"), settings=s,
                     mail_accounts=[{k: v for k, v in a.items() if k != "password"} for a in self.app.mail_accounts()],
@@ -2288,48 +2350,7 @@ class Handler(BaseHTTPRequestHandler):
         """GET /api/calendar/events?start=…&end=… (ISO with the device's offset): the events of all shown
         calendars in that span, recurring ones expanded. A calendar that fails is listed in `errors`."""
         start, end = self.calendar_range()
-        mails = self.app.mail_accounts()
-        jobs = [("local", None, None)]
-        for src in self.app.calendars():
-            if not src.get("enabled", True):
-                continue
-            if src["type"] == "ics":
-                jobs.append((src["id"], src, None))
-            else:
-                jobs += [(src["id"], src, c) for c in src.get("calendars", []) if c.get("enabled", True)]
-        results, errors = [None] * len(jobs), []
-
-        def load(i, sid, src, c):
-            try:
-                if sid == "local":
-                    out = []
-                    for row in self.app.db.cal_events():
-                        try:
-                            out += [dict(e, writable=True, color="") for e in cal.events_in(row["ics"], start, end, "local")]
-                        except cal.CalendarError:
-                            pass
-                elif src["type"] == "ics":
-                    out = [dict(e, writable=False, color=src["color"]) for e in cal.events_in(cal.fetch_ics(src["url"]), start, end, sid)]
-                else:
-                    user, pw = cal.login(src, mails)
-                    out = []
-                    for href, etag, text in cal.caldav_events(c["href"], user, pw, start, end):
-                        try:
-                            out += [dict(e, href=href, etag=etag, calendar=c["href"], writable=True, color=c.get("color") or src["color"])
-                                    for e in cal.events_in(text, start, end, sid)]
-                        except cal.CalendarError:
-                            pass
-                results[i] = out
-            except (cal.CalendarError, ValueError) as e:
-                errors.append({"source": sid, "name": (c or {}).get("name") or (src or {}).get("name", ""), "error": str(e)})
-
-        threads = [threading.Thread(target=load, args=(i, *job), daemon=True) for i, job in enumerate(jobs)]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join(cal.TIMEOUT * 3)
-        events = [e for r in results if r for e in r]
-        events.sort(key=lambda e: (e["start"][:10], not e["all_day"], e["start"]))
+        events, errors = self.app.calendar_load(start, end)
         self.send_json({"events": events, "errors": errors})
 
     def calendar_target(self, d):
@@ -2351,7 +2372,7 @@ class Handler(BaseHTTPRequestHandler):
         ev = cal.clean_event(d.get("event"))
         src, user, pw = self.calendar_target(d)
         uid = cal.new_uid()
-        text = cal.build_event(uid, ev["summary"], ev["start"], ev["end"], ev["all_day"], ev["location"], ev["description"], ev["repeat"])
+        text = cal.build_event(uid, ev["summary"], ev["start"], ev["end"], ev["all_day"], ev["location"], ev["description"], ev["repeat"], ev.get("reminder"))
         if src is None:
             self.app.db.cal_put(uid, text)
         else:
@@ -2362,6 +2383,7 @@ class Handler(BaseHTTPRequestHandler):
                 cal.caldav_put(coll.rstrip("/") + "/" + uid.replace("@", "-") + ".ics", user, pw, text)
             except cal.CalendarError as e:
                 raise ValueError(str(e)) from None
+        self.app.reminders.invalidate(self.app.profile)
         self.send_json({"ok": True, "uid": uid})
 
     def calendar_update(self):
@@ -2386,6 +2408,7 @@ class Handler(BaseHTTPRequestHandler):
                 cal.caldav_put(href, user, pw, cal.update_event(text, uid, ev, times), d.get("etag") or None)
         except cal.CalendarError as e:
             raise ValueError(str(e)) from None
+        self.app.reminders.invalidate(self.app.profile)
         self.send_json({"ok": True})
 
     def calendar_href(self, src, href):
@@ -2407,7 +2430,28 @@ class Handler(BaseHTTPRequestHandler):
                 cal.caldav_delete(self.calendar_href(src, d.get("href")), user, pw, d.get("etag") or None)
             except cal.CalendarError as e:
                 raise ValueError(str(e)) from None
+        self.app.reminders.invalidate(self.app.profile)
         self.send_json({"ok": True})
+
+    def reminders_poll(self):
+        """GET /api/reminders: the calendar reminders of this profile that are due and that no page has been given yet,
+        as {items}. Each reminder is handed out once."""
+        self.send_json({"items": self.app.reminders.page_items(self.app, self.app.profile)})
+
+    def reminders_test(self):
+        """POST /api/reminders/test {ntfy_url, ntfy_topic, lang} (all optional, else the saved ones): send a test push
+        message to the ntfy topic, if there is one. The page shows its own test notification. The server address is
+        a setting of the installation: only admins may try another one than the saved one."""
+        d = self.body()
+        s = self.app.settings()
+        url = _check_pref("ntfy_url", d.get("ntfy_url", s["ntfy_url"]), "") if self.profile.get("admin") else s["ntfy_url"]
+        topic = _check_pref("ntfy_topic", d.get("ntfy_topic", s["ntfy_topic"]), "")
+        lang = _check_pref("reminder_lang", d.get("lang", s["reminder_lang"]), "")
+        text = reminders.TEXTS[lang]
+        if topic:
+            log.add_secret(topic)
+            reminders.send_ntfy(url, topic, text["test_title"], text["test"])
+        self.send_json({"ok": True, "pushed": bool(topic), "title": text["test_title"], "text": text["test"]})
 
     def calendar_parse(self):
         """POST /api/calendar/parse {text, now (device time with offset), model}: the model reads an event
@@ -2684,6 +2728,8 @@ ROUTES = [
     (r"/api/calendar/events", "POST", Handler.calendar_create),
     (r"/api/calendar/events", "PUT", Handler.calendar_update),
     (r"/api/calendar/events/delete", "POST", Handler.calendar_delete),
+    (r"/api/reminders", "GET", Handler.reminders_poll),
+    (r"/api/reminders/test", "POST", Handler.reminders_test),
     (r"/api/calendar/parse", "POST", Handler.calendar_parse),
     (r"/api/mail/accounts", "GET", Handler.mail_list_accounts),
     (r"/api/mail/accounts", "POST", Handler.mail_save_account),
