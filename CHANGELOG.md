@@ -4,12 +4,10 @@ All changes to Sunak, newest version first. Sunak shows the entries between your
 
 Format: one section per version, `## [a.b.c] – YYYY-MM-DD`, followed by short points under **Added**, **Changed**, **Fixed** or **Removed**. Every change to Sunak gets a new version and an entry here.
 
-## [0.18.0] – 2026-10-08
+## [0.17.2] – 2026-10-08
 
-### Added
-- Backups can be imported. Settings → Data has a new "Import backup" button next to "Download backup", and `sunak import FILE` does the same in a terminal (`--profile ID` picks the profile, default the main one; `--data-dir PATH` another data folder). It takes a backup file, or a single chat exported as JSON, and adds it to the profile you are in. Nothing is overwritten and nothing is added twice: chats, documents and notes with the same id (notes also with the same text), knowledge-base files with the same name, calendar events with the same id, mail accounts and calendar accounts with the same address are skipped, and a setting is taken over only when you have not set it yourself. Settings of the whole installation and model providers come in only from an admin profile; a profile never touches another profile's data.
-- After an import Sunak says what was added, what was skipped (already there, or damaged) and which passwords and API keys you have to enter again (they are never part of a backup). Pictures are not part of a backup either, so chats come back without them.
-- `POST /api/import` is the endpoint behind the button. A file that is not a Sunak backup is refused with a clear message; single damaged entries inside a backup are skipped and counted instead of stopping the import.
+### Changed
+- Documentation brought up to date with the current code: README (busy backend in the model list, settings search) and docs/ARCHITECTURE.md (settings search in the frontend). No change in behavior.
 
 ## [0.17.1] – 2026-10-08
 
