@@ -147,6 +147,27 @@ class ExtractTest(unittest.TestCase):
         self.assertEqual((mapping, n), ({0x41: "a", 0x42: "b", 0x43: "c"}, 1))
 
 
+class HostileInputTest(unittest.TestCase):
+    """Huge or hostile inputs must stay fast (these used to take seconds to minutes)."""
+
+    def test_pdf_scan_with_a_long_run_of_digits(self):
+        import time
+        from sunak import extract
+        start = time.monotonic()
+        self.assertIsNone(extract._OBJ_RE.search(b"1" * 100_000))
+        self.assertEqual(extract._OBJ_RE.search(b"x 12 0 obj").groups(), (b"12", b"0"))
+        self.assertLess(time.monotonic() - start, 10)  # it took minutes before; generous for slow CI runners
+
+    def test_search_words_and_chunks_of_a_huge_text(self):
+        import time
+        start = time.monotonic()
+        words = knowledge.terms(" ".join(f"word{i}x" for i in range(50_000)), limit=5)
+        self.assertEqual(words, [f"word{i}x" for i in range(5)])
+        chunks = knowledge.chunk("a" * 2_000_000, 1000)
+        self.assertEqual(sum(map(len, chunks)), 2_000_000)
+        self.assertLess(time.monotonic() - start, 10)
+
+
 class KnowledgeTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)

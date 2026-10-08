@@ -121,7 +121,11 @@ def remove(path, out):
 
 def remove_path_lines(rc):
     """Drop the PATH line install.sh added (and the blank line before it). True when the file changed."""
-    text = _read(rc)
+    try:  # byte-exact: an rc file that is not UTF-8 or has CRLF lines must come back as it was, minus our line
+        with open(rc, encoding="utf-8", errors="surrogateescape", newline="") as f:
+            text = f.read()
+    except OSError:
+        return False
     if PATH_MARK not in text:
         return False
     kept = []
@@ -131,7 +135,8 @@ def remove_path_lines(rc):
                 kept.pop()
             continue
         kept.append(line)
-    rc.write_text("\n".join(kept), encoding="utf-8")
+    with open(rc, "w", encoding="utf-8", errors="surrogateescape", newline="") as f:
+        f.write("\n".join(kept))
     return True
 
 

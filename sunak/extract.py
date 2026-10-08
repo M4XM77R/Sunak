@@ -146,7 +146,7 @@ class Op(str):
 DELIMS = b"()<>[]{}/%"
 WS = b" \t\r\n\f\x00"
 _NUM_RE = re.compile(rb"[+-]?(\d+\.?\d*|\.\d+)")
-_OBJ_RE = re.compile(rb"(\d+)\s+(\d+)\s+obj\b")
+_OBJ_RE = re.compile(rb"(?<!\d)(\d+)\s+(\d+)\s+obj\b")  # the lookbehind keeps a long run of digits from being retried at every digit
 _STREAM_RE = re.compile(rb"stream(\r\n|\n|\r)")
 _SKIP_RE = re.compile(rb"(?:[ \t\r\n\f\x00]+|%[^\r\n]*)+")
 

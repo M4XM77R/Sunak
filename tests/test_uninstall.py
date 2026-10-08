@@ -131,6 +131,13 @@ class UninstallTest(unittest.TestCase):
         self.run_cli("--yes", "--purge")
         self.assertTrue((self.home / "important.txt").exists())
 
+    def test_rc_file_comes_back_byte_exact(self):
+        # not UTF-8 and CRLF lines: only our PATH line may disappear
+        rc = self.home / ".bashrc"
+        rc.write_bytes(b"# caf\xe9\r\nexport A=1\r\n\n" + uninstall.PATH_MARK.encode() + b"\nexport B=2\r\n")
+        self.assertTrue(uninstall.remove_path_lines(rc))
+        self.assertEqual(rc.read_bytes(), b"# caf\xe9\r\nexport A=1\r\nexport B=2\r\n")
+
     def test_unknown_option(self):
         self.assertEqual(self.run_cli("--all"), 2)
 

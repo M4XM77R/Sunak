@@ -3,7 +3,9 @@ passes it on to whisper.cpp's server (…/inference) or an OpenAI-compatible one
 e.g. Speaches / faster-whisper-server or LocalAI) and returns the text. Reading aloud happens entirely
 in the browser."""
 
+import http.client
 import json
+import re
 import secrets
 import urllib.error
 import urllib.parse
@@ -60,6 +62,8 @@ def transcribe(url, wav, model="", language=""):
     if kind == "openai":
         fields["model"] = model.strip() or "whisper-1"
     if language:
+        if not re.fullmatch(r"[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})?", language):  # it goes into a multipart form
+            raise ValueError("Unknown language code")
         fields["language"] = language
     body, ctype = multipart(fields, "speech.wav", wav, "audio/wav")
     req = urllib.request.Request(full, data=body, method="POST", headers={"Content-Type": ctype, "User-Agent": "sunak"})
@@ -70,7 +74,7 @@ def transcribe(url, wav, model="", language=""):
     except urllib.error.HTTPError as e:
         detail = e.read().decode("utf-8", "replace")[:300].strip()
         raise providers.ProviderError(f"Whisper server: HTTP {e.code} {detail}".strip()) from None
-    except (urllib.error.URLError, OSError) as e:
+    except (urllib.error.URLError, OSError, http.client.HTTPException) as e:
         raise providers.ProviderError(f"Cannot reach the Whisper server at {full}: {getattr(e, 'reason', e)}") from None
     try:
         text = json.loads(raw)["text"]

@@ -263,6 +263,11 @@ def tcp(handler):
 
 
 class MailUnitTest(unittest.TestCase):
+    def test_folder_names_cannot_carry_imap_commands(self):
+        self.assertEqual(mail._quote('IN"BOX'), '"IN\\"BOX"')
+        with self.assertRaises(mail.MailError):
+            mail._quote('INBOX"\r\nA2 DELETE "x')
+
     def test_presets_and_helpers(self):
         self.assertEqual(mail.preset_for("Someone@GMAIL.com"), "gmail")
         self.assertEqual(mail.preset_for("a@web.de"), "webde")

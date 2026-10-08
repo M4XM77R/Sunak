@@ -33,11 +33,17 @@ def chunk(text, size=CHUNK_CHARS):
     pieces = []
     for para in re.split(r"\n\s*\n", text):
         para = para.strip()
-        while len(para) > size * 1.5:  # a very long paragraph: cut at a sentence or line end
-            cut = max(para.rfind(". ", 0, size), para.rfind("\n", 0, size))
+        start = 0  # an index instead of re-slicing the rest each time keeps a huge paragraph linear
+        while len(para) - start > size * 1.5:  # a very long paragraph: cut at a sentence or line end
+            cut = max(para.rfind(". ", start, start + size), para.rfind("\n", start, start + size)) - start
             cut = cut + 1 if cut > size // 3 else size
-            pieces.append(para[:cut].strip())
-            para = para[cut:].strip()
+            piece = para[start:start + cut].strip()
+            if piece:
+                pieces.append(piece)
+            start += cut
+            while start < len(para) and para[start].isspace():
+                start += 1
+        para = para[start:].strip()
         if para:
             pieces.append(para)
     out, cur = [], ""
@@ -54,13 +60,16 @@ def chunk(text, size=CHUNK_CHARS):
 
 def terms(text, limit=16):
     """Search words of a question: lower case, without stop words, unique, in order."""
-    out = []
+    out, seen = [], set()
     for w in re.findall(r"\w+", text.casefold()):
         w = w.strip("_")
         keep = len(w) >= 3 if w.isdigit() else len(w) >= 2 and w not in STOPWORDS
-        if keep and w not in out:
+        if keep and w not in seen:
+            seen.add(w)
             out.append(w)
-    return out[:limit]
+            if len(out) >= limit:
+                break
+    return out
 
 
 def fts_query(words):

@@ -5,6 +5,7 @@ import inspect
 import io
 import re
 import unittest
+from unittest import mock
 
 from sunak import __main__ as cli
 
@@ -64,6 +65,11 @@ class CliHelpTest(unittest.TestCase):
 
     def test_no_color_without_a_terminal(self):
         self.assertFalse(cli._color())  # stdout of the tests is not a terminal
+
+    def test_no_console_at_all(self):
+        # pythonw.exe (desktop icon, autostart on Windows) starts Sunak with sys.stdout = None
+        with mock.patch.object(cli.sys, "stdout", None):
+            self.assertFalse(cli._color())
 
 
 if __name__ == "__main__":

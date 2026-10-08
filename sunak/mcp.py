@@ -6,6 +6,7 @@ Sunak uses only tools (tools/list, tools/call), and every call needs the user's 
 (see toolrun.ToolRun). Pure standard library."""
 
 import hashlib
+import http.client
 import json
 import os
 import queue
@@ -200,7 +201,7 @@ class StdioServer(Server):
             try:
                 self.proc.stdin.write(json.dumps(msg).encode() + b"\n")
                 self.proc.stdin.flush()
-            except OSError:
+            except (OSError, ValueError, AttributeError):  # a dead pipe, a closed file, or close() ran meanwhile
                 pass  # noticed by the waiting request
 
     def _notify(self, method, params=None):
@@ -217,6 +218,14 @@ class StdioServer(Server):
                     msg = q.get(timeout=0.2)
                     break
                 except queue.Empty:
+                    if not self.alive():  # the end-of-process signal may have come before this request was registered
+                        try:  # or the server answered and exited before the reader thread queued the answer
+                            msg = q.get(timeout=0.5)
+                            break
+                        except queue.Empty:
+                            pass
+                        detail = self.stderr.strip().splitlines()[-3:]
+                        raise MCPError(f"{self.name} stopped" + (": " + " ".join(detail) if detail else "")) from None
                     if cancelled is not None and cancelled.is_set():
                         self._notify("notifications/cancelled", {"requestId": rid, "reason": "Stopped by the user"})
                         raise MCPError("Stopped") from None
@@ -276,7 +285,7 @@ class HttpServer(Server):
         except urllib.error.HTTPError as e:
             detail = e.read().decode("utf-8", "replace")[:300].strip()
             raise MCPError(f"{self.name}: HTTP {e.code} {detail}".strip()) from None
-        except (urllib.error.URLError, OSError) as e:
+        except (urllib.error.URLError, OSError, http.client.HTTPException) as e:
             raise MCPError(f"Cannot reach {self.name} at {url}: {getattr(e, 'reason', e)}") from None
 
     def _notify(self, method, params=None):

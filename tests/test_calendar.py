@@ -90,6 +90,10 @@ def events(text, start, end):
 
 
 class ICalendarTest(unittest.TestCase):
+    def test_a_lone_carriage_return_cannot_start_a_new_property(self):
+        self.assertNotIn("\r", cal.escape("a\rBEGIN:VALARM"))
+        self.assertEqual(cal.escape("a\rb\r\nc"), "a\\nb\\nc")
+
     def test_recurrence_and_time_zones(self):
         evs = events(SAMPLE, dt.datetime(2026, 10, 1, tzinfo=CEST), dt.datetime(2026, 12, 1, tzinfo=CET))
         got = [(e["start"], e["end"], e["summary"]) for e in evs]
