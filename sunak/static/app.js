@@ -1819,20 +1819,45 @@ async function openNewMail(aid) {
   }
 }
 function renderMailDesktop() {
-  const btn = $('#mailDesktop'), info = $('#mailDesktopState');
-  if (!window.Notification || !window.isSecureContext) {
-    btn.disabled = true;
-    info.textContent = tr('This browser cannot show notifications here (only on localhost or https).');
-    return;
+  for (const [btn, info] of [[$('#mailDesktop'), $('#mailDesktopState')], [$('#remindersDesktop'), $('#remindersDesktopState')]]) {
+    if (!window.Notification || !window.isSecureContext) {
+      btn.disabled = true;
+      info.textContent = tr('This browser cannot show notifications here (only on localhost or https).');
+      continue;
+    }
+    btn.disabled = Notification.permission !== 'default';
+    info.textContent = Notification.permission === 'granted' ? tr('On ✓')
+      : Notification.permission === 'denied' ? tr('Blocked in the browser settings') : '';
   }
-  btn.disabled = Notification.permission !== 'default';
-  info.textContent = Notification.permission === 'granted' ? tr('On ✓')
-    : Notification.permission === 'denied' ? tr('Blocked in the browser settings') : '';
 }
-$('#mailDesktop').onclick = async () => {
-  try { await Notification.requestPermission(); } catch (e) { /* old browsers */ }
-  renderMailDesktop();
-};
+for (const id of ['#mailDesktop', '#remindersDesktop']) {
+  $(id).onclick = async () => {
+    try { await Notification.requestPermission(); } catch (e) { /* old browsers */ }
+    renderMailDesktop();
+  };
+}
+
+/* calendar reminders: every 30 seconds the server hands out the due ones this profile has not been given yet (each
+   only once); each gets a notice in the page and, when allowed, a notification of the system. */
+const REMINDER_POLL = 30000;
+let remindersPolling = false;
+function showReminder(r) {
+  toast(`${r.title} · ${r.text}`, { label: tr('Open'), fn: () => show('calendar') });
+  if (window.Notification?.permission === 'granted') {
+    try {
+      const n = new Notification(r.title, { body: r.text, icon: '/icon.svg', tag: 'sunak-reminder-' + r.id, requireInteraction: true });
+      n.onclick = () => { window.focus(); show('calendar'); n.close(); };
+    } catch (e) { /* not allowed here */ }
+  }
+}
+async function checkReminders() {
+  if (remindersPolling || !state.settings?.reminders) return;
+  remindersPolling = true;
+  try {
+    (await api('/api/reminders')).items.forEach(showReminder);
+  } catch (e) { /* the next look tries again */ }
+  remindersPolling = false;
+}
 
 /* settings: link, test and remove accounts */
 let mailDraftAcc = null;
@@ -2689,6 +2714,7 @@ function calTargets() {
   }
   return out;
 }
+const remLabel = (n) => (n < 0 ? tr('{n} minutes after the start', { n: -n }) : tr('{n} minutes before', { n }));
 function editEvent(e, draft) {
   // e: an existing event, or null with `draft` {summary, start, end, all_day, location, description} in local form
   cal.editing = e;
@@ -2719,8 +2745,23 @@ function editEvent(e, draft) {
   const target = el('select', { 'aria-label': 'Calendar' }, calTargets().map((t) => el('option', { value: t.value }, t.label)));
   target.value = store.get('sunak-cal-target', 'local');
   if (!target.value) target.value = 'local';
+  // reminder: minutes before the start; all-day events are reminded at 9:00 (negative = after midnight of the day)
+  const remSel = el('select', { 'aria-label': 'Reminder' });
+  remSel.disabled = !writable;
+  let remDirty = false;
+  const fillRem = (keep) => {
+    const opts = allDay.checked ? [['', 'No reminder'], ['-540', 'On the day at 9:00'], ['900', 'The day before at 9:00'], ['2340', '2 days before at 9:00']]
+      : [['', 'No reminder'], ['0', 'At the start'], ['5', '5 minutes before'], ['10', '10 minutes before'], ['15', '15 minutes before'],
+        ['30', '30 minutes before'], ['60', '1 hour before'], ['120', '2 hours before'], ['1440', '1 day before'], ['2880', '2 days before']];
+    if (keep !== '' && !opts.some(([v]) => v === keep)) opts.push([keep, remLabel(Number(keep))]);
+    remSel.replaceChildren(...opts.map(([v, t]) => el('option', { value: v }, t)));
+    remSel.value = keep;
+  };
+  const remStart = e ? (e.alarms?.length ? String(e.alarms[0]) : '') : (d.all_day ? '' : store.get('sunak-cal-reminder', ''));
+  fillRem(remStart);
+  remSel.onchange = () => { remDirty = true; };
   const syncTimes = () => [startT, endT].forEach((i) => i.classList.toggle('hidden', allDay.checked));
-  allDay.onchange = syncTimes; syncTimes();
+  allDay.onchange = () => { syncTimes(); fillRem(remSel.value); }; syncTimes();  // a chosen reminder stays, as an extra choice if need be
   startD.onchange = () => { if (endD.value < startD.value) endD.value = startD.value; };
   const save = async () => {
     if (!title.value.trim()) { title.focus(); return toast('Give the event a title'); }
@@ -2732,6 +2773,11 @@ function editEvent(e, draft) {
       end = new Date(`${endD.value || startD.value}T${endT.value || startT.value || '00:00'}`).toISOString();
     }
     const event = { summary: title.value, all_day: allDay.checked, start, end, location: place.value, description: notes.value, repeat: e ? '' : repeat.value };
+    if (remDirty || !e) {
+      event.reminder = remSel.value === '' ? null : Number(remSel.value);
+      if (e) event.reminder_was = e.alarms?.length ? e.alarms[0] : null;  // only the reminder that was shown is replaced
+    }
+    if (!e) store.set('sunak-cal-reminder', allDay.checked ? '' : remSel.value);
     try {
       if (e) await api('/api/calendar/events', { method: 'PUT', body: { source: e.source, uid: e.uid, href: e.href, etag: e.etag, recurring: series, event } });
       else {
@@ -2763,6 +2809,8 @@ function editEvent(e, draft) {
     el('div', { class: 'row' }, el('span', { class: 'cal-lbl' }, 'Start'), startD, startT),
     el('div', { class: 'row' }, el('span', { class: 'cal-lbl' }, 'End'), endD, endT),
     e ? null : el('div', { class: 'row' }, repeat, target),
+    el('div', { class: 'row' }, el('span', { class: 'cal-lbl' }, 'Reminder'), remSel),
+    !state.settings?.reminders && writable ? el('p', { class: 'muted small' }, 'Reminders are off. Turn them on in Settings → Reminders.') : null,
     place, notes,
     el('div', { class: 'row' },
       writable ? el('button', { class: 'btn primary', type: 'button', onclick: save }, 'Save') : null,
@@ -2949,6 +2997,10 @@ function renderSettings() {
   $('#useMemory').checked = s.use_memory;
   $('#autoMemory').checked = s.auto_memory;
   $('#mailNotify').checked = s.mail_notify;
+  $('#remindersOn').checked = s.reminders;
+  $('#ntfyUrl').value = s.ntfy_url;
+  $('#ntfyUrl').disabled = !isAdmin();
+  $('#ntfyTopic').value = s.ntfy_topic;
   renderMailDesktop();
   $('#checkUpdates').checked = s.check_updates;
   $('#reportMode').value = s.error_reports || 'off';
@@ -3109,7 +3161,7 @@ $('#saveSettings').onclick = async () => {
     const install = !isAdmin() ? {} : {
       ...(mcpChanged ? { mcp_servers: draftMcp.map(mcpBody) } : {}),
       providers: draftProviders.filter((p) => p.base_url.trim()), check_updates: $('#checkUpdates').checked,
-      error_reports: $('#reportMode').value,
+      error_reports: $('#reportMode').value, ntfy_url: $('#ntfyUrl').value,
       speech_input: $('#speechInput').value, whisper_url: $('#whisperUrl').value, whisper_model: $('#whisperModel').value,
       ai_image_detect: $('#aiImageDetect').checked,
       image_gen: $('#imageGen').value, image_gen_url: $('#imageGenUrl').value,
@@ -3118,7 +3170,8 @@ $('#saveSettings').onclick = async () => {
     };
     state.settings = await api('/api/settings', { method: 'PUT', body: { ...install,
       system_prompt: $('#sysPrompt').value, temperature: parseFloat($('#temperature').value), use_memory: $('#useMemory').checked, auto_memory: $('#autoMemory').checked,
-      mail_notify: $('#mailNotify').checked, accent: s.accent, theme: s.theme, default_model: $('#defaultModel').value, personas: draftPersonas,
+      mail_notify: $('#mailNotify').checked, reminders: $('#remindersOn').checked,
+      ntfy_topic: $('#ntfyTopic').value, reminder_lang: sunakLang, accent: s.accent, theme: s.theme, default_model: $('#defaultModel').value, personas: draftPersonas,
     } });
     applyLook();
     renderPersonaSelect();
@@ -3130,6 +3183,20 @@ $('#saveSettings').onclick = async () => {
     $('#settingsMsg').textContent = 'Saved ✓';
     setTimeout(() => ($('#settingsMsg').textContent = ''), 2000);
   } catch (e) { toast(e.message); }
+};
+$('#ntfyNew').onclick = () => {
+  const b = crypto.getRandomValues(new Uint8Array(8));
+  $('#ntfyTopic').value = 'sunak-' + [...b].map((x) => x.toString(16).padStart(2, '0')).join('');
+  $('#remindersMsg').textContent = tr('Save the settings, then subscribe to this topic in the ntfy app.');
+};
+$('#remindersTest').onclick = async () => {
+  const msg = $('#remindersMsg');
+  msg.textContent = '';
+  try {
+    const r = await api('/api/reminders/test', { method: 'POST', body: { ...(isAdmin() ? { ntfy_url: $('#ntfyUrl').value } : {}), ntfy_topic: $('#ntfyTopic').value, lang: sunakLang } });
+    showReminder({ id: 'test', title: r.title, text: r.text });
+    msg.textContent = r.pushed ? tr('Test sent to your phone and shown here.') : tr('Test shown here. Enter a topic to test the push message.');
+  } catch (e) { msg.textContent = e.message; }
 };
 const IMAGE_GEN_URLS = { automatic1111: 'http://127.0.0.1:7860', comfyui: 'http://127.0.0.1:8188' };
 function renderLocalGenSelect() {
@@ -3495,6 +3562,8 @@ async function refreshAll(poll = false) {
   setInterval(checkUpdate, 3600000);
   setTimeout(checkNewMail, 5000);
   setInterval(checkNewMail, MAIL_POLL);
+  setTimeout(checkReminders, 3000);
+  setInterval(checkReminders, REMINDER_POLL);
 })();
 
 /* composer options menu (drop-up): opens above the text field; closes on pick, outside click or Escape */

@@ -35,6 +35,7 @@ MAX_RANGE_DAYS = 400             # longest time span one request may ask for
 ICS_CACHE = 300                  # seconds a subscribed ICS file is reused
 UTC = dt.timezone.utc
 REPEATS = ("", "DAILY", "WEEKLY", "MONTHLY", "YEARLY")
+REMINDER_RANGE = (-24 * 60, 7 * 24 * 60)  # minutes before the start; negative = after it (all-day: "9:00 on the day" is -540)
 
 # CalDAV addresses of providers; the same keys as mail.PRESETS where a provider has both
 PRESETS = {
@@ -302,6 +303,35 @@ def parse_duration(v):
     return -delta if sign == "-" else delta
 
 
+def alarm_lead(c):
+    """Minutes before the start at which the reminder component `c` (VALARM) goes off, or None when it is not one
+    Sunak handles: only reminders relative to the start count (not to the end, not at a fixed time), and not
+    e-mail or program ones."""
+    if c.name != "VALARM" or c.text("ACTION").upper() not in ("", "DISPLAY", "AUDIO"):
+        return None
+    p, v = c.get("TRIGGER")
+    delta = parse_duration(v) if v and (p or {}).get("VALUE", "DURATION").upper() == "DURATION" \
+        and (p or {}).get("RELATED", "START").upper() == "START" else None
+    return None if delta is None else round(-delta.total_seconds() / 60)
+
+
+def alarms(ev):
+    """Minutes before the start at which the event's reminders go off (see alarm_lead), sorted."""
+    return sorted({m for m in map(alarm_lead, ev.children) if m is not None})
+
+
+def trigger(minutes):
+    """TRIGGER value for a reminder `minutes` before the start (negative: after it), e.g. -PT15M."""
+    days, rest = divmod(abs(minutes), 1440)
+    hours, mins = divmod(rest, 60)
+    body = (f"{days}D" if days else "") + ("T" + (f"{hours}H" if hours else "") + (f"{mins}M" if mins else "") if rest else "")
+    return ("-" if minutes > 0 else "") + "P" + body if body else "PT0S"
+
+
+def alarm_lines(minutes):
+    return ["BEGIN:VALARM", "ACTION:DISPLAY", "DESCRIPTION:Reminder", f"TRIGGER:{trigger(minutes)}", "END:VALARM"]
+
+
 def fmt(value):
     """Browser form of a start or end: a date, or a UTC date-time."""
     if isinstance(value, dt.datetime):
@@ -562,7 +592,7 @@ def _expand(ev, resolve, start, end, source, overrides, override=False):
         out.append({"id": f"{source}|{uid}|{fmt(s)}", "uid": uid, "source": source, "summary": ev.text("SUMMARY") or "",
                     "location": ev.text("LOCATION"), "description": ev.text("DESCRIPTION")[:4000],
                     "start": fmt(s), "end": fmt(e), "all_day": all_day,
-                    "recurring": bool(rr) or override, "status": ev.text("STATUS").lower()})
+                    "recurring": bool(rr) or override, "status": ev.text("STATUS").lower(), "alarms": alarms(ev)})
     return out
 
 
@@ -585,7 +615,9 @@ def serialize(cals):
 
 def update_event(text, uid, ev, times=True):
     """`text` with the event `uid` changed to `ev` (from clean_event): title, place and notes, and for a
-    single event also the times and the repeat rule. Everything else (reminders, guests…) stays."""
+    single event also the times and the repeat rule. The reminder changes only when `ev` has a "reminder" key: the
+    reminder that was shown (`reminder_was`, minutes, or None) is replaced by it (None removes it); every other
+    reminder of the event stays. Everything else (guests…) stays too."""
     cals = parse(text)
     master = None
     for cal in cals:
@@ -613,11 +645,21 @@ def update_event(text, uid, ev, times=True):
             new.append(("RRULE", {}, f"FREQ={ev['repeat']}"))
     uid_at = next((i for i, p in enumerate(props) if p[0] == "UID"), -1)
     master.props = props[:uid_at + 1] + new + props[uid_at + 1:]
+    if "reminder" in ev:
+        was = ev.get("reminder_was")
+        shown = next((c for c in master.children if was is not None and alarm_lead(c) == was), None)
+        if shown is not None:
+            master.children.remove(shown)
+        if ev["reminder"] is not None and ev["reminder"] not in alarms(master):
+            alarm = Component("VALARM")
+            alarm.props = [("ACTION", {}, "DISPLAY"), ("DESCRIPTION", {}, "Reminder"), ("TRIGGER", {}, trigger(ev["reminder"]))]
+            master.children.append(alarm)
     return serialize(cals)
 
 
-def build_event(uid, summary, start, end, all_day, location="", description="", repeat=""):
-    """A VCALENDAR text with one VEVENT; start and end are dates (all-day) or UTC datetimes."""
+def build_event(uid, summary, start, end, all_day, location="", description="", repeat="", reminder=None):
+    """A VCALENDAR text with one VEVENT; start and end are dates (all-day) or UTC datetimes. `reminder`: minutes
+    before the start, or None."""
     now = dt.datetime.now(UTC)
     lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Sunak//Calendar//EN", "CALSCALE:GREGORIAN", "BEGIN:VEVENT",
              f"UID:{uid}", f"DTSTAMP:{ical(now)}"]
@@ -632,6 +674,8 @@ def build_event(uid, summary, start, end, all_day, location="", description="", 
         lines.append(f"DESCRIPTION:{escape(description)}")
     if repeat:
         lines.append(f"RRULE:FREQ={repeat}")
+    if reminder is not None:
+        lines += alarm_lines(reminder)
     lines += ["END:VEVENT", "END:VCALENDAR"]
     return "\r\n".join(fold(line) for line in lines) + "\r\n"
 
@@ -655,6 +699,18 @@ def clean_event(d):
     if repeat not in REPEATS:
         raise ValueError("repeat must be DAILY, WEEKLY, MONTHLY or YEARLY")
     out = {"summary": summary.strip()[:300], "start": start, "end": end, "all_day": all_day, "repeat": repeat}
+    if "reminder" in d:  # absent = leave the reminders of the event as they are; null/"" = none
+        r = d["reminder"]
+        if r in (None, ""):
+            out["reminder"] = None
+        elif isinstance(r, bool) or not isinstance(r, (int, float)) or r != int(r) or not REMINDER_RANGE[0] <= r <= REMINDER_RANGE[1]:
+            raise ValueError("reminder must be a whole number of minutes before the start (up to 7 days)")
+        else:
+            out["reminder"] = int(r)
+        w = d.get("reminder_was")  # the reminder the form showed, so that only this one is replaced
+        if w is not None and (isinstance(w, bool) or not isinstance(w, (int, float)) or w != int(w)):
+            raise ValueError("reminder_was must be a whole number of minutes")
+        out["reminder_was"] = None if w is None else int(w)
     for k, size in (("location", 300), ("description", 8000)):
         v = d.get(k) or ""
         if not isinstance(v, str):
