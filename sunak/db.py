@@ -272,6 +272,12 @@ class DB:
             c = self.conn
             if c.execute("SELECT 1 FROM sessions WHERE id = ?", (s["id"],)).fetchone():
                 return False
+            if s.get("fresh"):  # no usable id in the file: the same title, time and first message mean the same chat
+                first = s["messages"][0]["content"] if s["messages"] else None
+                if c.execute("SELECT 1 FROM sessions WHERE title = ? AND (? IS NULL OR created = ?) AND "
+                             "(SELECT content FROM messages WHERE session_id = sessions.id ORDER BY id LIMIT 1) IS ?",
+                             (s["title"], s["given_created"], s["given_created"], first)).fetchone():
+                    return False
             try:
                 c.execute("INSERT INTO sessions(id, title, model, system, use_kb, persona, use_web, created, updated) "
                           "VALUES(?,?,?,?,?,?,?,?,?)",

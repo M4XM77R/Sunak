@@ -126,6 +126,7 @@ function renderImport(r) {
   line(`${tr('Added')}: ${importCounts(r.added) || tr('nothing')}`);
   if (importCounts(r.skipped)) line(`${tr('Skipped, already there')}: ${importCounts(r.skipped)}`);
   if (r.invalid) line(`${tr('Skipped, damaged')}: ${r.invalid}`);
+  if (r.failed) line(`${tr('Could not be saved')}: ${r.failed}`);
   if (r.secrets.length) line(`${tr('Enter again in Settings')}: ${r.secrets.map((x) => IMPORT_SECRET[x.kind](x.name)).join('; ')}`);
   r.notes.forEach((n) => line(tr(n))); // the server's notes are fixed English sentences
   if (['mail_accounts', 'calendars', 'personas', 'providers', 'settings'].some((k) => r.added[k])) {
@@ -737,7 +738,9 @@ function genFigure(m) {
   if (m.meta.pending) {
     return el('div', { class: 'gen-wait', role: 'status' }, el('progress', { max: 1 }), el('span', { class: 'muted small gen-status' }, 'Painting the picture…'), el('div', { class: 'muted small gen-prompt', 'data-no-i18n': '' }));
   }
-  const g = m.meta.imagegen, src = `/api/images/${m.meta.images[0]}`;
+  const g = m.meta.imagegen;
+  if (!g || !m.meta.images?.length) return el('div', { class: 'muted small' }, 'The picture is not available.');
+  const src = `/api/images/${m.meta.images[0]}`;
   return el('figure', { class: 'gen-figure' },
     el('a', { href: src, target: '_blank', rel: 'noopener' }, el('img', { src, alt: g.prompt, loading: 'lazy', width: g.width, height: g.height, 'data-no-i18n': '' })),
     el('figcaption', { class: 'muted small' },
@@ -1483,11 +1486,14 @@ $('#webToggle').onclick = async () => {
   await setWeb(on);
   toast(on ? 'Web search on: your question goes to the search engine' : 'Web search off');
 };
+const isWebUrl = (u) => typeof u === 'string' && /^https?:\/\//i.test(u);  // never javascript:, data: or file: in a link
+function hostOf(u) { try { return new URL(u).hostname; } catch { return u; } }
 function webSourcesEl(web) {
+  const list = (web.sources || []).filter((src) => isWebUrl(src.url));
   return el('div', { class: 'sources kb-sources' },
     el('span', { class: 'muted small', title: tr('Searched for: {query}', { query: web.query }) }, icon('globe', 'solo')),
-    web.sources.map((src, i) => el('a', { class: 'chip', href: src.url, target: '_blank', rel: 'noopener noreferrer', title: src.url },
-      `[${i + 1}] ${src.title || new URL(src.url).hostname}`)));
+    list.map((src, i) => el('a', { class: 'chip', href: src.url, target: '_blank', rel: 'noopener noreferrer', title: src.url },
+      `[${i + 1}] ${src.title || hostOf(src.url)}`)));
 }
 
 async function loadKbData() {

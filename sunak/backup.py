@@ -6,9 +6,12 @@ invalid and the rest still comes in. `restore_content` handles what lives in a p
 notes, knowledge base, calendar events); settings, mail accounts and calendar accounts need the app's own checks
 and are done by `App.import_backup` (server.py), which calls this module first."""
 
+import contextlib
+import hashlib
 import json
 import math
 import re
+import sqlite3
 import time
 
 from . import __version__, cal, knowledge
@@ -25,9 +28,10 @@ COUNTS = ("chats", "documents", "notes", "knowledge", "events", "mail_accounts",
 
 def new_report():
     """What an import did: items added, items skipped because they exist already, items that were damaged, the
-    passwords and keys the user has to enter again (`secrets`: {kind: mail|calendar|provider, name}), and notes."""
+    items the database refused (`failed`, a busy or full disk: the import is partial), the passwords and keys the user
+    has to enter again (`secrets`: {kind: mail|calendar|provider, name}), and notes."""
     return {"kind": "", "added": dict.fromkeys(COUNTS, 0), "skipped": dict.fromkeys(COUNTS, 0), "invalid": 0,
-            "secrets": [], "notes": []}
+            "failed": 0, "secrets": [], "notes": []}
 
 
 def read_file(path):
@@ -75,6 +79,56 @@ def classify(data, report):
     return "backup"
 
 
+PARTIAL = "Some items could not be saved (the database was busy or full), so the import is partial. Run it again to add the rest."
+
+
+@contextlib.contextmanager
+def guard(report):
+    """A database error while storing one item (or one part) is counted in `failed` instead of ending the import,
+    which leaves what was written before in place. Running the import again adds the rest."""
+    try:
+        yield
+    except sqlite3.Error:
+        report["failed"] += 1
+        if PARTIAL not in report["notes"]:
+            report["notes"].append(PARTIAL)
+
+
+STEP_STATUS = ("running", "waiting", "done", "error", "denied", "stopped")
+
+
+def safe_url(u):
+    """True for an http(s) address; other schemes (javascript:, data:, file:) never become a link."""
+    return isinstance(u, str) and len(u) <= 2000 and re.fullmatch(r"https?://[^\s<>\"']+", u, re.I) is not None
+
+
+def clean_meta(meta):
+    """The parts of a message's `meta` that the page shows, rebuilt from their text fields only (a backup may come from
+    anywhere): the knowledge-base files and web pages an answer used, and the steps of a tool run. Pictures, picture
+    jobs and event or mail cards are dropped: they need files or state that a backup does not hold."""
+    out = {}
+    if isinstance(meta.get("sources"), list):
+        out["sources"] = [{"id": _text(x.get("id"), limit=80), "name": _text(x.get("name"), limit=300)}
+                          for x in meta["sources"] if isinstance(x, dict) and isinstance(x.get("name"), str)]
+    web = meta.get("web")
+    if isinstance(web, dict) and isinstance(web.get("sources"), list):
+        out["web"] = {"query": _text(web.get("query"), limit=300),
+                      "sources": [{"title": _text(x.get("title"), limit=300), "url": x["url"]}
+                                  for x in web["sources"] if isinstance(x, dict) and safe_url(x.get("url"))]}
+    tools = meta.get("tools")
+    if isinstance(tools, dict) and isinstance(tools.get("parts"), list):
+        parts = []
+        for x in tools["parts"]:
+            if isinstance(x, dict) and isinstance(x.get("text"), str):
+                parts.append({"text": x["text"]})
+            elif isinstance(x, dict) and isinstance(x.get("step"), dict):
+                st = x["step"]
+                parts.append({"step": {k: _text(st.get(k), limit=20000) for k in ("title", "tool", "command", "input", "output")
+                                       if isinstance(st.get(k), str)} | {"status": st["status"] if st.get("status") in STEP_STATUS else "done"}})
+        out["tools"] = {"parts": parts}
+    return out
+
+
 def _text(v, default="", limit=None):
     v = v if isinstance(v, str) else default
     return v[:limit] if limit else v
@@ -85,8 +139,8 @@ def _time(v, default):
 
 
 def clean_session(s):
-    """A chat ready for DB.restore_session, or None when it is damaged. Pictures are not part of a backup, so
-    their references are dropped; the second value tells how many messages had some."""
+    """(chat ready for DB.restore_session or None when it is damaged, number of messages that had pictures). `fresh`: the
+    chat had no usable id, so it is recognised by title, time and first message instead (see DB.restore_session)."""
     if not isinstance(s, dict) or not isinstance(s.get("messages", []), list):
         return None, 0
     now, pictures, messages = time.time(), 0, []
@@ -94,14 +148,15 @@ def clean_session(s):
         if not isinstance(m, dict) or m.get("role") not in ROLES or not isinstance(m.get("content"), str):
             return None, 0
         meta = m.get("meta") if isinstance(m.get("meta"), dict) else {}
-        if "images" in meta:
-            meta = {k: v for k, v in meta.items() if k != "images"}
+        if any(k in meta for k in ("images", "imagegen", "pending")):
             pictures += 1
+        meta = clean_meta(meta)
         messages.append({"role": m["role"], "content": m["content"], "model": _text(m.get("model"), limit=200),
                          "created": _time(m.get("created"), now), "meta": meta})
-    sid = s.get("id") if isinstance(s.get("id"), str) and ID_RE.fullmatch(s["id"]) else new_id()
+    fresh = not (isinstance(s.get("id"), str) and ID_RE.fullmatch(s["id"]))
+    sid = new_id() if fresh else s["id"]
     created = _time(s.get("created"), now)
-    return {"id": sid, "title": _text(s.get("title"), "Imported chat", 200).strip() or "Imported chat",
+    return {"id": sid, "fresh": fresh, "given_created": _time(s.get("created"), None), "title": _text(s.get("title"), "Imported chat", 200).strip() or "Imported chat",
             "model": _text(s.get("model"), limit=200), "system": _text(s.get("system")),
             "use_kb": s.get("use_kb") is True, "use_web": s.get("use_web") is True, "persona": _text(s.get("persona"), limit=40),
             "created": created, "updated": _time(s.get("updated"), created), "messages": messages}, pictures
@@ -138,7 +193,8 @@ def restore_content(db, data, report):
             report["invalid"] += 1
             continue
         pictures += pics
-        _count(report, "chats", db.restore_session(s))
+        with guard(report):
+            _count(report, "chats", db.restore_session(s))
     if pictures:
         report["notes"].append("Some messages had pictures. Pictures are not part of a backup, so they are missing.")
     for key, count, clean, restore in (("documents", "documents", _document, db.restore_document),
@@ -148,21 +204,10 @@ def restore_content(db, data, report):
             if item is None:
                 report["invalid"] += 1
             else:
-                _count(report, count, restore(item))
-    known = {f["name"] for f in db.kb_files()}
-    for raw in data.get("knowledge", []):
-        name = _text(raw.get("name"), limit=300).strip() if isinstance(raw, dict) else ""
-        text = raw.get("text") if isinstance(raw, dict) else None
-        chunks = knowledge.chunk(text) if isinstance(text, str) else []
-        if not name or not chunks:
-            report["invalid"] += 1
-        elif name in known:
-            report["skipped"]["knowledge"] += 1
-        else:
-            size = raw.get("size") if isinstance(raw.get("size"), int) and not isinstance(raw.get("size"), bool) else 0
-            db.kb_add(name, max(0, size) or len(text.encode("utf-8")), chunks)
-            known.add(name)
-            report["added"]["knowledge"] += 1
+                with guard(report):
+                    _count(report, count, restore(item))
+    with guard(report):
+        _restore_knowledge(db, data.get("knowledge", []), report)
     for raw in data.get("calendar", []):
         uid, ics = (raw.get("uid"), raw.get("ics")) if isinstance(raw, dict) else (None, None)
         try:
@@ -172,11 +217,45 @@ def restore_content(db, data, report):
         except (cal.CalendarError, ValueError):
             report["invalid"] += 1
             continue
-        if db.cal_get(uid) is not None:
-            report["skipped"]["events"] += 1
-        else:
-            db.cal_put(uid, ics)
-            report["added"]["events"] += 1
+        with guard(report):
+            if db.cal_get(uid) is not None:
+                report["skipped"]["events"] += 1
+            else:
+                db.cal_put(uid, ics)
+                report["added"]["events"] += 1
+
+
+def _digest(text):
+    return hashlib.sha1(text.encode("utf-8", "replace")).hexdigest()
+
+
+def _restore_knowledge(db, items, report):
+    """A file is skipped when one with the same name and the same text is there. Same name, other text: it comes in
+    under "name (imported)" (never replacing the file that is there)."""
+    have = {}
+    for f in db.kb_files():
+        have.setdefault(f["name"], set()).add(_digest(db.kb_file(f["id"])["text"]))
+    for raw in items:
+        name = _text(raw.get("name"), limit=300).strip() if isinstance(raw, dict) else ""
+        text = raw.get("text") if isinstance(raw, dict) else None
+        chunks = knowledge.chunk(text) if isinstance(text, str) else []
+        if not name or not chunks:
+            report["invalid"] += 1
+            continue
+        digest = _digest("\n\n".join(chunks))  # as DB.kb_file hands out the text
+        if digest in have.get(name, ()):
+            report["skipped"]["knowledge"] += 1
+            continue
+        if name in have:
+            n, base = 1, f"{name} (imported)"
+            name = base
+            while name in have:
+                n += 1
+                name = f"{base} {n}"
+        size = raw.get("size") if isinstance(raw.get("size"), int) and not isinstance(raw.get("size"), bool) else 0
+        db.kb_add(name, max(0, size) or len(text.encode("utf-8")), chunks)
+        have.setdefault(name, set()).add(digest)
+        report["added"]["knowledge"] += 1
 
 
 LABELS = {"chats": ("chat", "chats"), "documents": ("document", "documents"), "notes": ("note", "notes"),
@@ -196,6 +275,8 @@ def summary(report):
         lines.append("Skipped, already there: " + counts("skipped"))
     if report["invalid"]:
         lines.append(f"Skipped, damaged: {report['invalid']}")
+    if report["failed"]:
+        lines.append(f"Could not be saved: {report['failed']}")
     if report["secrets"]:
         lines.append("Enter again in Settings (secrets are never part of a backup): " +
                      "; ".join(SECRET_WHAT[x["kind"]].format(name=x["name"]) for x in report["secrets"]))

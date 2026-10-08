@@ -86,7 +86,7 @@ class BackupTest(unittest.TestCase):
         s = inst.req("POST", "/api/sessions", {})
         inst.app.db.update_session(s["id"], title="Trip plans", system="Be brief", persona="p1", use_kb=True)
         inst.app.db.add_message(s["id"], "user", "Where to?")
-        inst.app.db.add_message(s["id"], "assistant", "<think>hm</think>Rome.", "ollama::tiny:1b", {"sources": ["a.md"], "images": ["x.png"]})
+        inst.app.db.add_message(s["id"], "assistant", "<think>hm</think>Rome.", "ollama::tiny:1b", {"sources": [{"id": "f1", "name": "a.md"}], "web": {"query": "rome", "sources": [{"title": "Rome", "url": "https://example.com/rome"}]}, "images": ["x.png"]})
         doc = inst.req("POST", "/api/documents", {"title": "Plan", "content": "# Plan\nBuy tickets"})
         note = inst.req("POST", "/api/notes", {"content": "I like horses", "is_memory": True})
         inst.req("POST", "/api/knowledge", {"name": "atlantis.md", "data": base64.b64encode("Poseidonia is the capital.".encode()).decode()})
@@ -292,6 +292,68 @@ class BackupTest(unittest.TestCase):
         again = Instance(self.tmp.name, f"{self._testMethodName}-b")
         self.made.append(again)
         self.assertEqual([s["title"] for s in again.app.db.list_sessions()], ["Trip plans"])
+
+    def test_imported_meta_is_rebuilt_and_cannot_run_code(self):
+        b = self.new("b")
+        evil = {"title": "Evil", "messages": [
+            {"role": "user", "content": "q"},
+            {"role": "assistant", "content": "a", "meta": {
+                "web": {"query": "x", "sources": [{"title": "bad", "url": "javascript:alert(1)"}, {"title": "data", "url": "data:text/html,<script>"},
+                                                {"title": "fine", "url": "https://example.com/a"}, {"title": "no url"}, {"url": 5}]},
+                "sources": [{"id": "f", "name": "a.md"}, "text", {"id": 1}],
+                "tools": {"parts": [{"text": "done"}, {"step": {"title": "t", "status": "x\" onclick=\"y", "diff": "d", "n": 1}}, 5]},
+                "imagegen": {"prompt": "p"}, "pending": True, "assist": {"status": "ok"}, "imagine": {"aspect": "square"}, "other": 1}}]}
+        r = b.req("POST", "/api/import", evil)
+        self.assertEqual(r["added"]["chats"], 1)
+        meta = b.app.db.get_session(b.app.db.list_sessions()[0]["id"])["messages"][1]["meta"]
+        self.assertEqual(meta["web"], {"query": "x", "sources": [{"title": "fine", "url": "https://example.com/a"}]})
+        self.assertEqual(meta["sources"], [{"id": "f", "name": "a.md"}])
+        self.assertEqual(meta["tools"], {"parts": [{"text": "done"}, {"step": {"title": "t", "status": "done"}}]})
+        self.assertEqual(set(meta), {"web", "sources", "tools"})  # no picture job that would spin forever, no cards
+        self.assertIn("Some messages had pictures", " ".join(r["notes"]))
+
+    def test_chats_without_an_id_are_not_added_twice(self):
+        b = self.new("b")
+        chat = {"title": "No id", "created": 1700000000, "messages": [{"role": "user", "content": "hello"}]}
+        self.assertEqual(b.req("POST", "/api/import", chat)["added"]["chats"], 1)
+        again = b.req("POST", "/api/import", chat)
+        self.assertEqual((again["added"]["chats"], again["skipped"]["chats"]), (0, 1))
+        same_title = {"title": "No id", "created": 1700000000, "messages": [{"role": "user", "content": "other"}]}
+        self.assertEqual(b.req("POST", "/api/import", same_title)["added"]["chats"], 1)
+        nothing = {"title": "Empty", "messages": []}
+        b.req("POST", "/api/import", nothing)
+        self.assertEqual(b.req("POST", "/api/import", nothing)["skipped"]["chats"], 1)
+        self.assertEqual(len(b.app.db.list_sessions()), 3)
+
+    def test_knowledge_files_are_compared_by_name_and_text(self):
+        b = self.new("b")
+        one = {"knowledge": [{"name": "a.md", "text": "First text."}]}
+        self.assertEqual(b.req("POST", "/api/import", one)["added"]["knowledge"], 1)
+        self.assertEqual(b.req("POST", "/api/import", one)["skipped"]["knowledge"], 1)
+        r = b.req("POST", "/api/import", {"knowledge": [{"name": "a.md", "text": "Other text."}]})
+        self.assertEqual(r["added"]["knowledge"], 1)  # the file that is there is not replaced
+        db = b.app.db
+        texts = {f["name"]: db.kb_file(f["id"])["text"] for f in db.kb_files()}
+        self.assertEqual(texts, {"a.md": "First text.", "a.md (imported)": "Other text."})
+
+    def test_a_database_error_leaves_a_partial_import_with_a_report(self):
+        import sqlite3
+        b = self.new("b")
+        data = {"sessions": [{"id": "s1", "title": "One", "messages": []}, {"id": "s2", "title": "Two", "messages": []}],
+                "notes": [{"content": "kept"}]}
+        real = b.app.db.restore_session
+        calls = []
+
+        def flaky(s):
+            calls.append(s["id"])
+            if s["id"] == "s1":
+                raise sqlite3.OperationalError("database is locked")
+            return real(s)
+        with unittest.mock.patch.object(b.app.db, "restore_session", flaky):
+            r = b.req("POST", "/api/import", data)
+        self.assertEqual((r["added"]["chats"], r["added"]["notes"], r["failed"]), (1, 1, 1))
+        self.assertIn("import is partial", " ".join(r["notes"]))
+        self.assertEqual(b.req("POST", "/api/import", data)["added"]["chats"], 1)  # running it again adds the rest
 
     def test_file_reader_limits(self):
         p = os.path.join(self.tmp.name, "big.json")

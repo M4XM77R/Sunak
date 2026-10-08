@@ -273,6 +273,7 @@ class App:
         self.host, self.port, self.handler = None, None, None  # set by make_server
         self.lan, self.lan_error = None, ""  # second server on the network address (phone access)
         self._lan_lock = threading.Lock()
+        self._import_lock = threading.Lock()  # one backup import at a time (backup.py)
 
     def _detect_gpu(self):
         try:
@@ -423,14 +424,18 @@ class App:
         exists is overwritten; a setting is taken over only when this profile has not set it yet. Settings of the whole
         installation and providers only come in when `admin`. Raises ValueError when `data` is no backup."""
         report = backup.new_report()
-        if backup.classify(data, report) == "backup":
+        kind = backup.classify(data, report)
+        with self._import_lock:  # the stages read, merge and write the same settings
             backup.restore_content(self.db, data, report)
-            mail_ids = self._import_mail(data.get("mail_accounts", []), report)
-            self._import_calendars(data.get("calendars", []), mail_ids, report)
-            self._import_settings(data.get("settings", {}), admin, report)
-            self.reminders.invalidate(self.profile)
-        else:
-            backup.restore_content(self.db, data, report)
+            if kind == "backup":
+                mail_ids = {}
+                with backup.guard(report):
+                    mail_ids = self._import_mail(data.get("mail_accounts", []), report)
+                with backup.guard(report):
+                    self._import_calendars(data.get("calendars", []), mail_ids, report)
+                with backup.guard(report):
+                    self._import_settings(data.get("settings", {}), admin, report)
+                self.reminders.invalidate(self.profile)
         return report
 
     def _import_settings(self, s, admin, report):

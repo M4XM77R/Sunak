@@ -990,5 +990,8 @@
 "The file is not valid JSON": "Die Datei ist kein gültiges JSON",
 "The backup was made by a newer Sunak; parts this version does not know are ignored.": "Die Sicherung stammt von einem neueren Sunak; Teile, die diese Version nicht kennt, werden ignoriert.",
 "Some messages had pictures. Pictures are not part of a backup, so they are missing.": "Einige Nachrichten hatten Bilder. Bilder sind nicht Teil einer Sicherung und fehlen deshalb.",
-"Settings of the whole installation and the model providers were left out: only an admin profile can import them.": "Einstellungen der ganzen Installation und die Modell-Anbieter wurden ausgelassen: Nur ein Admin-Profil kann sie importieren."
+"Settings of the whole installation and the model providers were left out: only an admin profile can import them.": "Einstellungen der ganzen Installation und die Modell-Anbieter wurden ausgelassen: Nur ein Admin-Profil kann sie importieren.",
+"Could not be saved": "Konnte nicht gespeichert werden",
+"The picture is not available.": "Das Bild ist nicht verfügbar.",
+"Some items could not be saved (the database was busy or full), so the import is partial. Run it again to add the rest.": "Einige Einträge konnten nicht gespeichert werden (die Datenbank war belegt oder voll), der Import ist daher unvollständig. Starte ihn noch einmal, um den Rest zu ergänzen."
 } };
