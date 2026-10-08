@@ -201,5 +201,31 @@ class ToolServerTest(unittest.TestCase):
         self.assertEqual(msgs[-1]["meta"]["agent"]["parts"][0]["step"]["tool"], "list_files")
 
 
+class FrontendTest(unittest.TestCase):
+    """The browser side lives in app.js and lang-de.js; check what the Python tests cannot run."""
+    STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "sunak", "static")
+
+    def read(self, name):
+        with open(os.path.join(self.STATIC, name), encoding="utf-8") as f:
+            return f.read()
+
+    def test_old_agent_steps_still_show_command_and_diff(self):
+        js = self.read("app.js")
+        step = js.split("function stepEl")[1][:600]
+        self.assertIn("st.command", step)
+        self.assertIn("diffEl(st.diff)", step)
+        self.assertIn(".step .diff .add", self.read("app.css"))
+
+    def test_pictures_are_painted_with_tools_on_too(self):
+        js = self.read("app.js")
+        self.assertIn("pictureIntent(text, false, 'chat')", js)
+        self.assertNotIn("tools (MCP) are on", js)
+
+    def test_notices_of_the_server_are_translated(self):
+        de = self.read("lang-de.js")
+        self.assertIn(f'"Stopped after {toolrun.MAX_STEPS} steps. Send a message to let the model continue."', de)
+        self.assertNotIn("project folder", de.lower())
+
+
 if __name__ == "__main__":
     unittest.main()
