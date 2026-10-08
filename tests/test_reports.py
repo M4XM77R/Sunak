@@ -147,6 +147,11 @@ class BuildTest(unittest.TestCase):
         long_quote = reports.describe(boom("Oops", "a" * (reports.MAX_MESSAGE - 20) + " 'my secret diary entry that goes on and on and on'"))[0]
         self.assertNotIn("diary", long_quote)
 
+    def test_an_apostrophe_is_not_an_open_quote(self):
+        text = "The provider's answer could not be read, please try again later"
+        self.assertEqual(reports.anonymize(text), text)
+        self.assertEqual(reports.anonymize('say "' + "a" * 30), "say <text>")
+
     def test_user_and_password_do_not_hide_the_real_host(self):
         out = reports.anonymize("failed: http://bob:pw123@intranet.corp.example/x")
         for hidden in ("bob", "pw123", "intranet.corp"):

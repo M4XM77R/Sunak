@@ -219,7 +219,13 @@ class StdioServer(Server):
                     break
                 except queue.Empty:
                     if not self.alive():  # the end-of-process signal may have come before this request was registered
-                        raise MCPError(f"{self.name} stopped") from None
+                        try:  # or the server answered and exited before the reader thread queued the answer
+                            msg = q.get(timeout=0.5)
+                            break
+                        except queue.Empty:
+                            pass
+                        detail = self.stderr.strip().splitlines()[-3:]
+                        raise MCPError(f"{self.name} stopped" + (": " + " ".join(detail) if detail else "")) from None
                     if cancelled is not None and cancelled.is_set():
                         self._notify("notifications/cancelled", {"requestId": rid, "reason": "Stopped by the user"})
                         raise MCPError("Stopped") from None

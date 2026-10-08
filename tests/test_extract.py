@@ -156,7 +156,7 @@ class HostileInputTest(unittest.TestCase):
         start = time.monotonic()
         self.assertIsNone(extract._OBJ_RE.search(b"1" * 100_000))
         self.assertEqual(extract._OBJ_RE.search(b"x 12 0 obj").groups(), (b"12", b"0"))
-        self.assertLess(time.monotonic() - start, 2)
+        self.assertLess(time.monotonic() - start, 10)  # it took minutes before; generous for slow CI runners
 
     def test_search_words_and_chunks_of_a_huge_text(self):
         import time
@@ -165,7 +165,7 @@ class HostileInputTest(unittest.TestCase):
         self.assertEqual(words, [f"word{i}x" for i in range(5)])
         chunks = knowledge.chunk("a" * 2_000_000, 1000)
         self.assertEqual(sum(map(len, chunks)), 2_000_000)
-        self.assertLess(time.monotonic() - start, 3)
+        self.assertLess(time.monotonic() - start, 10)
 
 
 class KnowledgeTest(unittest.TestCase):

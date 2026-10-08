@@ -77,7 +77,7 @@ _PATTERNS = (
     (re.compile(r"(?i)\b[0-9a-f]{2}(?:[:-][0-9a-f]{2}){5}\b"), "<mac>"),
     (re.compile(r"(?i)\b[\w-]+\.(?:local|lan|home|internal|intranet|fritz\.box|localdomain)\b"), "<host>"),
 )
-_QUOTED = re.compile(r"([\"'`])(?:(?!\1)[^\n]){25,}(?:\1|$)")   # a long quoted text could be part of a chat or a document
+_QUOTED = re.compile(r"(?:(')(?:(?!\1)[^\n]){25,}\1|([\"`])(?:(?!\2)[^\n]){25,}(?:\2|$))")  # only " and ` may stay open (cut message); an apostrophe is not a quote   # a long quoted text could be part of a chat or a document
 
 
 def _mask_host(m):
