@@ -12,6 +12,8 @@ import urllib.request
 
 from . import jobqueue, usage
 
+MODELS_TIMEOUT = 8          # asking for the model list; a second try waits longer (a busy backend answers late)
+MODELS_TIMEOUT_BUSY = 25
 TIMEOUT = 600  # long generations on slow CPUs are normal
 
 THINK_RE = re.compile(r"<think>.*?(</think>|$)", re.S)
@@ -105,7 +107,7 @@ def _base(p):
     return p["base_url"].rstrip("/")
 
 
-def list_models(p, timeout=4):
+def list_models(p, timeout=MODELS_TIMEOUT):
     """Return the model names a provider offers. Raises ProviderError."""
     if p["type"] == "ollama":
         with _request(_base(p) + "/api/tags", api_key=p.get("api_key", ""), timeout=timeout) as r:
@@ -272,13 +274,13 @@ def ollama_pull(p, model):
                 yield obj
 
 
-def ollama_version(p, timeout=3):
+def ollama_version(p, timeout=10):
     """Version string of a running Ollama. Raises ProviderError when it is not reachable."""
     with _request(_base(p) + "/api/version", api_key=p.get("api_key", ""), timeout=timeout) as r:
         return json.load(r).get("version", "")
 
 
-def ollama_tags(p, timeout=4):
+def ollama_tags(p, timeout=10):
     """Installed Ollama models with size and details, sorted by name."""
     with _request(_base(p) + "/api/tags", api_key=p.get("api_key", ""), timeout=timeout) as r:
         data = json.load(r)
@@ -291,7 +293,7 @@ def ollama_tags(p, timeout=4):
     return sorted(out, key=lambda m: m["name"])
 
 
-def ollama_ps(p, timeout=3):
+def ollama_ps(p, timeout=10):
     """Models Ollama has loaded right now, with how much of each sits in GPU memory (size_vram)."""
     with _request(_base(p) + "/api/ps", api_key=p.get("api_key", ""), timeout=timeout) as r:
         data = json.load(r)

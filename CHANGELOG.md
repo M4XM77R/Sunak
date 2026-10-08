@@ -4,6 +4,15 @@ All changes to Sunak, newest version first. Sunak shows the entries between your
 
 Format: one section per version, `## [a.b.c] – YYYY-MM-DD`, followed by short points under **Added**, **Changed**, **Fixed** or **Removed**. Every change to Sunak gets a new version and an entry here.
 
+## [0.17.0] – 2026-10-08
+
+### Added
+- The chat model can now see your calendar (issue #13). When your message is about time or the schedule ("Was steht morgen an?", "Am I free on Friday?", "meine Termine diese Woche", weekday names, "today"), Sunak adds your appointments of today and the next 7 days to that request, read-only and from all calendars shown in the calendar (own, CalDAV, ICS), with times in your local time. Other messages get nothing, so no tokens are spent. Only the profile you are using is read. A calendar that cannot be read is named instead of being treated as empty. Event texts are marked as data, never as instructions. Works in the normal chat and in the tool loop, not in Compare.
+- Settings has a search box at the top (issue #15). It hides every section and setting that does not match what you type, in English and German.
+
+### Fixed
+- Models no longer vanish from the model picker while a model is busy (issue #15). Asking the backend for its model list now waits longer (8 s, then once more up to 25 s when it only timed out) and keeps the list from the last success when the backend is still busy; the provider then shows "busy, last list shown" instead of "offline". The Ollama status check waits 10 s instead of 3–4 s. If no model can be loaded, the picker says "Models could not be loaded" and shows the reason on hover instead of "No model installed".
+
 ## [0.16.1] – 2026-10-08
 
 ### Fixed

@@ -242,6 +242,9 @@ details.think summary { cursor: pointer; user-select: none; }
 /* settings */
 .settings h2 { font-size: 15px; margin: 26px 0 6px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
 .settings h2:first-child { margin-top: 0; }
+.settings-search { position: sticky; top: 0; z-index: 5; background: var(--bg); padding: 4px 0 10px; }
+.settings-search input { width: 100%; }
+.settings h2:nth-child(3) { margin-top: 8px; }
 .model-row, .provider { display: flex; gap: 8px; align-items: center; padding: 6px 0; border-bottom: 1px dashed var(--border); flex-wrap: wrap; }
 .model-row .n { flex: 1; }
 .provider input, .provider select { flex: 1; min-width: 120px; }

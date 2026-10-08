@@ -92,6 +92,31 @@ class RedirectTest(unittest.TestCase):
                 srv.shutdown()
                 srv.server_close()
 
+    def test_a_busy_backend_keeps_its_model_list(self):
+        """Ollama answering late (a model is working) gets a second try, then the last list stays; a refused connection does not."""
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            app = App(tmp)
+            pid = app.settings()["providers"][0]["id"]
+            answers = [["a", "b"], providers.ProviderError("Cannot reach x: timed out"), providers.ProviderError("Cannot reach x: timed out")]
+            timeouts = []
+
+            def fake(p, timeout=0):
+                timeouts.append(timeout)
+                r = answers.pop(0)
+                if isinstance(r, Exception):
+                    raise r
+                return r
+
+            with mock.patch.object(providers, "list_models", fake):
+                self.assertEqual([m["name"] for m in app.models()["models"]], ["a", "b"])
+                r = app.models()
+                self.assertEqual([m["name"] for m in r["models"]], ["a", "b"])  # the list from the last success
+                self.assertTrue(r["errors"][0]["stale"])
+            self.assertEqual(timeouts, [providers.MODELS_TIMEOUT, providers.MODELS_TIMEOUT, providers.MODELS_TIMEOUT_BUSY])
+            with mock.patch.object(providers, "list_models", side_effect=providers.ProviderError("Cannot reach x: refused")) as m:
+                self.assertEqual(app.models()["errors"][0]["provider"], pid)
+                self.assertEqual(m.call_count, 1)  # no second try for a refused connection
+
 
 if __name__ == "__main__":
     unittest.main()
