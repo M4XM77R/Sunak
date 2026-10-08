@@ -1,3 +1,3 @@
 """Sunak: a self-hosted AI workspace with zero Python dependencies."""
 
-__version__ = "0.16.2"
+__version__ = "0.16.1"
