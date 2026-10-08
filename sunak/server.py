@@ -566,20 +566,30 @@ class App:
         images.cleanup(self.user_dir, self.db.image_refs())
 
     def models(self):
-        """Ask all providers in parallel for their models; unreachable providers are listed in `errors`."""
+        """Ask all providers in parallel for their models; unreachable providers are listed in `errors`. A backend that is
+        busy (Ollama generating on a slow CPU answers late) gets a second, longer try; when that fails too, the list from the
+        last success is kept (marked `stale`) so that the model picker does not empty out while a model is working."""
         out, errors = [], []
         provs = self.settings()["providers"]
+        known = self.__dict__.setdefault("_model_lists", {})
 
         def fetch(p):
-            try:
-                return p, providers.list_models(p), None
-            except Exception as e:  # noqa: BLE001 - surface any provider failure to the UI
-                return p, [], str(e)
+            key = (p["id"], p["base_url"])
+            err = None
+            for timeout in (providers.MODELS_TIMEOUT, providers.MODELS_TIMEOUT_BUSY):
+                try:
+                    known[key] = providers.list_models(p, timeout)
+                    return p, known[key], None, False
+                except Exception as e:  # noqa: BLE001 - surface any provider failure to the UI
+                    err = str(e)
+                    if "timed out" not in err.lower():  # refused, wrong key or address: waiting does not help
+                        break
+            return p, known.get(key, []), err, key in known
 
         with ThreadPoolExecutor(max_workers=max(1, len(provs))) as ex:
-            for p, names, err in ex.map(fetch, provs):
+            for p, names, err, stale in ex.map(fetch, provs):
                 if err:
-                    errors.append({"provider": p["id"], "name": p["name"], "error": err})
+                    errors.append({"provider": p["id"], "name": p["name"], "error": err, "stale": stale})
                 for n in names:
                     out.append({"id": f"{p['id']}::{n}", "name": n, "provider": p["id"], "provider_name": p["name"]})
         return {"models": out, "errors": errors}
@@ -637,6 +647,20 @@ class App:
         events = [e for r in results if r for e in r]
         events.sort(key=lambda e: (e["start"][:10], not e["all_day"], e["start"]))
         return events, errors
+
+    def agenda_note(self, now):
+        """The profile's own calendar for the next days as a system prompt note (intent.agenda). A calendar that cannot be read is
+        left out and named, so that the model does not say "nothing planned" when it does not know."""
+        midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        try:
+            events, errors = self.calendar_load(midnight, midnight + datetime.timedelta(days=intent.AGENDA_DAYS + 1))
+        except Exception as e:  # noqa: BLE001 - the chat must work without the calendar
+            log_app.warning("Calendar for the chat note failed: %s", e)
+            return "The user's calendar could not be read right now; say so instead of guessing."
+        note = intent.agenda(events, now)
+        if errors:
+            note += "\n(Not readable right now: " + ", ".join(e["name"] or e["source"] for e in errors) + ")"
+        return note
 
     def calendars(self):
         """Calendar accounts (CalDAV and ICS addresses), including passwords (server side only)."""
@@ -722,7 +746,11 @@ class App:
             if mem:
                 system += "\n\nThings you remember about the user:\n" + "\n".join(f"- {m}" for m in mem)
         if abilities:
-            system += "\n\n" + intent.abilities(datetime.datetime.now().astimezone(), bool(self.mail_accounts()))
+            now = datetime.datetime.now().astimezone()
+            system += "\n\n" + intent.abilities(now, bool(self.mail_accounts()))
+            asked = [m["content"] for m in history if m["role"] == "user"][-2:]
+            if intent.wants_schedule(*asked):
+                system += "\n\n" + self.agenda_note(now)
         if extra:
             system += "\n\n" + extra
         msgs = [{"role": "system", "content": system}] if system.strip() else []

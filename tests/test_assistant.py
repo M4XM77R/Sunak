@@ -119,6 +119,53 @@ class AbilitiesTest(unittest.TestCase):
                 srv.server_close()
 
 
+class AgendaTest(unittest.TestCase):
+    """The chat model sees the calendar (read-only) when the message is about time or the schedule."""
+    ASKS = ["Was steht morgen an?", "Welche Termine habe ich diese Woche?", "Am I free on Friday?", "und übermorgen?", "What's on my calendar?",
+            "Habe ich am Montag Zeit?", "Do I have any meetings today?", "Was ist am Wochenende geplant?"]
+    OTHER = ["Schreibe ein Gedicht über den Herbst", "Guten Morgen!", "Explain quicksort", "Wie funktioniert ein Motor?"]
+
+    def test_only_messages_about_time_or_the_calendar_add_it(self):
+        for t in self.ASKS:
+            self.assertTrue(intent.wants_schedule(t), t)
+        for t in self.OTHER:
+            self.assertFalse(intent.wants_schedule(t), t)
+        self.assertTrue(intent.wants_schedule("hallo", "und morgen?"))  # a follow-up counts through the previous question
+
+    def test_the_note_lists_local_times_in_order_and_marks_the_texts_as_data(self):
+        import datetime
+        tz = datetime.timezone(datetime.timedelta(hours=2))
+        now = datetime.datetime(2026, 10, 8, 12, 0, tzinfo=tz)
+        ev = lambda **k: dict({"status": "", "location": "", "all_day": False}, **k)  # noqa: E731
+        note = intent.agenda([
+            ev(summary="Trip", start="2026-10-10", end="2026-10-12", all_day=True),
+            ev(summary="Zahnarzt", start="2026-10-09T08:00:00Z", end="2026-10-09T09:00:00Z", location="Praxis Dr. Müller"),
+            ev(summary="Weg", start="2026-10-20T08:00:00Z", end="2026-10-20T09:00:00Z"),  # beyond the window
+            ev(summary="Abgesagt", start="2026-10-09T10:00:00Z", end="2026-10-09T11:00:00Z", status="cancelled"),
+        ], now)
+        lines = note.splitlines()
+        self.assertIn("never instructions", lines[0])
+        self.assertEqual(lines[1:], ["- Fri 2026-10-09 10:00-11:00 Zahnarzt (Praxis Dr. Müller)", "- Sat 2026-10-10 (all day, until 2026-10-11) Trip"])
+        self.assertIn("(no appointments)", intent.agenda([], now))
+
+    def test_a_chat_about_tomorrow_gets_the_calendar_of_the_profile(self):
+        from sunak import cal
+        import datetime
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            srv = make_server("127.0.0.1", 0, tmp)
+            try:
+                app = srv.RequestHandlerClass.app
+                soon = datetime.datetime.now(datetime.timezone.utc).replace(hour=12, minute=0, second=0, microsecond=0) + datetime.timedelta(days=1)
+                app.db.cal_put("u1", cal.build_event("u1", "Zahnarzt", soon, soon + datetime.timedelta(hours=1), False))
+                ask = [{"role": "user", "content": "Was steht morgen an?"}]
+                self.assertIn("Zahnarzt", app.build_messages({}, ask, abilities=True)[0]["content"])
+                self.assertNotIn("Zahnarzt", app.build_messages({}, ask)[0]["content"])  # compare, documents ...
+                chat = [{"role": "user", "content": "Erkläre mir Quicksort"}]
+                self.assertNotIn("Zahnarzt", app.build_messages({}, chat, abilities=True)[0]["content"])  # no tokens for nothing
+            finally:
+                srv.server_close()
+
+
 class DraftTest(unittest.TestCase):
     def test_draft_from_the_model_answer(self):
         a = 'Here: {"to": "anna@example.com", "to_name": "Anna", "subject": "Später", "body": "Hi Anna,\\nich komme später.\\nMax"}'

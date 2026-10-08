@@ -179,7 +179,7 @@ def start(provider, timeout=15):
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
-            return providers.ollama_version(provider)
+            return providers.ollama_version(provider, 3)
         except providers.ProviderError:
             time.sleep(0.5)
     raise providers.ProviderError("Ollama did not start. Try starting the Ollama app yourself.")

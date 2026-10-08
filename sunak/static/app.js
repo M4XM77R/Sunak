@@ -319,7 +319,7 @@ async function loadModels() {
   state.modelErrors = r.errors;
   const sel = $('#modelSelect');
   sel.innerHTML = '';
-  if (!state.models.length) sel.append(el('option', { value: '' }, tr('No model installed')));
+  if (!state.models.length) sel.append(el('option', { value: '', title: state.modelErrors.map((e) => e.error).join('\n') }, tr(state.modelErrors.length ? 'Models could not be loaded' : 'No model installed')));
   const groups = {};
   for (const m of state.models) (groups[m.provider_name] ||= []).push(m);
   for (const [name, ms] of Object.entries(groups)) {
@@ -3053,6 +3053,42 @@ function renderDefaultModel(value = $('#defaultModel').value || state.settings.d
   dm.innerHTML = '';
   dm.append(el('option', { value: '' }, 'Last used model'), ...state.models.map((m) => el('option', { value: m.id, selected: value === m.id }, `${m.name} (${m.provider_name})`)));
 }
+/* Search in the settings: hides what does not match. A section is the h2 and the elements up to the next h2 in the same parent; a
+   section whose title matches stays whole, otherwise only the matching elements (a hint text belongs to the element before it). */
+function settingText(node, out = []) {
+  if (node.nodeType === 3) out.push(node.nodeValue);
+  else if (node.nodeType === 1 && !['OPTION', 'SCRIPT', 'STYLE'].includes(node.tagName)) {
+    for (const a of ['placeholder', 'aria-label', 'title']) if (node.getAttribute(a)) out.push(node.getAttribute(a));
+    if (node.tagName !== 'TEXTAREA') node.childNodes.forEach((c) => settingText(c, out));
+  }
+  return out;
+}
+function filterSettings() {
+  const root = $('#view-settings .settings');
+  const q = $('#settingsSearch').value.trim().toLowerCase();
+  const fits = (n) => settingText(n).join(' ').toLowerCase().includes(q);
+  const keep = (n) => n.matches('h2, .sticky-save, .settings-search') || n.querySelector('h2, .sticky-save, #aboutLine') || n.id === 'settingsNoMatch';
+  let shown = 0;
+  for (const h of root.querySelectorAll('h2')) {
+    const run = [];
+    for (let n = h.nextElementSibling; n && n.tagName !== 'H2'; n = n.nextElementSibling) if (!keep(n)) run.push(n);
+    const units = [];
+    for (const n of run) { if (n.tagName === 'P' && units.length) units[units.length - 1].push(n); else units.push([n]); }
+    const admin = document.body.classList.contains('not-admin') && h.closest('.admin-only');
+    const whole = !q || fits(h);
+    let any = whole && !admin;
+    for (const u of units) {
+      const on = whole || u.some(fits);
+      u.forEach((n) => n.classList.toggle('hidden', !on));
+      any ||= on && !admin;
+    }
+    h.classList.toggle('hidden', !any);
+    shown += any && !admin;
+  }
+  $('#settingsNoMatch').hidden = !q || shown > 0;
+  $('#settingsNoMatch').textContent = tr('No setting matches “{q}”.', { q: $('#settingsSearch').value.trim() });
+}
+$('#settingsSearch').oninput = filterSettings;
 function renderSettings() {
   const s = state.settings;
   loadUsage();
@@ -3096,6 +3132,7 @@ function renderSettings() {
   renderProfile();
   if (isAdmin()) renderLan();
   $('#aboutLine').textContent = `Sunak ${state.status?.version || ''} · ${state.status?.ram_gb ? state.status.ram_gb + ' GB RAM' : ''}`;
+  filterSettings();
 }
 const CLAUDE_URL = 'https://api.anthropic.com';
 function connectClaude() {
@@ -3125,7 +3162,7 @@ function renderProviders() {
       el('input', { value: p.base_url, placeholder: 'Base URL', oninput: bind('base_url') }),
       el('input', { value: p.api_key || '', type: 'password', autocomplete: 'off', class: 'key-input', oninput: bind('api_key'),
         placeholder: p.has_key ? '•••••• saved (type to replace)' : p.type === 'anthropic' ? 'API key (sk-ant-…)' : 'API key (optional)' }),
-      el('span', { class: `status ${err ? 'bad' : 'ok'}`, title: err?.error || '' }, err ? (p.type === 'ollama' ? '● offline' : '● not connected') : p.id ? `● ${trn(count, '{n} model', '{n} models')}` : ''),
+      el('span', { class: `status ${err ? 'bad' : 'ok'}`, title: err?.error || '' }, err ? (err.stale ? '● busy, last list shown' : p.type === 'ollama' ? '● offline' : '● not connected') : p.id ? `● ${trn(count, '{n} model', '{n} models')}` : ''),
       el('button', { class: 'icon-btn', title: 'Remove', onclick: () => { draftProviders.splice(i, 1); renderProviders(); } }, icon('x'))));
   });
 }
