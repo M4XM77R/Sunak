@@ -85,3 +85,55 @@ def subject(text):
     for _ in range(2):
         out = _TAIL.sub("", out)
     return out.strip() or t
+
+
+# ---- chat requests to prepare a calendar event or an e-mail ("trag mir morgen 10 Uhr Zahnarzt ein", "schreib Anna eine Mail") ----
+# Rules only, so that it works with every model. Only a command or a polite request counts: a question ("Was steht morgen an?",
+# "Wie erstelle ich einen Termin in Outlook?"), a report ("Ich habe eine Mail geschrieben") or technical talk is a normal chat.
+_LEAD = (r"^\W*(?:(?:hey|hi|hallo|hello)\W+)?(?:sunak\W+)?(?:(?:bitte|please|kannst du(?: mir)?|könntest du(?: mir)?|kannst du|"
+         r"can you(?: please)?|could you(?: please)?|would you(?: please)?|will you|ich (?:möchte|will|brauche|hätte gern|würde gern)(?: dass du)?|"
+         r"i (?:want|need|would like|d like)(?: you)? to)\s+)*")
+_MAILN = r"(?:e-?mails?|mails?)"
+_MAIL_VERB = (r"(?:schreib\w*|verfass\w*|entwirf\w*|entwerf\w*|formulier\w*|sende\w*|schick\w*|bereite?\w*|write|draft|compose|send|"
+              r"prepare|shoot|fire off)")
+_ACTIONS = {
+    "mail": [re.compile(p, F) for p in (
+        rf"{_LEAD}{_MAIL_VERB}\b[^.?!\n]{{0,60}}?\b{_MAILN}\b",
+        rf"{_LEAD}{_MAILN}\s+(?:an|to)\s+\w+",
+        rf"{_LEAD}e-?mail\s+\w+\s+(?:that|dass|and|und|about|wegen|to)\b",
+        rf"^\W*(?:bitte\s+)?(?:kannst|könntest) du(?: mir)?\b[^.?!\n]{{0,60}}?\b{_MAILN}\b[^.?!\n]{{0,80}}?\b(?:schreib|verfass|formulier|entwerf|send|schick|verschick)\w*",
+    )],
+    "event": [re.compile(p, F) for p in (
+        rf"{_LEAD}(?:trag\w*|schreib\w*|setz\w*|pack\w*|schieb\w*|speicher\w*|füg\w*|leg\w*|add|put|save|enter|block|log|pencil)\b"
+        r"[^.?!\n]{0,100}?\b(?:in|im|auf|zu|to|into|on)\s+(?:de[nm]|mein\w*|unser\w*|my|the|our)\s+(?:\w+\s+)?(?:kalender|terminkalender|planer|calendar|schedule|agenda)\b",
+        rf"{_LEAD}trag\w*\b[^.?!\n]{{0,100}}?\bein\b[\s.!]*$",
+        rf"^\W*(?:bitte\s+)?(?:kannst|könntest) du(?: mir)?\b[^.?!\n]{{0,100}}?\beintrag\w*",
+        rf"{_LEAD}(?:erstell\w*|leg\w*|mach\w*|vereinbar\w*|buch\w*|plan\w*|erfass\w*|erzeug\w*|anleg\w*|schedule|book|create|make|set up|add|arrange)\b"
+        r"[^.?!\n]{0,40}?\b(?:termin\w*|kalendereintr\w*|erinnerung\w*|appointments?|events?|meetings?|reminders?|calendar (?:entry|event))\b",
+        rf"{_LEAD}erinner\w*\s+(?:mich|uns)\b",
+        rf"{_LEAD}remind\s+(?:me|us)\b",
+        rf"{_LEAD}schedule\s+(?:me\s+|us\s+)?(?:an?|my|the|our)\b",
+    )],
+}
+_QUESTION_ACTION = re.compile(r"^\W*(?:(?:bitte|please)\s+)?(?:soll|sollte|sollen|muss|kann|darf|ist|sind|hat|habe|haben|has|have|did|do|does|is|are|should|"
+                              r"will|would|could)\b", F)
+_TECH_ACTION = re.compile(r"\b(?:skript\w*|script\w*|code|python|funktion\w*|function\w*|programm\w*|api|javascript|html|css|docker|"
+                          r"bibliothek\w*|library|befehl\w*|command\w*|regex|sql|smtp|imap|caldav|ical|plugin)\b", F)
+
+
+def action(text):
+    """"event" (prepare a calendar event), "mail" (prepare an e-mail) or "" for a chat message."""
+    t = (text or "").strip()
+    if not t or len(t) > MAX_LENGTH or QUESTION.search(t) or _QUESTION_ACTION.search(t) or _TECH_ACTION.search(t):
+        return ""
+    if t.endswith("?") and not POLITE.search(t):
+        return ""
+    for kind in ("mail", "event"):
+        if any(p.search(t) for p in _ACTIONS[kind]):
+            return kind
+    return ""
+
+
+def addresses(text):
+    """The e-mail addresses in a text, in order, without duplicates."""
+    return list(dict.fromkeys(re.findall(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+", text or "")))

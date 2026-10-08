@@ -4,6 +4,14 @@ All changes to Sunak, newest version first. Sunak shows the entries between your
 
 Format: one section per version, `## [a.b.c] – YYYY-MM-DD`, followed by short points under **Added**, **Changed**, **Fixed** or **Removed**. Every change to Sunak gets a new version and an entry here.
 
+## [0.15.0] – 2026-10-08
+
+### Added
+- Events and e-mails from the chat: write "trag mir morgen 10 Uhr Zahnarzt ein" or "schreib Anna eine Mail, dass ich später komme" (German and English) and Sunak prepares them as a card in the chat. The event card has Save and Edit, the mail card has "Open in Mail" and "Copy text". Nothing is saved or sent before you click; sending still needs the Send button and its confirmation in the Mail view.
+- The request is recognized by rules (`sunak/intent.py`), so it works with any model, including small local ones without tool calling. Questions such as "What is on tomorrow?" or "How do I write an email to my boss?" stay normal chats, and picture requests are unchanged.
+- New endpoints `POST /api/assistant/intent` and `POST /api/assistant/mail`. Events reuse `POST /api/calendar/parse`.
+- Without a linked mail account the card says so and offers "Add mail account" instead of an error.
+
 ## [0.14.2] – 2026-10-08
 
 ### Fixed

@@ -894,5 +894,18 @@
 "requests": "Anfragen",
 "Cache write": "Cache geschrieben",
 "made by Sunak itself": "von Sunak selbst gestellt",
-"All profiles together": "Alle Profile zusammen"
+"All profiles together": "Alle Profile zusammen",
+"Preparing the event…": "Termin wird vorbereitet…",
+"Writing the e-mail…": "E-Mail wird geschrieben…",
+"Stopped.": "Angehalten.",
+"Event ready: nothing is saved yet": "Termin fertig: noch nichts gespeichert",
+"E-mail ready: nothing is sent": "E-Mail fertig: nichts wird gesendet",
+"Saved in {calendar} ✓": "Gespeichert in {calendar} ✓",
+"address missing": "Adresse fehlt",
+"Open the event form to change it": "Das Termin-Formular zum Ändern öffnen",
+"Open in Mail": "Im Mail-Fenster öffnen",
+"Opens the compose form; sending needs your click and a confirmation there": "Öffnet das Schreiben-Fenster; Senden braucht dort deinen Klick und eine Bestätigung",
+"Copy text": "Text kopieren",
+"Say what the e-mail should be about": "Sag, worum es in der E-Mail gehen soll",
+"The model's answer could not be read as an e-mail. Try again or write it in the Mail view.": "Die Antwort des Modells ließ sich nicht als E-Mail lesen. Versuch es nochmal oder schreib sie in der E-Mail-Ansicht."
 } };

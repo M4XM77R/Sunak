@@ -82,8 +82,8 @@ Your data then lives in the `data/` folder next to the Compose file (Ollama mode
 | 🔎 **Research** | Thorough report with sources from several searches, can be saved as a document |
 | 📝 **Documents** | Markdown editor with autosave, preview, export and AI editing |
 | 🧠 **Notes & Memory** | Notes and a memory that Sunak builds from your chats by itself |
-| ✉️ **Mail** | Several accounts via IMAP/SMTP; the AI summarizes, drafts replies and sorts the inbox |
-| 📅 **Calendar** | Own calendar, CalDAV and subscribed calendars; events from one sentence or from a mail |
+| ✉️ **Mail** | Several accounts via IMAP/SMTP; the AI summarizes, drafts replies and sorts the inbox; new mails can be prepared from the chat |
+| 📅 **Calendar** | Own calendar, CalDAV and subscribed calendars; events from one sentence or from a mail, or straight from the chat |
 | 🔢 **Token counter** | Counts the tokens of every model request per profile (input, output, cache) with tokens per second and a running total |
 | 🔌 **Tools (MCP)** | Any MCP server as tools for the model |
 | 🎨 **Image generation** | With Sunak's own image program (stable-diffusion.cpp), Automatic1111 or ComfyUI |
@@ -195,6 +195,7 @@ What works: inbox per account, folders, search, reading mails without marking th
 - **Attachments:** The paperclip in the form attaches files (at most 17 MB in total). When forwarding, the attachments of the original mail come along; each can be removed beforehand with the x.
 - **Moving and deleting:** In the reading view "Move to…" and Delete. Deleting moves to the trash after confirmation; permanent deletion happens only in the trash (or for accounts without a trash), with its own confirmation. In Gmail, folders are labels: moving removes the old label and sets the new one, deleting puts the mail in the trash, where Google removes it by itself after 30 days.
 - **New mail:** While Sunak is open, it looks into every inbox every 2 minutes (read-only). New unread mails announce themselves with a notice, and the Mail button shows the number of unread mails. With "Also as desktop notification" (Settings → Mail accounts) the message also arrives as a desktop notification when Sunak is in the background (only over `localhost` or https). To switch it off, untick "Tell me about new mail".
+- **From the chat:** Write "write Anna an email that I'll be late" or "schreib Anna eine Mail, dass ich später komme" in a normal chat (German and English, not with attachments). Sunak recognizes the request by itself, with any model, and shows a card with recipient, subject and text: **Open in Mail** puts the draft into the compose form, where sending still needs your click on **Send** and a confirmation. Without a linked mail account the card says so and offers "Add mail account". If you give an address, it is used; without one the recipient stays empty. Questions ("How do I write an email to my boss?") stay normal chats.
 - **Mail content is not a command:** The AI receives mails explicitly as data from third parties and is told to ignore instructions in them. It has no tools anyway and cannot send anything by itself.
 - **Testing a real account:** `sunak mail-selftest` (with `--account address` when there are several accounts) checks a linked account step by step against the real provider: login, reading the inbox, new-mail notice, sending to itself with an attachment, forwarding as a draft, moving, deleting. Every test mail carries a random marker in the subject, only these mails are touched and at the end permanently deleted (`--keep` keeps them). The password is never printed; with `--new` you type in address and app password instead (not saved).
 
@@ -212,6 +213,7 @@ Month view with all calendars: Sunak's own calendar, CalDAV accounts (iCloud, GM
 
 - **Connecting:** Settings → Calendars → "Add calendar". For CalDAV, under "Own login" choose a linked mail account (address and user name are filled in, the mail account's password is used) or enter provider, user name and (app) password. Google and Outlook.com offer no CalDAV with a password: subscribe to their secret iCal address as "ICS address" instead.
 - **Event from text:** In the calendar type a sentence ("dentist next Tuesday 10 am") and click "Add", or in a mail "Add to calendar". The model fills in the form; it is saved only after your click.
+- **From the chat:** Write "trag mir morgen 10 Uhr Zahnarzt ein", "add dentist tomorrow 10am to my calendar" or "remind me to call Tom on Friday" in a normal chat (German and English, not with attachments). Sunak recognizes the request by itself, with any model, reads the event with the same model call as "Event from text" and shows a card with title, date and time. **Save** stores it in the calendar you used last (otherwise Sunak's own), **Edit** opens the event form. Nothing is saved before your click. Questions ("What is on tomorrow?") stay normal chats. The cards belong to the open chat only and are not stored with it.
 - **Limits:** Recurrences by week number or day of the year and hourly recurrences are not supported. ICS subscriptions are cached for 5 minutes.
 
 ### Profiles

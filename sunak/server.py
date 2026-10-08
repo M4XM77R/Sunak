@@ -35,6 +35,7 @@ from .db import DB, new_id
 log_http = log.get("http")
 log_app = log.get("app")
 log_image = log.get("image")
+log_assist = log.get("assistant")
 
 STATIC = Path(__file__).parent / "static"
 ATTACHED_RE = re.compile(r"File `([^`\n]+)`:\n```\n.*?\n```\s*", re.S)  # files attached in the chat
@@ -738,7 +739,7 @@ def file_name(title, ext):
 
 # What a model request is counted as (usage.py), by the path of the request that made it.
 USAGE_KINDS = ((r"/api/chat", "chat"), (r"/api/tools", "tools"), (r"/api/research", "research"), (r"/api/compare", "compare"),
-               (r"/api/documents/ai", "document"), (r"/api/mail/ai", "mail"), (r"/api/calendar/parse", "calendar"),
+               (r"/api/documents/ai", "document"), (r"/api/mail/ai", "mail"), (r"/api/assistant/mail", "mail"), (r"/api/calendar/parse", "calendar"),
                (r"/api/imagine/intent", "image_check"), (r"/api/imagine", "image_prompt"),
                (rf"/api/sessions/[^/]+/remember", "memory"))
 
@@ -2027,6 +2028,37 @@ class Handler(BaseHTTPRequestHandler):
         except modelsearch.SearchError as e:
             raise ValueError(f"Hugging Face is not reachable ({e})") from None
 
+    def assistant_intent(self):
+        """POST /api/assistant/intent {text, where}: does this chat message ask to prepare a calendar event or an e-mail?
+        Answer: {action: "event" | "mail" | ""}. Rules only (sunak/intent.py), no model call. Nothing is saved or sent:
+        the browser prepares the event / draft and waits for a click."""
+        text = self.text(self.body(), "text").strip()
+        kind = intent.action(text)
+        log_assist.info("Assistant request check (chat): %s", kind or "not an event or mail request")
+        self.send_json({"action": kind})
+
+    def assistant_mail(self):
+        """POST /api/assistant/mail {text, account, model}: write a new e-mail from a chat request ("write Anna that I am late").
+        Answer: {to, to_name, subject, body, account}; `account` is the linked account the draft is for (the given one, else the
+        first). Nothing is sent: the browser opens the compose form with the draft. Without a linked account: 400 with a hint."""
+        d = self.body()
+        text = self.text(d, "text").strip()
+        if not text:
+            raise ValueError("Say what the e-mail should be about")
+        accounts = self.app.mail_accounts()
+        if not accounts:
+            raise ValueError("Add a mail account first")
+        acc = self.app.mail_account(d["account"]) if d.get("account") else accounts[0]
+        memories = self.app.db.memories() if self.app.settings()["use_memory"] else []
+        prov, model = self.app.resolve(d.get("model"))
+        answer = providers.chat_once(prov, model, mail.draft_messages(text[:4000], acc, memories), {"temperature": 0.3})
+        try:
+            draft = mail.parse_draft(answer, intent.addresses(text))
+        except mail.MailError as e:
+            raise ValueError(str(e)) from None
+        log_assist.info("E-mail draft from a chat request: %s", "recipient known" if draft["to"] else "no recipient address")
+        self.send_json({**draft, "account": acc["id"]})
+
     def imagine_intent(self):
         """POST /api/imagine/intent {text, model, quick, where}: does this chat message ask for a picture? Answer: {image, subject, via}.
         A clear request (rules "yes") is painted without asking anyone. Any other message is put to the chat model when pictures
@@ -2630,6 +2662,8 @@ ROUTES = [
     (rf"/api/knowledge/{ID}", "DELETE", Handler.kb_delete),
     (r"/api/extract", "POST", Handler.extract_file),
     (r"/api/transcribe", "POST", Handler.transcribe),
+    (r"/api/assistant/intent", "POST", Handler.assistant_intent),
+    (r"/api/assistant/mail", "POST", Handler.assistant_mail),
     (r"/api/imagine/intent", "POST", Handler.imagine_intent),
     (r"/api/imagine", "POST", Handler.imagine),
     (r"/api/imagegen/test", "POST", Handler.imagegen_test),
