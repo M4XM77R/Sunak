@@ -60,6 +60,10 @@ CREATE TABLE IF NOT EXISTS calendar_events (
     ics TEXT NOT NULL,
     updated REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS reminders_sent (
+    key TEXT PRIMARY KEY,
+    ts REAL NOT NULL
+);
 CREATE TABLE IF NOT EXISTS usage (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts REAL NOT NULL,
@@ -275,6 +279,14 @@ class DB:
 
     def cal_delete(self, uid):
         self._q("DELETE FROM calendar_events WHERE uid = ?", (uid,))
+
+    # calendar reminders already shown or sent (key = event|lead|channel), so none goes off twice
+    def reminder_seen(self, key):
+        return self._q("SELECT 1 FROM reminders_sent WHERE key = ?", (key,), one=True) is not None
+
+    def reminder_mark(self, key):
+        self._q("INSERT OR IGNORE INTO reminders_sent(key, ts) VALUES(?, ?)", (key, time.time()))
+        self._q("DELETE FROM reminders_sent WHERE ts < ?", (time.time() - 14 * 86400,))
 
     def delete_session(self, sid):
         """Delete a chat and its messages."""

@@ -56,6 +56,21 @@ class ProfilesTest(unittest.TestCase):
     def make(self, **kw):
         return self.req("POST", "/api/profiles", kw, cookie=self.select("default"))
 
+    def test_ntfy_server_belongs_to_the_installation(self):
+        """Only admins choose the address reminders are pushed to; other profiles set their topic and cannot aim a test elsewhere."""
+        kid = self.make(name="Kid")
+        cookie = self.select(kid["id"])
+        self.assertEqual(self.error("PUT", "/api/settings", {"ntfy_url": "http://127.0.0.1:2"}, cookie=cookie)[0], 403)
+        self.req("PUT", "/api/settings", {"ntfy_topic": "kid-topic", "reminders": True}, cookie=cookie)
+        self.assertEqual(self.req("GET", "/api/settings", cookie=cookie)["ntfy_topic"], "kid-topic")
+        self.assertEqual(self.req("GET", "/api/settings", cookie=self.select("default"))["ntfy_topic"], "")  # per profile
+        self.req("PUT", "/api/settings", {"ntfy_url": "http://127.0.0.1:1"}, cookie=self.select("default"))
+        self.assertEqual(self.req("GET", "/api/settings", cookie=cookie)["ntfy_url"], "http://127.0.0.1:1")
+        msg = self.error("POST", "/api/reminders/test", {"ntfy_url": "http://127.0.0.1:2", "ntfy_topic": "kid-topic"}, cookie=cookie)[1]
+        self.assertIn("127.0.0.1:1", msg)  # the address the admin saved, not the one sent
+        self.assertNotIn("127.0.0.1:2", msg)
+        self.req("PUT", "/api/settings", {"ntfy_url": ""}, cookie=self.select("default"))
+
     def test_one_profile_needs_no_choice(self):
         res = self.req("GET", "/api/profiles")
         self.assertEqual(res, {"profiles": [{"id": "default", "name": "", "emoji": "", "admin": True, "has_pin": False}],

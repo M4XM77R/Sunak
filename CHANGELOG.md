@@ -4,7 +4,7 @@ All changes to Sunak, newest version first. Sunak shows the entries between your
 
 Format: one section per version, `## [a.b.c] – YYYY-MM-DD`, followed by short points under **Added**, **Changed**, **Fixed** or **Removed**. Every change to Sunak gets a new version and an entry here.
 
-## [0.15.2] – 2026-10-08
+## [0.16.2] – 2026-10-08
 
 ### Fixed
 - Windows: Sunak did not start from the desktop icon, the Start menu or autostart, because those start it without a console and the color check expected one. Output to a redirected console (`sunak -h | more`) also no longer crashes on symbols such as the sailboat.
@@ -16,6 +16,17 @@ Format: one section per version, `## [a.b.c] – YYYY-MM-DD`, followed by short 
 - Calendar: a lone carriage return in a title or description could add extra lines to the event file; an event address in a sibling folder with a similar name (`/cal2` for `/cal`) is no longer accepted. Truncated or malformed server answers (calendar, MCP, speech) are reported as errors instead of crashing the request.
 - MCP: a tool call to a server that had just exited waited for the five minute timeout; it now fails at once. A closed connection no longer ends the whole answer with an internal error.
 - Mail: folder names with line breaks are refused. Speech: the language code is checked before it is sent.
+
+## [0.16.0] – 2026-10-08
+
+### Added
+- Calendar reminders: the event form has a new "Reminder" field (at the start, 5 minutes up to 2 days before; for all-day events at 9:00 on the day or the days before). It is stored as a standard iCalendar reminder (`VALARM`), so it also works with CalDAV and shows up in other calendar apps. Reminders that events from CalDAV or ICS calendars already carry are used too.
+- Reminders show as a notice in the page and, if you allow it, as a desktop notification while Sunak is open (Settings → Reminders, off by default). A reminder that came due while no page was open, or while Sunak was off, is shown in the next page that opens, as long as the event has not started.
+- Push messages to your phone through ntfy (https://ntfy.sh or your own server), also when no browser is open, as long as Sunak is running. Set the topic in Settings → Reminders; "Random topic" makes a hard-to-guess one and "Send test" checks it. A failed push is tried again until the event starts. The topic is left out of the backup. The ntfy server address is a setting of the whole installation that only admin profiles can change (each profile has its own topic).
+- New endpoints `GET /api/reminders` and `POST /api/reminders/test`; new module `sunak/reminders.py`; new settings `reminders`, `ntfy_url`, `ntfy_topic` and `reminder_lang`.
+
+### Changed
+- Changing an event keeps its other reminders (for example e-mail reminders or reminders relative to the end, set in another app); only the reminder shown in the form is replaced, and switching "All day" no longer clears it.
 
 ## [0.15.1] – 2026-10-08
 
