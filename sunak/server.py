@@ -720,6 +720,7 @@ class App:
             mem = self.db.memories()
             if mem:
                 system += "\n\nThings you remember about the user:\n" + "\n".join(f"- {m}" for m in mem)
+        system += "\n\n" + intent.abilities(datetime.datetime.now().astimezone())
         if extra:
             system += "\n\n" + extra
         msgs = [{"role": "system", "content": system}] if system.strip() else []
@@ -2099,6 +2100,34 @@ class Handler(BaseHTTPRequestHandler):
         log_assist.info("Assistant request check (chat): %s", kind or "not an event or mail request")
         self.send_json({"action": kind})
 
+    def assistant_check(self):
+        """POST /api/assistant/check {kind: event|mail, json, now}: the chat model answered with a ```sunak-event``` or
+        ```sunak-mail``` block (intent.abilities); check its JSON the way the other endpoints do and return the draft for the
+        card ({summary, start, end, all_day, location, description} or {to, to_name, subject, body, account}). No model call;
+        nothing is saved or sent."""
+        d = self.body()
+        kind, raw = self.text(d, "kind"), self.text(d, "json")[:20000]
+        if kind == "event":
+            try:
+                now = datetime.datetime.fromisoformat(str(d.get("now") or "").replace("Z", "+00:00"))
+            except ValueError:
+                raise ValueError("now must be an ISO date-time") from None
+            if now.tzinfo is None:
+                raise ValueError("now needs a time zone")
+            out = cal.parse_answer(raw, now)
+        elif kind == "mail":
+            accounts = self.app.mail_accounts()
+            if not accounts:
+                raise ValueError("Add a mail account first")
+            try:
+                out = {**mail.parse_draft(raw), "account": accounts[0]["id"]}
+            except mail.MailError as e:
+                raise ValueError(str(e)) from None
+        else:
+            raise ValueError("kind must be event or mail")
+        log_assist.info("Card from the chat model's answer: %s", kind)
+        self.send_json(out)
+
     def assistant_mail(self):
         """POST /api/assistant/mail {text, account, model}: write a new e-mail from a chat request ("write Anna that I am late").
         Answer: {to, to_name, subject, body, account}; `account` is the linked account the draft is for (the given one, else the
@@ -2708,6 +2737,7 @@ ROUTES = [
     (r"/api/transcribe", "POST", Handler.transcribe),
     (r"/api/assistant/intent", "POST", Handler.assistant_intent),
     (r"/api/assistant/mail", "POST", Handler.assistant_mail),
+    (r"/api/assistant/check", "POST", Handler.assistant_check),
     (r"/api/imagine/intent", "POST", Handler.imagine_intent),
     (r"/api/imagine", "POST", Handler.imagine),
     (r"/api/imagegen/test", "POST", Handler.imagegen_test),

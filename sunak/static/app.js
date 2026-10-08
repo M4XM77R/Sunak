@@ -464,8 +464,9 @@ function messageEl(m, i, msgs) {
     if (m.meta?.assist) body.append(assistEl(m));
     else if (m.meta?.tools || m.meta?.agent) body.append(toolsEl(m.meta.tools || m.meta.agent)); // `agent`: chats stored before 0.13.0
     else if (m.meta?.imagegen || m.meta?.pending) body.append(genFigure(m));
-    else body.append(el('div', { class: 'md', html: md(m.content) }));
+    else body.append(el('div', { class: 'md', html: mdChat(m.content) }));
   }
+  if (!isUser) { const cards = actionCards(m, i === msgs.length - 1); if (cards) body.append(cards); }
   const meta = el('div', { class: 'meta' });
   const gen = m.meta?.imagegen;
   const copyText = gen ? gen.prompt : m.content.replace(/<think>[\s\S]*?(<\/think>|$)/g, '').trim();
@@ -603,7 +604,7 @@ async function runChat(payload, localUserMsg) {
     pending = false;
     if (raw) status.textContent = '';
     const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 120;
-    target.innerHTML = md(raw);
+    target.innerHTML = mdChat(raw);
     const d = target.querySelector('details.think');
     if (d && thinkOpen !== null) d.open = thinkOpen;
     if (nearBottom) box.scrollTop = box.scrollHeight;
@@ -871,6 +872,39 @@ function sendAsChat(a) {
 }
 const chatInstead = (a) => el('button', { class: 'btn', type: 'button', title: 'Not what you meant? Send your message to the model as a normal chat message', onclick: () => sendAsChat(a) }, 'Send as normal message');
 const eventIsPast = (d) => (d.all_day ? dayOf(d.end.slice(0, 10)) < dayOf(ymd(new Date())) : new Date(d.end) < new Date());
+// The chat model may answer an event or e-mail request with a fenced ```sunak-event``` / ```sunak-mail``` block (sunak/intent.py
+// `abilities` tells it how). The block is never shown as text: the server checks its JSON (POST /api/assistant/check) and the
+// same card as above appears in the newest answer; saving or sending still needs a click. The card is built with el(), as text.
+const ACTION_BLOCK = /```sunak-(event|mail)[^\S\n]*\n([\s\S]*?)```/g;
+const stripActions = (t) => t.replace(ACTION_BLOCK, '').replace(/```sunak-[\s\S]*$/, '').trim(); // the second one: a block still being written
+const mdChat = (t) => md(stripActions(t));
+const actionCache = new Map(); // block text → card state, so a repaint does not check (or save) it again
+async function checkActionBlock(a, kind, json) {
+  try {
+    a.draft = await api('/api/assistant/check', { method: 'POST', body: { kind, json, now: isoLocal(new Date()) } });
+    a.status = 'ready';
+  } catch (e) {
+    a.status = 'error';
+    a.error = e.message;
+    if (kind === 'mail' && /mail account/i.test(e.message)) a.setup = 'mail';
+  }
+}
+function actionCards(m, last) {
+  if (m.role !== 'assistant' || !m.content || !m.content.includes('```sunak-')) return null;
+  const blocks = [...m.content.matchAll(ACTION_BLOCK)].slice(0, 3);
+  if (!blocks.length) return null;
+  const box = el('div', { class: 'assist-cards' });
+  for (const [, kind, json] of blocks) {
+    if (!last) { box.append(el('div', { class: 'muted small' }, kind === 'event' ? 'An event card was shown here.' : 'An e-mail card was shown here.')); continue; }
+    const key = `${kind}\n${json}`;
+    let a = actionCache.get(key);
+    if (!a) { a = { kind, status: 'working', fromModel: true }; actionCache.set(key, a); if (actionCache.size > 50) actionCache.delete(actionCache.keys().next().value); }
+    const holder = el('div', {}, assistEl({ meta: { assist: a } }));
+    if (a.status === 'working' && !a.started) { a.started = true; checkActionBlock(a, kind, json).then(() => holder.replaceChildren(assistEl({ meta: { assist: a } }))); }
+    box.append(holder);
+  }
+  return box;
+}
 function assistEl(m) {
   const a = m.meta.assist;
   if (a.status === 'working') return el('div', { class: 'muted small', role: 'status' }, a.kind === 'event' ? 'Preparing the event…' : 'Writing the e-mail…');
@@ -880,7 +914,7 @@ function assistEl(m) {
       el('div', { class: 'err' }, a.error),
       el('div', { class: 'row' },
         a.setup === 'mail' ? el('button', { class: 'btn', type: 'button', onclick: () => { show('settings'); editMailAccount({}); } }, icon('plus'), 'Add mail account') : null,
-        chatInstead(a)));
+        a.fromModel ? null : chatInstead(a)));
   }
   const d = a.draft;
   if (a.kind === 'event') {
@@ -895,7 +929,7 @@ function assistEl(m) {
         : el('div', { class: 'row' },
           el('button', { class: 'btn primary', type: 'button', onclick: (ev) => saveChatEvent(a, ev.currentTarget) }, 'Save'),
           el('button', { class: 'btn', type: 'button', title: 'Open the event form to change it', onclick: () => editChatEvent(a) }, 'Edit'),
-          chatInstead(a)));
+          a.fromModel ? null : chatInstead(a)));
   }
   return el('div', { class: 'assist-card' },
     el('div', { class: 'assist-head' }, icon('mail'), 'E-mail ready: nothing is sent'),
@@ -905,7 +939,7 @@ function assistEl(m) {
     el('div', { class: 'row' },
       el('button', { class: 'btn primary', type: 'button', title: 'Opens the compose form; sending needs your click and a confirmation there', onclick: () => openChatMail(a) }, 'Open in Mail'),
       el('button', { class: 'btn', type: 'button', onclick: () => navigator.clipboard.writeText(d.body).then(() => toast('Copied')) }, 'Copy text'),
-      chatInstead(a)));
+      a.fromModel ? null : chatInstead(a)));
 }
 
 /* ---------------- Tools (MCP) ----------------
@@ -961,7 +995,7 @@ function toolsEl(a) {
   const box = el('div', { class: 'tools-run' });
   for (const p of a.parts || []) {
     if (p.step) box.append(stepEl(p.step));
-    else if (p.text) box.append(el('div', { class: 'md', html: md(p.text) }));
+    else if (p.text) box.append(el('div', { class: 'md', html: mdChat(p.text) }));
   }
   return box;
 }
@@ -980,8 +1014,8 @@ async function runTools(payload, localUserMsg) {
   const steps = {};
   let cur = null, pending = false, error = null, stopped = false, qnote = null;
   const scroll = () => { if (box.scrollHeight - box.scrollTop - box.clientHeight < 160) box.scrollTop = box.scrollHeight; };
-  const paint = () => { pending = false; if (cur) cur.el.innerHTML = md(cur.raw); scroll(); };
-  const endText = () => { if (cur) { if (cur.thinking) cur.raw += '</think>'; cur.el.innerHTML = md(cur.raw); cur = null; } };
+  const paint = () => { pending = false; if (cur) cur.el.innerHTML = mdChat(cur.raw); scroll(); };
+  const endText = () => { if (cur) { if (cur.thinking) cur.raw += '</think>'; cur.el.innerHTML = mdChat(cur.raw); cur = null; } };
   const showStep = (st, ask) => {
     const node = stepEl(st, ask && (async (decision) => {
       node.querySelectorAll('.step-actions button').forEach((b) => (b.disabled = true));

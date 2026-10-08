@@ -87,6 +87,24 @@ class ActionTest(unittest.TestCase):
         self.assertEqual(intent.addresses("keine Adresse @ hier"), [])
 
 
+class AbilitiesTest(unittest.TestCase):
+    def test_the_model_is_told_what_sunak_can_do(self):
+        import datetime
+        note = intent.abilities(datetime.datetime(2026, 10, 8, 12, 30, tzinfo=datetime.timezone(datetime.timedelta(hours=2))))
+        for want in ("sunak-event", "sunak-mail", "Never say that you cannot add calendar entries", "Thursday, 2026-10-08 12:30 (UTC+02:00)"):
+            self.assertIn(want, note)
+
+    def test_it_is_part_of_every_chat_prompt(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            srv = make_server("127.0.0.1", 0, tmp)
+            try:
+                system = srv.RequestHandlerClass.app.build_messages({}, [{"role": "user", "content": "trag mir einen Termin ein"}])[0]["content"]
+                self.assertIn("```sunak-event", system)
+                self.assertIn("```sunak-mail", system)
+            finally:
+                srv.server_close()
+
+
 class DraftTest(unittest.TestCase):
     def test_draft_from_the_model_answer(self):
         a = 'Here: {"to": "anna@example.com", "to_name": "Anna", "subject": "Später", "body": "Hi Anna,\\nich komme später.\\nMax"}'
@@ -162,6 +180,22 @@ class EndpointTest(unittest.TestCase):
             self.assertEqual(self.call("/api/assistant/mail", bad)[0], 400)
         with mock.patch("sunak.server.providers.chat_once", return_value="sorry, no"):
             self.assertEqual(self.call("/api/assistant/mail", {"text": "schreib Anna", "model": "ollama::tiny:1b"})[0], 400)
+
+    def test_the_block_of_the_chat_model_is_checked_like_any_answer(self):
+        now = "2026-10-08T09:00:00+02:00"
+        status, r = self.call("/api/assistant/check", {"kind": "event", "now": now,
+                                                      "json": '{"summary": "Zahnarzt", "start": "2026-10-09T10:00", "end": null}'})
+        self.assertEqual((status, r["summary"], r["start"], r["end"], r["all_day"]), (200, "Zahnarzt", "2026-10-09T10:00", "2026-10-09T11:00", False))
+        self.assertEqual(self.call("/api/assistant/check", {"kind": "event", "now": now, "json": "<script>alert(1)</script>"})[0], 400)
+        self.assertEqual(self.call("/api/assistant/check", {"kind": "event", "now": "x", "json": "{}"})[0], 400)
+        self.assertEqual(self.call("/api/assistant/check", {"kind": "other", "json": "{}"})[0], 400)
+        block = '{"to": "anna@example.com", "subject": "Später", "body": "Hi Anna"}'
+        status, r = self.call("/api/assistant/check", {"kind": "mail", "json": block})
+        self.assertEqual((status, r["error"]), (400, "Add a mail account first"))
+        self.app.db.set_setting("mail_accounts", [{"id": "a1", "name": "Max", "email": "max@example.com", "password": "pw"}])
+        status, r = self.call("/api/assistant/check", {"kind": "mail", "json": block})
+        self.assertEqual((status, r["to"], r["subject"], r["account"]), (200, "anna@example.com", "Später", "a1"))
+        self.assertEqual(self.call("/api/assistant/check", {"kind": "mail", "json": '{"to": "x"}'})[0], 400)
 
     def test_event_parse_saves_nothing(self):
         before = len(self.events())
