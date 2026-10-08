@@ -11,6 +11,13 @@ Format: one section per version, `## [a.b.c] – YYYY-MM-DD`, followed by short 
 - After an import Sunak says what was added, what was skipped (already there, or damaged) and which passwords and API keys you have to enter again (they are never part of a backup). Pictures are not part of a backup either, so chats come back without them.
 - `POST /api/import` is the endpoint behind the button. A file that is not a Sunak backup is refused with a clear message; single damaged entries inside a backup are skipped and counted instead of stopping the import.
 
+## [0.17.1] – 2026-10-08
+
+### Fixed
+- The model list no longer blocks while a backend is busy. When the last list is known and the backend needs longer than 3 s, that list is shown at once and refreshed in the background, for every profile (before, it was kept only for the main profile and a timing-out backend could hold the picker for about half a minute). A refused connection or wrong key still shows the error and no old list.
+- Fewer needless calendar notes in the chat: code questions ("event listener", cron "schedule", "busy-wait"), "Kalenderblatt in CSS", a song about Monday or a greeting like "Morgen!" no longer add the calendar. Questions like "Kann ich um 14 Uhr zum Zahnarzt?", "Wann habe ich Zeit für ein Treffen?" and "Do I have anything on at 3pm?" now do.
+- Backticks are removed from event titles and places in that note, so an event in a shared calendar cannot fake a Sunak card. Events that began earlier and still run (a multi-day trip) are now included.
+
 ## [0.17.0] – 2026-10-08
 
 ### Added

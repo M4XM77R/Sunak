@@ -12,8 +12,8 @@ import urllib.request
 
 from . import jobqueue, usage
 
-MODELS_TIMEOUT = 8          # asking for the model list; a second try waits longer (a busy backend answers late)
-MODELS_TIMEOUT_BUSY = 25
+MODELS_TIMEOUT = 25         # asking for the model list (a busy backend answers late)
+MODELS_GRACE = 3            # so long the model picker waits for it when the last list is known
 TIMEOUT = 600  # long generations on slow CPUs are normal
 
 THINK_RE = re.compile(r"<think>.*?(</think>|$)", re.S)
