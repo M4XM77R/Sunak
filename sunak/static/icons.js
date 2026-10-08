@@ -22,6 +22,7 @@ const SUNAK_ICONS = {
   dot: '<circle cx="12" cy="12" r="4.5" fill="currentColor"/>',
   doc: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/>',
   download: '<path d="M12 3.5v11.5M7 10l5 5 5-5M5 20h14"/>',
+  upload: '<path d="M12 15V3.5M7 8l5-4.5L17 8M5 20h14"/>',
   edit: '<path d="M4 20l1.2-4.4L16 4.8a2.1 2.1 0 0 1 3 3L8.3 18.6z"/><path d="m14 6.8 3 3"/>',
   external: '<path d="M14 4h6v6M20 4l-9 9"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>',
   eye: '<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',

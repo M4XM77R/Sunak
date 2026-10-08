@@ -265,6 +265,48 @@ class DB:
                 "notes": self._q("SELECT * FROM notes ORDER BY created"), "knowledge": kb,
                 "calendar": self._q("SELECT * FROM calendar_events ORDER BY updated")}
 
+    # restoring a backup (see backup.py): nothing that exists is overwritten ----------
+    def restore_session(self, s):
+        """Insert a chat with its messages as one step. False (nothing written) when a chat with this id exists."""
+        with self._lock:
+            c = self.conn
+            if c.execute("SELECT 1 FROM sessions WHERE id = ?", (s["id"],)).fetchone():
+                return False
+            try:
+                c.execute("INSERT INTO sessions(id, title, model, system, use_kb, persona, use_web, created, updated) "
+                          "VALUES(?,?,?,?,?,?,?,?,?)",
+                          (s["id"], s["title"], s["model"], s["system"], int(s["use_kb"]), s["persona"], int(s["use_web"]),
+                           s["created"], s["updated"]))
+                c.executemany("INSERT INTO messages(session_id, role, content, model, created, meta) VALUES(?,?,?,?,?,?)",
+                              [(s["id"], m["role"], m["content"], m["model"], m["created"], json.dumps(m["meta"]) if m["meta"] else "")
+                               for m in s["messages"]])
+                c.commit()
+            except Exception:
+                c.rollback()
+                raise
+        return True
+
+    def restore_document(self, d):
+        """Insert a document unless one with this id, or with the same title and text, exists. True when added."""
+        with self._lock:
+            if self.conn.execute("SELECT 1 FROM documents WHERE id = ? OR (title = ? AND content = ?)",
+                                 (d["id"], d["title"], d["content"])).fetchone():
+                return False
+            self.conn.execute("INSERT INTO documents(id, title, content, updated) VALUES(?,?,?,?)",
+                              (d["id"], d["title"], d["content"], d["updated"]))
+            self.conn.commit()
+        return True
+
+    def restore_note(self, n):
+        """Insert a note unless one with this id, or with the same text, exists. True when added."""
+        with self._lock:
+            if self.conn.execute("SELECT 1 FROM notes WHERE id = ? OR content = ?", (n["id"], n["content"])).fetchone():
+                return False
+            self.conn.execute("INSERT INTO notes(id, content, is_memory, created, source) VALUES(?,?,?,?,?)",
+                              (n["id"], n["content"], int(n["is_memory"]), n["created"], n["source"]))
+            self.conn.commit()
+        return True
+
     # Sunak's own calendar: one iCalendar text per event ----------------------
     def cal_events(self):
         return self._q("SELECT uid, ics FROM calendar_events")

@@ -115,7 +115,8 @@ Your data then lives in the `data/` folder next to the Compose file (Ollama mode
 | Switch persona | Selector at the top next to the model, applies to the current chat. Your own personas: Settings → Personas |
 | Find old chats | Search box above the chat list: searches titles and all messages, a click jumps to the spot |
 | Export a chat | Download button at the top right → Markdown, JSON or Print/PDF |
-| Back up everything | Settings → Data → Download backup: one JSON file with chats, documents, notes, knowledge base, settings, mail and calendar accounts, but without API keys and passwords |
+| Back up everything | Settings → Data → Download backup: one JSON file with chats, documents, notes, knowledge base, calendar events, settings, mail and calendar accounts, but without API keys, passwords and pictures |
+| Restore a backup | Settings → Data → Import backup (or `sunak import FILE`): adds the backup, or a single chat exported as JSON, to the profile you are in. Nothing is overwritten: chats, documents and notes with the same id (notes also with the same text), knowledge-base files with the same name, calendar events with the same id, mail accounts with the same address and calendar accounts with the same address are skipped, and a setting is taken over only when you have not set it yourself. Settings of the whole installation and model providers only come in from an admin profile. The result lists what was added and skipped and which passwords and API keys you have to enter again. Only import files you trust |
 
 **The input box:** Next to it on the left are the paperclip (attach files and images), the **+** and, on the right, Send. The **+** menu opens upwards and contains Knowledge base, Web search, Tools (MCP) and Speak, each with an on/off switch. Tools (MCP) appears only when a server is switched on, and only for admin profiles; Speak appears as long as voice input is not switched off. This leaves room for typing on a phone.
 
@@ -288,6 +289,7 @@ The setting survives a restart. If you start Sunak with `--host 0.0.0.0`, it is 
 | `sunak stop` | Stop the running Sunak |
 | `sunak update` | Shows the changes (changelog), asks, then installs the newest version and stops a running Sunak (then start `sunak`); `--yes` does not ask |
 | `sunak changelog` | What the next update changes, without installing anything |
+| `sunak import FILE` | Add a backup or an exported chat to a profile (`--profile ID`, default the main profile; `--data-dir PATH` for another data folder), see "Restore a backup" above |
 | `sunak version` | Installed version (also `sunak --version`, and at the bottom of Settings) |
 | `sunak gpu` | Which graphics card Ollama can use |
 | `sunak logs [LINES]` | Where the log file is, and its last lines (default 40; `--data-dir PATH` for another data folder) |
@@ -407,6 +409,7 @@ Changes to `sunak/static/` become visible after a reload in the browser. Changes
 | `sunak/modelsearch.py` | Model search in the Ollama library and on Hugging Face |
 | `sunak/mcp.py` | MCP client (stdio and Streamable HTTP) |
 | `sunak/toolrun.py` | Tool loop in the chat: calls MCP tools per backend, approvals |
+| `sunak/backup.py` | Importing a backup or an exported chat (`sunak import`, Settings → Data) |
 | `sunak/mail.py`, `mailtest.py` | Mail (IMAP, SMTP) and `sunak mail-selftest` |
 | `sunak/reminders.py` | Calendar reminders and push messages to ntfy |
 | `sunak/cal.py` | Calendar (iCalendar, CalDAV, ICS subscriptions) |

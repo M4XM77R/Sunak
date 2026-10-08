@@ -6,13 +6,14 @@ import difflib
 import os
 import platform
 import shutil
+import sqlite3
 import sys
 import threading
 import webbrowser
 from pathlib import Path
 
-from . import __version__, changelog, desktop, gpu, log, updates
-from .server import make_server
+from . import __version__, backup, changelog, desktop, gpu, log, updates
+from .server import App, make_server
 
 
 def _color():
@@ -56,6 +57,15 @@ COMMANDS = {
                              "When Sunak is up to date, it shows the changes of the installed version.\n"
                              "  --confirm  ask \"Install the update now? [y/N]\" afterwards (what `sunak update` does; exit code 3\n"
                              "             means no). With --yes, or without a terminal, it does not ask."},
+    "import": {"group": "Manage", "args": "FILE [--profile ID] [--data-dir PATH]",
+               "summary": "Add a backup or an exported chat", "example": "sunak import sunak-backup-2026-10-08.json",
+               "details": "Reads a backup (Settings → Data → Download backup) or a chat exported as JSON and adds it to a profile.\n"
+                          "Nothing is overwritten: what is there already is skipped, and a setting is taken over only when the\n"
+                          "profile has not set it. Settings of the whole installation and providers only go into an admin profile.\n"
+                          "Passwords and API keys are not in a backup; the report lists the ones to enter again. Pictures are\n"
+                          "not in a backup either. Stop Sunak first if you can; it also works while it runs.\n"
+                          "  --profile ID     the profile to import into (default: the main profile)\n"
+                          "  --data-dir PATH  Sunak's data folder (default ~/.sunak)"},
     "version": {"group": "Manage", "args": "", "summary": "Print the installed version", "example": "sunak version"},
     "gpu": {"group": "Manage", "args": "", "summary": "Which graphics card Ollama can use", "example": "sunak gpu"},
     "mail-selftest": {"group": "Manage", "args": "[--account EMAIL] [--new] [--data-dir PATH] [--keep] [--yes]",
@@ -201,6 +211,46 @@ def logs_command(rest):
     return 0
 
 
+def import_command(rest):
+    """sunak import FILE [--profile ID] [--data-dir PATH]: add a backup or an exported chat to a profile."""
+    usage = "Usage: sunak import FILE [--profile ID] [--data-dir PATH]"
+    data_dir, profile, files, i = os.environ.get("SUNAK_DATA", str(Path.home() / ".sunak")), "default", [], 0
+    while i < len(rest):
+        if rest[i] in ("--data-dir", "--profile") and i + 1 < len(rest):
+            if rest[i] == "--profile":
+                profile = rest[i + 1]
+            else:
+                data_dir = rest[i + 1]
+            i += 2
+        elif rest[i].startswith("--"):
+            return fail(f"Unknown option '{rest[i]}'. {usage}")
+        else:
+            files, i = files + [rest[i]], i + 1
+    if len(files) != 1:
+        return fail(f"Name the file to import. {usage}")
+    if not (Path(data_dir) / "sunak.db").is_file():
+        print(f"There is no Sunak data in {data_dir}. Start Sunak once first, or name the folder with --data-dir.", file=sys.stderr)
+        return 1
+    try:
+        data = backup.read_file(files[0])
+        app = App(data_dir)
+        try:
+            info = app.profile_info(profile)
+            if not info:
+                raise ValueError(f"There is no profile '{profile}'. Profiles: " + ", ".join(p["id"] for p in app.profiles()))
+            report = app.view(profile).import_backup(data, bool(info.get("admin")))
+        finally:
+            for p in app.profiles():
+                app.close_profile(p["id"])
+            app.main.close()
+    except (ValueError, sqlite3.Error) as e:
+        print(e, file=sys.stderr)
+        return 1
+    print(f"Imported {files[0]} into profile '{profile}' ({'chat' if report['kind'] == 'chat' else 'backup'}).")
+    print("\n".join(backup.summary(report)))
+    return 0
+
+
 def changelog_command(rest):
     """sunak changelog [--confirm] [--yes]: the changes of the next update, optionally asking before it installs
     (the `sunak update` launcher runs it first). Exit code 3 = the user said no; a check that does not work
@@ -310,6 +360,8 @@ def main(argv=None):
         return logs_command(argv[1:])
     if argv and argv[0] == "changelog":
         return changelog_command(argv[1:])
+    if argv and argv[0] == "import":
+        return import_command(argv[1:])
     if argv and argv[0] == "mail-selftest":
         from . import mailtest
         return mailtest.main(argv[1:])
