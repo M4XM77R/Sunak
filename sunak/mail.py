@@ -205,6 +205,8 @@ def _ctx(host):
 # IMAP ---------------------------------------------------------------------
 def _quote(name):
     """Quote a mailbox name for an IMAP command."""
+    if re.search(r"[\r\n\x00]", name):
+        raise MailError("Invalid folder name")
     return '"' + name.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 

@@ -4,6 +4,19 @@ All changes to Sunak, newest version first. Sunak shows the entries between your
 
 Format: one section per version, `## [a.b.c] – YYYY-MM-DD`, followed by short points under **Added**, **Changed**, **Fixed** or **Removed**. Every change to Sunak gets a new version and an entry here.
 
+## [0.14.3] – 2026-10-08
+
+### Fixed
+- Windows: Sunak did not start from the desktop icon, the Start menu or autostart, because those start it without a console and the color check expected one. Output to a redirected console (`sunak -h | more`) also no longer crashes on symbols such as the sailboat.
+- Public error reports: the error message was cut to 200 characters before its private parts were masked, so a cut could leave half an e-mail address or an unfinished quote in a public issue. It is now masked first. Addresses in `http://user:password@host` links and e-mail addresses cut off in the middle are masked as well.
+- `sunak uninstall` rewrote shell start files (`~/.bashrc` and similar) as UTF-8 with LF line endings; a file in another encoding or with Windows line endings came back damaged. Only the Sunak PATH line is removed now, everything else stays byte for byte.
+- Image generation: the program list could offer macOS builds on Windows (`darwin` contains `win`) and Intel builds on Apple silicon; a model whose name starts like a downloading one was refused as "still downloading".
+- Model and program downloads: a full disk or a missing permission is now reported instead of ending the download silently.
+- Knowledge base: a PDF with a very long run of digits could freeze the upload for minutes; very long texts made the search words and the chunking slow (quadratic).
+- Calendar: a lone carriage return in a title or description could add extra lines to the event file; an event address in a sibling folder with a similar name (`/cal2` for `/cal`) is no longer accepted. Truncated or malformed server answers (calendar, MCP, speech) are reported as errors instead of crashing the request.
+- MCP: a tool call to a server that had just exited waited for the five minute timeout; it now fails at once. A closed connection no longer ends the whole answer with an internal error.
+- Mail: folder names with line breaks are refused. Speech: the language code is checked before it is sent.
+
 ## [0.14.2] – 2026-10-08
 
 ### Fixed

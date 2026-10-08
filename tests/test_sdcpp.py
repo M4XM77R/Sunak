@@ -193,6 +193,10 @@ class SdCppTest(unittest.TestCase):
         self.assertEqual(names("Linux", "x64"), ["sd-master-abc-bin-Linux-Ubuntu-24.04-x86_64.zip",
                                                  "sd-master-abc-bin-Linux-Ubuntu-24.04-x86_64-vulkan.zip"])
         self.assertEqual(names("Linux", "arm64"), [])
+        # "win" inside "darwin" is not Windows, and an x86_64 build is not an Apple-silicon build
+        mac = [{"name": n, "size": 1, "browser_download_url": "u"} for n in ("sd-bin-Darwin-macOS-x86_64.zip", "sd-bin-Darwin-macOS-arm64.zip")]
+        self.assertEqual(sdcpp.rank_assets(mac, "Windows", "x64"), [])
+        self.assertEqual([x["name"] for x in sdcpp.rank_assets(mac, "Darwin", "arm64")], ["sd-bin-Darwin-macOS-arm64.zip"])
 
     def test_install_download_and_generate(self):
         # nothing is set up yet: the picture button stays away, nothing is "missing"

@@ -69,15 +69,15 @@ _FILE_END = r"[^\n\"'`:,;)\]]{0,160}?\.(?:pdf|docx?|xlsx?|pptx?|odt|txt|md|csv|j
 _PRIVATE_PATH = re.compile(r"(?:(?<![\w./-])(?:/(?:home|Users|root|tmp|var|mnt|opt|etc|usr|srv|media|private|Volumes)\b|~)(?:" + _FILE_END + r"|[^\s\"'`:,;)\]]*)"
                            r"|\b[A-Za-z]:[\\/](?:" + _FILE_END + r"|[^\s\"'`:,;)\]]*))", re.I)
 _URL_HOST = re.compile(r"(?i)(\bhttps?://)([^/\s:@\"'`]+)")
+_USERINFO = re.compile(r"(?<=://)[^/\s@:]+:[^/\s@]+@")                      # user:password@host
 _PATTERNS = (
-    (re.compile(r"(?<=://)[^/\s@:]+:[^/\s@]+@"), "***@"),                     # user:password@host
-    (re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+"), "<email>"),
+    (re.compile(r"[\w.+-]+@[\w.-]+"), "<email>"),                             # also an address cut off in the middle
     (re.compile(r"\b(?!127\.0\.0\.1\b|0\.0\.0\.0\b)\d{1,3}(?:\.\d{1,3}){3}\b"), "<ip>"),
     (re.compile(r"(?i)\b[0-9a-f]{1,4}(?::[0-9a-f]{0,4}){3,7}\b"), "<ip>"),    # IPv6
     (re.compile(r"(?i)\b[0-9a-f]{2}(?:[:-][0-9a-f]{2}){5}\b"), "<mac>"),
     (re.compile(r"(?i)\b[\w-]+\.(?:local|lan|home|internal|intranet|fritz\.box|localdomain)\b"), "<host>"),
 )
-_QUOTED = re.compile(r"([\"'`])(?:(?!\1)[^\n]){25,}\1")   # a long quoted text could be part of a chat or a document
+_QUOTED = re.compile(r"([\"'`])(?:(?!\1)[^\n]){25,}(?:\1|$)")   # a long quoted text could be part of a chat or a document
 
 
 def _mask_host(m):
@@ -96,6 +96,7 @@ def anonymize(text, extra=()):
             pass
     for name in sorted((n for n in names if len(n) >= 3 and n.lower() not in SKIP_NAMES), key=len, reverse=True):
         text = text.replace(name, names[name])
+    text = _USERINFO.sub("", text)  # before the host mask, or `user` would be taken for the host and the real host stays
     text = _URL_HOST.sub(_mask_host, text)
     for pattern, repl in _PATTERNS:
         text = pattern.sub(repl, text)
@@ -137,7 +138,7 @@ def describe(exc_info):
             lines.append("    " + fr.line.strip())  # only Sunak's own source, never other code or variable values
         if mine:
             own.append(f"{name}:{fr.name}")
-    message = " ".join(str(value).split())[:MAX_MESSAGE]
+    message = anonymize(" ".join(str(value).split()))[:MAX_MESSAGE]  # mask first: a cut could split an address or a quote and hide it
     error = f"{etype.__name__}: {message}" if message else etype.__name__
     return anonymize(error), anonymize("\n".join(lines)), own
 

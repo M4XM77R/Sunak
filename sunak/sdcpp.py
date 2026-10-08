@@ -188,9 +188,9 @@ def rank_assets(assets, system=None, arch=None, gpu_info=None):
     for a in assets:
         name = a.get("name", "")
         low = name.lower()
-        if low.startswith("cudart") or not low.endswith(".zip") or not any(w in low for w in os_words):
+        if low.startswith("cudart") or not low.endswith(".zip") or not any(re.search(rf"(?<![a-z]){w}(?:dows)?(?![a-z])" if w == "win" else w, low) for w in os_words):
             continue
-        if not any(w in low for w in arch_words) and not (system == "Darwin" and arch == "arm64" and "x64" not in low):
+        if not any(w in low for w in arch_words) and not (system == "Darwin" and arch == "arm64" and "x64" not in low and "x86_64" not in low):
             continue
         kind = next((k for k in ("cuda", "vulkan", "rocm", "hip", "sycl", "metal", "opencl") if k in low), "cpu")
         kind = "rocm" if kind == "hip" else kind
@@ -406,7 +406,7 @@ def delete_model(data_dir, mid):
     if not ID_RE.fullmatch(mid or ""):
         raise SdError("Unknown model")
     folder = _folder(data_dir, mid)
-    if any(str(p).startswith(str(folder)) for p in downloading()):
+    if any(folder in Path(p).parents for p in downloading()):
         raise SdError("The model is still downloading. Cancel the download first.")
     shutil.rmtree(folder, ignore_errors=True)
 

@@ -1933,8 +1933,10 @@ class Handler(BaseHTTPRequestHandler):
             result = work(progress)
         except sdcpp.SdError as e:
             return self.emit({"type": "error", "error": str(e)})
-        except OSError:  # the browser went away (Cancel)
+        except ConnectionError:  # the browser went away (Cancel)
             return None
+        except OSError as e:  # disk full, no permission, a file locked by another program
+            return self.emit({"type": "error", "error": f"File error: {e.strerror or e}"})
         self.emit({"type": "done", **(result or {})})
 
     def engine_install(self):
@@ -2357,7 +2359,7 @@ class Handler(BaseHTTPRequestHandler):
     def calendar_href(self, src, href):
         """An event address must lie inside one of the account's calendars (never another server)."""
         if not isinstance(href, str) or "/.." in href or "\\" in href or \
-                not any(href.startswith(c["href"]) and href != c["href"] for c in src.get("calendars", [])):
+                not any(href.startswith(c["href"].rstrip("/") + "/") and href != c["href"] for c in src.get("calendars", [])):
             raise ValueError("Unknown event address. Reload the calendar.")
         return href
 

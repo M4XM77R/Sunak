@@ -11,6 +11,7 @@ import base64
 import calendar as _calendar
 import datetime as dt
 import hashlib
+import http.client
 import json
 import re
 import secrets
@@ -117,7 +118,7 @@ def unescape(v):
 
 
 def escape(v):
-    return v.replace("\\", "\\\\").replace(";", "\\;").replace(",", "\\,").replace("\r\n", "\n").replace("\n", "\\n")
+    return v.replace("\\", "\\\\").replace(";", "\\;").replace(",", "\\,").replace("\r\n", "\n").replace("\r", "\n").replace("\n", "\\n")
 
 
 class Component:
@@ -768,7 +769,7 @@ def request(method, url, user="", password="", body=None, headers=None, depth=No
             if e.code == 404 and method in ("GET", "PROPFIND", "REPORT"):
                 raise CalendarError(f"Nothing found at {url} (HTTP 404)") from None
             raise CalendarError(f"Calendar server: HTTP {e.code} {re.sub(r'<[^>]+>', ' ', detail)[:200].strip()}".strip()) from None
-        except (urllib.error.URLError, OSError) as e:
+        except (urllib.error.URLError, OSError, http.client.HTTPException) as e:
             raise CalendarError(f"Cannot reach {urllib.parse.urlparse(url).netloc}: {getattr(e, 'reason', e)}") from None
     raise CalendarError("Too many redirects")
 

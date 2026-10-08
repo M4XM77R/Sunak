@@ -137,6 +137,21 @@ class BuildTest(unittest.TestCase):
         for hidden in ("hunter22", "maria", "10.0.0.5"):
             self.assertNotIn(hidden, r["body"])
 
+    def test_cutting_the_message_cannot_uncover_an_address_or_a_quote(self):
+        # the message is cut to MAX_MESSAGE characters; the cut must not split an address or a quote so it is no longer masked
+        pad = "x" * (reports.MAX_MESSAGE - 12)
+        error = reports.describe(boom("Oops", pad + " john.doe@example.com"))[0]
+        self.assertNotIn("john.doe@", error)
+        quoted = reports.describe(boom("Oops", "see 'my secret diary entry about my private life' ok" + pad))[0]
+        self.assertNotIn("diary", quoted)
+        long_quote = reports.describe(boom("Oops", "a" * (reports.MAX_MESSAGE - 20) + " 'my secret diary entry that goes on and on and on'"))[0]
+        self.assertNotIn("diary", long_quote)
+
+    def test_user_and_password_do_not_hide_the_real_host(self):
+        out = reports.anonymize("failed: http://bob:pw123@intranet.corp.example/x")
+        for hidden in ("bob", "pw123", "intranet.corp"):
+            self.assertNotIn(hidden, out)
+
     def test_prefilled_issue_address_stays_short(self):
         r = reports.build(boom("Big", "x" * 250), lines=["12:00:00 INFO app " + "y" * 280] * 30)
         self.assertLess(len(reports.issue_url(r)), reports.URL_LIMIT + 200)

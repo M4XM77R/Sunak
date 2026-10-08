@@ -17,7 +17,8 @@ from .server import make_server
 
 def _color():
     """ANSI colors only for a terminal, and never with NO_COLOR set (https://no-color.org)."""
-    if not sys.stdout.isatty() or os.environ.get("NO_COLOR") or os.environ.get("TERM") == "dumb":
+    out = sys.stdout  # None under pythonw.exe (desktop icon, autostart on Windows)
+    if out is None or not out.isatty() or os.environ.get("NO_COLOR") or os.environ.get("TERM") == "dumb":
         return False
     if os.name == "nt":  # the Windows console shows colors only after switching them on
         try:
@@ -283,6 +284,11 @@ def main(argv=None):
     """Parse the command line, find a free port, start the server and open the browser.
     If Sunak already runs, just open it."""
     argv = list(sys.argv[1:] if argv is None else argv)
+    for stream in (sys.stdout, sys.stderr):  # a redirected Windows console (cp1252) must not crash on the sailboat or other symbols
+        try:
+            stream.reconfigure(errors="replace")
+        except (AttributeError, ValueError):
+            pass
     try:
         port = int(os.environ.get("SUNAK_PORT") or 7000)
     except ValueError:
