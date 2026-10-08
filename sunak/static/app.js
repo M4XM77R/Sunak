@@ -464,11 +464,12 @@ function messageEl(m, i, msgs) {
     if (m.meta?.assist) body.append(assistEl(m));
     else if (m.meta?.tools || m.meta?.agent) body.append(toolsEl(m.meta.tools || m.meta.agent)); // `agent`: chats stored before 0.13.0
     else if (m.meta?.imagegen || m.meta?.pending) body.append(genFigure(m));
-    else body.append(el('div', { class: 'md', html: md(m.content) }));
+    else body.append(el('div', { class: 'md', html: mdChat(m.content) }));
   }
+  if (!isUser) { const cards = actionCards(m, i === msgs.length - 1); if (cards) body.append(cards); }
   const meta = el('div', { class: 'meta' });
   const gen = m.meta?.imagegen;
-  const copyText = gen ? gen.prompt : m.content.replace(/<think>[\s\S]*?(<\/think>|$)/g, '').trim();
+  const copyText = gen ? gen.prompt : stripActions(m.content).replace(/<think>[\s\S]*?(<\/think>|$)/g, '').trim();
   meta.append(el('button', { onclick: () => navigator.clipboard.writeText(copyText).then(() => toast('Copied')) }, gen ? 'Copy description' : 'Copy'));
   if (gen) {
     meta.append(el('a', { href: `/api/images/${m.meta.images[0]}`, download: `sunak-${gen.seed}.${m.meta.images[0].split('.')[1]}` }, icon('download'), 'Download'));
@@ -603,7 +604,7 @@ async function runChat(payload, localUserMsg) {
     pending = false;
     if (raw) status.textContent = '';
     const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 120;
-    target.innerHTML = md(raw);
+    target.innerHTML = mdChat(raw);
     const d = target.querySelector('details.think');
     if (d && thinkOpen !== null) d.open = thinkOpen;
     if (nearBottom) box.scrollTop = box.scrollHeight;
@@ -829,6 +830,16 @@ function eventWhen(d) {
   const time = (s) => s.slice(11, 16);
   return d.end.slice(0, 10) === d.start.slice(0, 10) ? `${day(d.start)}, ${time(d.start)} – ${time(d.end)}` : `${day(d.start)} ${time(d.start)} – ${day(d.end)} ${time(d.end)}`;
 }
+// is there already an event with this title and start (on the day of the draft)? A failing lookup counts as "no"
+async function calendarHas(d) {
+  try {
+    const day = dayOf(d.start.slice(0, 10));
+    const r = await api(`/api/calendar/events?${new URLSearchParams({ start: isoLocal(day), end: isoLocal(addDays(day, 1)) })}`);
+    const title = d.summary.trim().toLowerCase();
+    return r.events.some((e) => e.summary.trim().toLowerCase() === title && (d.all_day ? e.all_day && e.start === d.start.slice(0, 10)
+      : !e.all_day && +new Date(e.start) === +new Date(d.start)));
+  } catch (e) { return false; }
+}
 async function saveChatEvent(a, btn) {
   btn.disabled = true;
   try {
@@ -838,7 +849,8 @@ async function saveChatEvent(a, btn) {
       if (!calTargets().some((t) => t.value === target)) target = 'local';
     }
     const [source, calendar] = target.split(/\|(.*)/s);
-    await api('/api/calendar/events', { method: 'POST', body: { source, calendar, event: eventFromDraft(a.draft) } });
+    if (await calendarHas(a.draft)) a.dup = true;  // saved before (a reload shows the card again): do not add it twice
+    else await api('/api/calendar/events', { method: 'POST', body: { source, calendar, event: eventFromDraft(a.draft) } });
     a.saved = true;
     a.savedIn = calTargets().find((t) => t.value === target)?.label || 'Sunak';
     renderMessages();
@@ -871,6 +883,67 @@ function sendAsChat(a) {
 }
 const chatInstead = (a) => el('button', { class: 'btn', type: 'button', title: 'Not what you meant? Send your message to the model as a normal chat message', onclick: () => sendAsChat(a) }, 'Send as normal message');
 const eventIsPast = (d) => (d.all_day ? dayOf(d.end.slice(0, 10)) < dayOf(ymd(new Date())) : new Date(d.end) < new Date());
+// The chat model may answer an event or e-mail request with a fenced ```sunak-event``` / ```sunak-mail``` block (sunak/intent.py
+// `abilities` tells it how). The block is never shown as text: the server checks its JSON (POST /api/assistant/check) and the
+// same card as above appears in the newest answer; saving or sending still needs a click. The card is built with el(), as text.
+// BEGIN parseActions (tests/test_actions_js.py runs this part with node)
+// Line by line, so that a block inside another code fence (a 4-backtick example) stays text: returns the text without the blocks,
+// the blocks [{kind, json}] and hides what may still become a block while the answer streams (an open block, a dangling "```sun").
+const DANGLING = /^`{1,3}(?:s(?:u(?:n(?:a(?:k(?:-(?:e(?:v(?:e(?:n(?:t)?)?)?)?|m(?:a(?:i(?:l)?)?)?)?)?)?)?)?)?)?$/;
+function parseActions(text) {
+  const out = [], blocks = [];
+  let fence = 0, cur = null;  // fence: length of the ordinary code fence we are inside; cur: the block being read
+  const lines = String(text).split('\n');
+  lines.forEach((line, i) => {
+    const isLast = i === lines.length - 1;
+    if (cur) {
+      if (/^`{3,}\s*$/.test(line)) { blocks.push({ kind: cur.kind, json: cur.lines.join('\n') }); cur = null; }
+      else cur.lines.push(line);
+      return;
+    }
+    const m = /^(`{3,})(.*)$/.exec(line);
+    if (fence) {
+      if (m && m[1].length >= fence && !m[2].trim()) fence = 0;
+      out.push(line);
+    } else if (isLast && DANGLING.test(line)) { /* may still become a block: hide it for now */ }
+    else if (m) {
+      const act = m[1].length === 3 && /^sunak-(event|mail)\s*$/.exec(m[2]);
+      if (act) cur = { kind: act[1], lines: [] };
+      else { fence = m[1].length; out.push(line); }
+    } else out.push(line);
+  });
+  return { text: out.join('\n').trim(), blocks };  // an unclosed block is dropped
+}
+// END parseActions
+const stripActions = (t) => parseActions(t).text;
+const mdChat = (t) => md(stripActions(t));
+const actionCache = new Map(); // chat id + block text → card state, so a repaint does not check (or save) it again
+async function checkActionBlock(a, kind, json) {
+  try {
+    a.draft = await api('/api/assistant/check', { method: 'POST', body: { kind, json, now: isoLocal(new Date()) } });
+    a.status = 'ready';
+  } catch (e) {
+    a.status = 'error';
+    a.error = e.message;
+    if (kind === 'mail' && /mail account/i.test(e.message)) a.setup = 'mail';
+  }
+}
+function actionCards(m, last) {
+  if (m.role !== 'assistant' || !m.content || !m.content.includes('```sunak-')) return null;
+  const blocks = parseActions(m.content).blocks.slice(0, 3);
+  if (!blocks.length) return null;
+  const box = el('div', { class: 'assist-cards' });
+  for (const { kind, json } of blocks) {
+    if (!last) { box.append(el('div', { class: 'muted small' }, kind === 'event' ? 'An event card was shown here.' : 'An e-mail card was shown here.')); continue; }
+    const key = `${state.session?.id}\n${kind}\n${json}`;
+    let a = actionCache.get(key);
+    if (!a) { a = { kind, status: 'working', fromModel: true }; actionCache.set(key, a); if (actionCache.size > 50) actionCache.delete(actionCache.keys().next().value); }
+    const holder = el('div', {}, assistEl({ meta: { assist: a } }));
+    if (a.status === 'working' && !a.started) { a.started = true; checkActionBlock(a, kind, json).then(() => holder.replaceChildren(assistEl({ meta: { assist: a } }))); }
+    box.append(holder);
+  }
+  return box;
+}
 function assistEl(m) {
   const a = m.meta.assist;
   if (a.status === 'working') return el('div', { class: 'muted small', role: 'status' }, a.kind === 'event' ? 'Preparing the event…' : 'Writing the e-mail…');
@@ -880,7 +953,7 @@ function assistEl(m) {
       el('div', { class: 'err' }, a.error),
       el('div', { class: 'row' },
         a.setup === 'mail' ? el('button', { class: 'btn', type: 'button', onclick: () => { show('settings'); editMailAccount({}); } }, icon('plus'), 'Add mail account') : null,
-        chatInstead(a)));
+        a.fromModel ? null : chatInstead(a)));
   }
   const d = a.draft;
   if (a.kind === 'event') {
@@ -891,11 +964,11 @@ function assistEl(m) {
       d.location ? el('div', { class: 'muted small', 'data-no-i18n': '' }, d.location) : null,
       d.description ? el('div', { class: 'muted small', 'data-no-i18n': '' }, d.description) : null,
       !a.saved && eventIsPast(d) ? el('div', { class: 'err small' }, icon('alert'), 'This date is in the past. Check it before saving, or tell Sunak the date again.') : null,
-      a.saved ? el('div', { class: 'ok small' }, icon('check-circle'), tr('Saved in {calendar} ✓', { calendar: a.savedIn }))
+      a.saved ? el('div', { class: 'ok small' }, icon('check-circle'), a.dup ? tr('Already in the calendar ✓') : tr('Saved in {calendar} ✓', { calendar: a.savedIn }))
         : el('div', { class: 'row' },
           el('button', { class: 'btn primary', type: 'button', onclick: (ev) => saveChatEvent(a, ev.currentTarget) }, 'Save'),
           el('button', { class: 'btn', type: 'button', title: 'Open the event form to change it', onclick: () => editChatEvent(a) }, 'Edit'),
-          chatInstead(a)));
+          a.fromModel ? null : chatInstead(a)));
   }
   return el('div', { class: 'assist-card' },
     el('div', { class: 'assist-head' }, icon('mail'), 'E-mail ready: nothing is sent'),
@@ -905,7 +978,7 @@ function assistEl(m) {
     el('div', { class: 'row' },
       el('button', { class: 'btn primary', type: 'button', title: 'Opens the compose form; sending needs your click and a confirmation there', onclick: () => openChatMail(a) }, 'Open in Mail'),
       el('button', { class: 'btn', type: 'button', onclick: () => navigator.clipboard.writeText(d.body).then(() => toast('Copied')) }, 'Copy text'),
-      chatInstead(a)));
+      a.fromModel ? null : chatInstead(a)));
 }
 
 /* ---------------- Tools (MCP) ----------------
@@ -961,7 +1034,7 @@ function toolsEl(a) {
   const box = el('div', { class: 'tools-run' });
   for (const p of a.parts || []) {
     if (p.step) box.append(stepEl(p.step));
-    else if (p.text) box.append(el('div', { class: 'md', html: md(p.text) }));
+    else if (p.text) box.append(el('div', { class: 'md', html: mdChat(p.text) }));
   }
   return box;
 }
@@ -980,8 +1053,8 @@ async function runTools(payload, localUserMsg) {
   const steps = {};
   let cur = null, pending = false, error = null, stopped = false, qnote = null;
   const scroll = () => { if (box.scrollHeight - box.scrollTop - box.clientHeight < 160) box.scrollTop = box.scrollHeight; };
-  const paint = () => { pending = false; if (cur) cur.el.innerHTML = md(cur.raw); scroll(); };
-  const endText = () => { if (cur) { if (cur.thinking) cur.raw += '</think>'; cur.el.innerHTML = md(cur.raw); cur = null; } };
+  const paint = () => { pending = false; if (cur) cur.el.innerHTML = mdChat(cur.raw); scroll(); };
+  const endText = () => { if (cur) { if (cur.thinking) cur.raw += '</think>'; cur.el.innerHTML = mdChat(cur.raw); cur = null; } };
   const showStep = (st, ask) => {
     const node = stepEl(st, ask && (async (decision) => {
       node.querySelectorAll('.step-actions button').forEach((b) => (b.disabled = true));

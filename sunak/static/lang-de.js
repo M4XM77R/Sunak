@@ -945,5 +945,8 @@
 "The ntfy address must start with http:// or https://": "Die ntfy-Adresse muss mit http:// oder https:// beginnen.",
 "The ntfy topic may only contain letters, digits, - and _ (up to 64 characters)": "Das ntfy-Thema darf nur Buchstaben, Ziffern, - und _ enthalten (bis zu 64 Zeichen).",
 "The ntfy server answered with HTTP {code}. Check the address and the topic.": "Der ntfy-Server hat mit HTTP {code} geantwortet. Prüf die Adresse und das Thema.",
-"reminder must be a whole number of minutes before the start (up to 7 days)": "Die Erinnerung muss eine ganze Zahl Minuten vor dem Beginn sein (bis zu 7 Tage)."
+"reminder must be a whole number of minutes before the start (up to 7 days)": "Die Erinnerung muss eine ganze Zahl Minuten vor dem Beginn sein (bis zu 7 Tage).",
+"An event card was shown here.": "Hier wurde eine Termin-Karte angezeigt.",
+"An e-mail card was shown here.": "Hier wurde eine E-Mail-Karte angezeigt.",
+"Already in the calendar ✓": "Schon im Kalender ✓"
 } };

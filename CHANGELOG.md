@@ -4,6 +4,17 @@ All changes to Sunak, newest version first. Sunak shows the entries between your
 
 Format: one section per version, `## [a.b.c] – YYYY-MM-DD`, followed by short points under **Added**, **Changed**, **Fixed** or **Removed**. Every change to Sunak gets a new version and an entry here.
 
+## [0.16.1] – 2026-10-08
+
+### Fixed
+- Asking the chat to create an appointment no longer fails with "I cannot add calendar entries" when the request is worded in a way the pattern recognition does not catch. The chat model is now told that Sunak can prepare events and e-mails; it answers with a short sentence and a hidden block, and Sunak shows the usual card (Save / Edit, Open in Mail). Nothing is saved or sent before you click.
+
+### Added
+- `POST /api/assistant/check` checks such a block (same rules as "Event from text" and the e-mail draft) before the card appears. The block is shown as text on the card, never as HTML. The pattern recognition from 0.15.x stays as the fast path for small models.
+- Saving an event from a chat card checks the calendar first and says "Already in the calendar" instead of adding the same title and start twice (for example after a reload).
+- The note for the model is only added to the normal chat and the tool loop, not to Compare, and the mail part only when a mail account is linked.
+- A block inside a four-backtick code example stays text, a half-written block is hidden while the answer streams, and Copy leaves the block out.
+
 ## [0.16.0] – 2026-10-08
 
 ### Added
