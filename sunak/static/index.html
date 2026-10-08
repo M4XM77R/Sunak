@@ -363,6 +363,22 @@
         <div id="calSourceForm"></div>
         <button class="btn" id="addCalSource" type="button"><i data-i="plus"></i>Add calendar</button>
 
+        <h2>Reminders</h2>
+        <p class="muted small">Give an event a reminder in the event form. Sunak then tells you shortly before it starts: in the page and as a desktop notification while Sunak is open, and as a push message on your phone when you set up ntfy below (also when no browser is open, as long as Sunak is running).</p>
+        <label class="check"><input type="checkbox" id="remindersOn"> Remind me of events (Sunak reads your calendars every 10 minutes for this)</label>
+        <div class="row">
+          <button class="btn" id="remindersDesktop" type="button"><i data-i="bell"></i>Also as desktop notification</button>
+          <span class="muted small" id="remindersDesktopState"></span>
+        </div>
+        <p class="muted small">Push messages to your phone: install the free ntfy app (Android, iPhone) and subscribe to the topic below. Anyone who knows the topic can read your reminders and send messages to it, so use a random one. On the public server ntfy.sh the titles and times of your events pass through that server; for more privacy enter the address of your own ntfy server (it must accept messages without a login).</p>
+        <label>ntfy server (empty = https://ntfy.sh)<input id="ntfyUrl" spellcheck="false" autocomplete="off" placeholder="https://ntfy.sh"></label>
+        <label>ntfy topic (empty = no push messages)<input id="ntfyTopic" spellcheck="false" autocomplete="off" placeholder="e.g. sunak-3f9a1c7e5b2d4a60"></label>
+        <div class="row">
+          <button class="btn" id="ntfyNew" type="button">Random topic</button>
+          <button class="btn" id="remindersTest" type="button"><i data-i="bell"></i>Send test</button>
+          <span class="muted small" id="remindersMsg"></span>
+        </div>
+
         <div class="admin-only">
         <h2>Tools (MCP)</h2>
         <p class="muted small">MCP servers give the model tools, e.g. for your files, web pages or other apps. Switch them on with the plug button next to the message box. Sunak asks you before every tool call. Environment values and tokens stay on this computer and are never sent back to the browser.</p>
