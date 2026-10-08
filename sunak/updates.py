@@ -40,7 +40,7 @@ def _hidden():
 def _git(repo, *args, timeout=60):
     """Output of a git command in `repo`, or None when it fails."""
     try:
-        r = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, errors="replace",
+        r = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, encoding="utf-8", errors="replace",
                            timeout=timeout, env=_env(), stdin=subprocess.DEVNULL, **_hidden())
     except (OSError, ValueError, subprocess.SubprocessError):
         return None

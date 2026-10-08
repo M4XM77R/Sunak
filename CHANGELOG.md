@@ -4,6 +4,11 @@ All changes to Sunak, newest version first. Sunak shows the entries between your
 
 Format: one section per version, `## [a.b.c] – YYYY-MM-DD`, followed by short points under **Added**, **Changed**, **Fixed** or **Removed**. Every change to Sunak gets a new version and an entry here.
 
+## [0.14.2] – 2026-10-08
+
+### Fixed
+- On Windows the changelog of an update was read with the system code page, so the en dash in `## [x.y.z] – date` broke and the newest entry was missing. Git output is now always read as UTF-8.
+
 ## [0.14.1] – 2026-10-07
 
 ### Changed
