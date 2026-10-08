@@ -107,6 +107,8 @@ case "\${1:-}" in
   uninstall) cd "\$HOME" && exec python3 -m sunak "\$@" ;;  # keeps your data unless you say otherwise
   update)
     case "\${2:-}" in -h|--help) exec python3 -m sunak help update ;; esac
+    ask="--confirm"; case "\${2:-}" in -y|--yes) ask="--confirm --yes" ;; esac
+    python3 -m sunak changelog \$ask; [ \$? -eq 3 ] && exit 0  # shows what is new and asks (3 = declined)
     export SUNAK_HOME="$HOME_DIR" SUNAK_REPO="$REPO" SUNAK_BRANCH="$BRANCH"  # reinstall into the same place
     old=\$(python3 -m sunak version)
     src=\$(cat "$HOME_DIR/source" 2>/dev/null)

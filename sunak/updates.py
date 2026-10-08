@@ -17,7 +17,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import desktop
+from . import __version__, changelog, desktop
 
 CHECK_EVERY = 6 * 3600   # seconds between two checks
 RETRY_AFTER = 1800       # a failed check (offline?) is tried again after half an hour
@@ -40,7 +40,7 @@ def _hidden():
 def _git(repo, *args, timeout=60):
     """Output of a git command in `repo`, or None when it fails."""
     try:
-        r = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, errors="replace",
+        r = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, encoding="utf-8", errors="replace",
                            timeout=timeout, env=_env(), stdin=subprocess.DEVNULL, **_hidden())
     except (OSError, ValueError, subprocess.SubprocessError):
         return None
@@ -76,18 +76,24 @@ def installed_commit(root, repo):
 
 def inspect(root=desktop.PKG_ROOT):
     """The update check with details: {"behind": new commits (0 = up to date, None = unknown), "version": the
-    version on the remote ("" when unknown), "error": why it could not be found out ("" when it could)}."""
+    version on the remote ("" when unknown), "changelog": the CHANGELOG.md entries between the installed
+    and the remote version (newest first, [] when there are none or the file is missing), "error": why it could
+    not be found out ("" when it could)}."""
     repo = repo_dir(root)
     if repo is None:
-        return {"behind": None, "version": "", "error": "no_clone"}
+        return {"behind": None, "version": "", "changelog": [], "error": "no_clone"}
     if _git(repo, "fetch", "--quiet") is None:
-        return {"behind": None, "version": "", "error": "no_remote"}
+        return {"behind": None, "version": "", "changelog": [], "error": "no_remote"}
     for base in dict.fromkeys((installed_commit(root, repo), "HEAD")):
         count = _git(repo, "rev-list", "--count", f"{base}..@{{u}}", timeout=20)
         if count is not None and count.isdigit():
             m = re.search(r'^__version__\s*=\s*"([^"]+)"', _git(repo, "show", "@{u}:sunak/__init__.py", timeout=20) or "", re.M)
-            return {"behind": int(count), "version": m.group(1) if m else "", "error": ""}
-    return {"behind": None, "version": "", "error": "no_upstream"}
+            version = m.group(1) if m else ""
+            entries = []
+            if int(count):
+                entries = changelog.between(changelog.parse(_git(repo, "show", "@{u}:CHANGELOG.md", timeout=20)), __version__, version)
+            return {"behind": int(count), "version": version, "changelog": entries, "error": ""}
+    return {"behind": None, "version": "", "changelog": [], "error": "no_upstream"}
 
 
 def check(root=desktop.PKG_ROOT):
