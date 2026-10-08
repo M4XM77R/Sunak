@@ -93,28 +93,43 @@ def subject(text):
 _LEAD = (r"^\W*(?:(?:hey|hi|hallo|hello)\W+)?(?:sunak\W+)?(?:(?:bitte|please|kannst du(?: mir)?|könntest du(?: mir)?|kannst du|"
          r"can you(?: please)?|could you(?: please)?|would you(?: please)?|will you|ich (?:möchte|will|brauche|hätte gern|würde gern)(?: dass du)?|"
          r"i (?:want|need|would like|d like)(?: you)? to)\s+)*")
-_MAILN = r"(?:e-?mails?|mails?)"
+_MAILN = r"(?:e-?mails?|mails?)(?![-\w])"
 _MAIL_VERB = (r"(?:schreib\w*|verfass\w*|entwirf\w*|entwerf\w*|formulier\w*|sende\w*|schick\w*|bereite?\w*|write|draft|compose|send|"
               r"prepare|shoot|fire off)")
+# words that may stand between the verb and the thing it makes: "ein", "mir", "a", "my", "new" ...
+_FILL = (r"(?:(?:mir|uns|me|us|bitte|please|einen?|eine|ein|an?|the|my|mein\w*|unser\w*|our|neuen?|new|kurze[ns]?|short|quick|schnellen?|"
+         r"weiteren?|another|noch)\s+)")
+_MAIL_NOT = r"(?!\s+(?:list\w*|template\w*|vorlage\w*|adress\w*|address\w*|server|konto|account|zusammenfassung|summary|text\w*|client|programm|ordner|folder)\b)"
+# a date or time: an event needs one, otherwise "make a meeting summary" or "remind me what we discussed" would be one
+_TIME = re.compile(
+    r"\b(?:heute|morgen|übermorgen|montag|dienstag|mittwoch|donnerstag|freitag|samstag|sonntag|today|tomorrow|tonight|monday|tuesday|wednesday|"
+    r"thursday|friday|saturday|sunday|nächste\w*|kommende\w*|next|this\s+(?:week|evening|morning|afternoon)|\d{1,2}[:.]\d{2}|"
+    r"\d{1,2}\s?(?:uhr|am|pm|h)|um\s+\d|at\s+\d|(?:am|on)\s+\d|\d{1,2}\.\d{1,2}\.|\d{4}-\d\d-\d\d|"
+    r"in\s+(?:\d+|einer|einem|zwei|drei)\s+(?:tag\w*|woche\w*|stunde\w*|minute\w*|monat\w*|days?|weeks?|hours?|minutes?|months?))\b", F)
+_EVENT_NOUN = (r"(?:termin\w*|kalendereintr\w*|erinnerung\w*|appointments?|events?|meetings?|reminders?|calendar\s+(?:entry|event))"
+               r"(?!\s+(?:summary|zusammenfassung|loop|agenda|notes|minutes|protokoll|vorlage\w*|template\w*|handler|listener|room|list\w*)\b)")
 _ACTIONS = {
     "mail": [re.compile(p, F) for p in (
-        rf"{_LEAD}{_MAIL_VERB}\b[^.?!\n]{{0,60}}?\b{_MAILN}\b",
+        rf"{_LEAD}{_MAIL_VERB}\s+(?:\w+\s+){{0,2}}?{_FILL}{{0,2}}(?:neue\s+|new\s+)?{_MAILN}{_MAIL_NOT}",
         rf"{_LEAD}{_MAILN}\s+(?:an|to)\s+\w+",
         rf"{_LEAD}e-?mail\s+\w+\s+(?:that|dass|and|und|about|wegen|to)\b",
-        rf"^\W*(?:bitte\s+)?(?:kannst|könntest) du(?: mir)?\b[^.?!\n]{{0,60}}?\b{_MAILN}\b[^.?!\n]{{0,80}}?\b(?:schreib|verfass|formulier|entwerf|send|schick|verschick)\w*",
+        rf"^\W*(?:bitte\s+)?(?:kannst|könntest) du(?: mir)?\s+(?:\w+\s+)?{_FILL}{{0,2}}(?:neue\s+)?{_MAILN}{_MAIL_NOT}"
+        rf"(?:\s+(?:an|to|für)\s+[\w@.\-]+(?:\s+[\w@.\-]+){{0,2}})?\s+(?:schreib|verfass|formulier|entwerf|send|schick|verschick)\w*",
     )],
-    "event": [re.compile(p, F) for p in (
-        rf"{_LEAD}(?:trag\w*|schreib\w*|setz\w*|pack\w*|schieb\w*|speicher\w*|füg\w*|leg\w*|add|put|save|enter|block|log|pencil)\b"
-        r"[^.?!\n]{0,100}?\b(?:in|im|auf|zu|to|into|on)\s+(?:de[nm]|mein\w*|unser\w*|my|the|our)\s+(?:\w+\s+)?(?:kalender|terminkalender|planer|calendar|schedule|agenda)\b",
-        rf"{_LEAD}trag\w*\b[^.?!\n]{{0,100}}?\bein\b[\s.!]*$",
-        rf"^\W*(?:bitte\s+)?(?:kannst|könntest) du(?: mir)?\b[^.?!\n]{{0,100}}?\beintrag\w*",
-        rf"{_LEAD}(?:erstell\w*|leg\w*|mach\w*|vereinbar\w*|buch\w*|plan\w*|erfass\w*|erzeug\w*|anleg\w*|schedule|book|create|make|set up|add|arrange)\b"
-        r"[^.?!\n]{0,40}?\b(?:termin\w*|kalendereintr\w*|erinnerung\w*|appointments?|events?|meetings?|reminders?|calendar (?:entry|event))\b",
-        rf"{_LEAD}erinner\w*\s+(?:mich|uns)\b",
-        rf"{_LEAD}remind\s+(?:me|us)\b",
-        rf"{_LEAD}schedule\s+(?:me\s+|us\s+)?(?:an?|my|the|our)\b",
+    # (pattern, needs a date or time)
+    "event": [(re.compile(p, F), t) for p, t in (
+        (rf"{_LEAD}(?:trag\w*|schreib\w*|setz\w*|pack\w*|schieb\w*|speicher\w*|füg\w*|leg\w*|add|put|save|enter|block|log|pencil)\b"
+         r"[^.?!\n]{0,100}?\b(?:in|im|auf|zu|to|into|on)\s+(?:de[nm]|mein\w*|unser\w*|my|the|our)\s+(?:\w+\s+)?(?:kalender|terminkalender|planer|calendar|schedule|agenda)\b", False),
+        (rf"^\W*(?:bitte\s+)?(?:kannst|könntest) du(?: mir)?\b[^.?!\n]{{0,100}}?\beintrag\w*", False),
+        (rf"{_LEAD}trag\w*\b[^.?!\n]{{0,100}}?\bein\b[\s.!]*$", True),
+        (rf"{_LEAD}(?:erstell\w*|leg\w*|mach\w*|plan\w*|erfass\w*|erzeug\w*|anleg\w*|create|make|add|arrange)\s+{_FILL}{{0,3}}{_EVENT_NOUN}", True),
+        (rf"{_LEAD}(?:vereinbar\w*|buch\w*|schedule|book|set up)\b(?:\s+\S+){{0,4}}?\s+{_EVENT_NOUN}", True),
+        (rf"{_LEAD}erinner\w*\s+(?:mich|uns)\b", True),
+        (rf"{_LEAD}remind\s+(?:me|us)\b", True),
+        (rf"{_LEAD}schedule\s+(?:me\s+|us\s+)?(?:an?|my|the|our)\b", True),
     )],
 }
+_ASKING = re.compile(r"\b(?:tips?|tipps?|advice|ratschl\w*|hints?|ideas?|ideen|suggestions?|examples?|beispiele?|template\w*|vorlage\w*|muster)\b", F)
 _QUESTION_ACTION = re.compile(r"^\W*(?:(?:bitte|please)\s+)?(?:soll|sollte|sollen|muss|kann|darf|ist|sind|hat|habe|haben|has|have|did|do|does|is|are|should|"
                               r"will|would|could)\b", F)
 _TECH_ACTION = re.compile(r"\b(?:skript\w*|script\w*|code|python|funktion\w*|function\w*|programm\w*|api|javascript|html|css|docker|"
@@ -124,13 +139,16 @@ _TECH_ACTION = re.compile(r"\b(?:skript\w*|script\w*|code|python|funktion\w*|fun
 def action(text):
     """"event" (prepare a calendar event), "mail" (prepare an e-mail) or "" for a chat message."""
     t = (text or "").strip()
-    if not t or len(t) > MAX_LENGTH or QUESTION.search(t) or _QUESTION_ACTION.search(t) or _TECH_ACTION.search(t):
+    if not t or len(t) > MAX_LENGTH or QUESTION.search(t) or _QUESTION_ACTION.search(t) or _TECH_ACTION.search(t) or _ASKING.search(t):
+        return ""
+    if classify(t) == "yes":  # "Erstelle ein Bild von einem Meeting" is a picture
         return ""
     if t.endswith("?") and not POLITE.search(t):
         return ""
-    for kind in ("mail", "event"):
-        if any(p.search(t) for p in _ACTIONS[kind]):
-            return kind
+    if any(p.search(t) for p in _ACTIONS["mail"]):
+        return "mail"
+    if any(p.search(t) and (not needs_time or _TIME.search(t)) for p, needs_time in _ACTIONS["event"]):
+        return "event"
     return ""
 
 

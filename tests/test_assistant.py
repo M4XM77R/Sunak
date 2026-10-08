@@ -18,17 +18,28 @@ EVENT = ["trag mir morgen 10 Uhr Zahnarzt ein", "Trag morgen 10 Uhr Zahnarzt in 
          "Vereinbare einen Termin mit Anna am Montag", "erinner mich morgen an die Steuer", "Remind me to call mom tomorrow at 5pm",
          "Add dentist tomorrow 10am to my calendar", "Schedule a meeting with Tom on Friday at 3pm",
          "Please create an appointment for next Tuesday 10am", "Put the barbecue on Saturday into my calendar",
-         "Setz den Zahnarzt auf morgen 10 Uhr in den Kalender"]
+         "Setz den Zahnarzt auf morgen 10 Uhr in den Kalender", "Create an appointment tomorrow 9am", "Leg einen Termin für Freitag 15 Uhr an",
+         "Book a meeting with Sam next Monday", "Remind me in 2 hours to call"]
 MAIL = ["schreib Anna eine Mail, dass ich später komme", "Schreibe eine E-Mail an chef@firma.de wegen Urlaub",
         "Write an email to Tom saying I'm late", "Draft a mail to my landlord about the heating",
         "Kannst du eine Mail an Anna verfassen, dass ich krank bin?", "Mail an Anna: ich komme später", "email Anna that I am late",
-        "Send Anna an email that the meeting is moved", "Bitte schick Tom eine Mail mit der Absage", "Verfasse eine E-Mail an meinen Vermieter"]
+        "Send Anna an email that the meeting is moved", "Bitte schick Tom eine Mail mit der Absage", "Verfasse eine E-Mail an meinen Vermieter",
+        "Schreib meinem Chef eine Mail wegen Urlaub", "Write a short email to Tom"]
 NOT = ["Was steht morgen an?", "Welche Termine habe ich?", "Wie erstelle ich einen Termin in Outlook?", "Wie schreibe ich eine Mail an meinen Chef?",
        "Ich habe eine Mail geschrieben", "Ich schreibe gleich eine Mail an Anna", "Ich habe morgen einen Termin beim Zahnarzt",
        "Schreibe ein Python-Skript, das eine Mail sendet", "Can you explain how to schedule a meeting in code?", "Fasse diese Mail zusammen",
        "Erkläre mir den Termin", "Was ist ein Kalender?", "Soll ich einen Termin machen?", "Hast du eine Mail geschrieben?",
        "Why is my calendar empty?", "Trag ein Hemd", "Schreibe mir ein Gedicht", "Mailand ist schön, schreib mir was darüber",
-       "Erstelle einen Plan für meine Woche", "Generiere ein Bild von einem Fuchs", "Draw a cat", "", "x" * 700 + " Mail schreiben"]
+       "Erstelle einen Plan für meine Woche",
+       # pictures (the picture check must win)
+       "Erstelle ein Bild von einem Meeting", "Mach mir ein Logo für unser Event", "make a picture of a meeting", "create a poster for our event",
+       # events
+       "Create an event loop in node", "Make me a meeting summary", "Erstelle eine Präsentation über Meetings", "Make a plan for the meeting agenda",
+       "Erinnere mich daran, was wir besprochen haben", "Remind me what we discussed", "Trag das bitte ein",
+       # mails
+       "Schreib mir eine Zusammenfassung dieser Mail", "Schreib mir einen Text über Mails", "Please write an email template for customers",
+       "I need to write an email to my landlord, any tips", "Send me the mail list", "Kannst du mir eine Zusammenfassung dieser Mail schreiben?",
+       "Schreibe eine E-Mail-Vorlage für Bewerbungen", "Generiere ein Bild von einem Fuchs", "Draw a cat", "", "x" * 700 + " Mail schreiben"]
 
 
 class ActionTest(unittest.TestCase):
