@@ -42,7 +42,29 @@ NOT = ["Was steht morgen an?", "Welche Termine habe ich?", "Wie erstelle ich ein
        "Schreibe eine E-Mail-Vorlage für Bewerbungen", "Generiere ein Bild von einem Fuchs", "Draw a cat", "", "x" * 700 + " Mail schreiben"]
 
 
+# review round 2: (text, what it is) one table, positives and negatives side by side
+CASES = [
+    # worked before 0.15.1 and must keep working
+    ("add a dentist appointment tomorrow at 3pm", "event"), ("Leg mir für Montag einen Termin beim Arzt an", "event"),
+    ("Send an email to tom@example.com that I'm late", "mail"), ("Schreib eine Mail an meinen Chef mit einem Beispiel für den Bericht", "mail"),
+    ("Trag mir den Zahnarzt am 12.10. um 9 ein", "event"), ("Could you write an email to Tom saying I'm late?", "mail"),
+    # verb-less event forms
+    ("Termin am Freitag um 14 Uhr mit Tom", "event"), ("Termin morgen 10 Uhr Zahnarzt", "event"), ("Neuer Termin: Freitag 14 Uhr Friseur", "event"),
+    ("Meeting with Tom on Friday at 2pm", "event"), ("Zahnarzt morgen um 10 eintragen", "event"),
+    # not requests
+    ("Remind me tomorrow what a monad is", ""), ("Remind me again how the event loop works today", ""),
+    ("Erinnere mich daran, dass ich morgen nett zu Anna sein soll, was meinst du dazu", ""), ("Erstelle einen Event-Plan für Samstag", ""),
+    ("Create a meeting invite text for Friday", ""), ("Write an email signature for me", ""),
+    ("Write a newsletter mail for customers next Monday", ""), ("Termin verschoben, war gestern", ""),
+    ("Meeting notes from Friday at 2pm", ""), ("Erstelle einen Terminplan für Samstag", ""), ("Make me a meeting summary for Friday at 2pm", ""),
+]
+
+
 class ActionTest(unittest.TestCase):
+    def test_table(self):
+        for text, want in CASES:
+            self.assertEqual(intent.action(text), want, text)
+
     def test_events(self):
         for t in EVENT:
             self.assertEqual(intent.action(t), "event", t)

@@ -538,18 +538,17 @@ function stopBusy() {
 
 // a request waits for the model while others are served first (sunak/jobqueue.py): say its place
 const queueText = (n) => tr('Waiting in the queue: place {n}', { n });
-let sending = false, skipAssist = false;  // skipAssist: the next message is a normal chat, even if it reads like an event or e-mail request
-async function send() {
+let sending = false;
+async function send(skipAssist) {  // skipAssist: a normal chat message, even if it reads like an event or e-mail request
   if (state.busy || sending) return;
   sending = true;
-  try { await sendNow(); } finally { sending = false; }
+  try { await sendNow(skipAssist); } finally { sending = false; }
 }
-async function sendNow() {
+async function sendNow(skipAssist) {
   let text = promptEl.value.trim();
   if (!text && !state.attachments.length) return;
   if (!state.attachments.length) {
     const act = skipAssist ? null : await assistantIntent(text);
-    skipAssist = false;
     if (act && await assistantRequest(act, text)) return;
     const ask = await pictureIntent(text, false, 'chat');
     if (ask && await pictureRequest(text, ask.subject)) return;
@@ -862,12 +861,13 @@ async function openChatMail(a) {
 }
 // "That was a normal question": drop the card and send the message to the chat model as it is
 function sendAsChat(a) {
+  if (state.busy || sending) return;
+  if (promptEl.value.trim() || state.attachments.length) { toast('Send or clear the text in the input box first'); return; }
   const msgs = state.session.messages, i = msgs.findIndex((x) => x.meta?.assist === a);
   if (i > 0) msgs.splice(i - 1, 2);
   renderMessages();
   promptEl.value = a.text; autosize();
-  skipAssist = true;
-  send();
+  send(true);
 }
 const chatInstead = (a) => el('button', { class: 'btn', type: 'button', title: 'Not what you meant? Send your message to the model as a normal chat message', onclick: () => sendAsChat(a) }, 'Send as normal message');
 const eventIsPast = (d) => (d.all_day ? dayOf(d.end.slice(0, 10)) < dayOf(ymd(new Date())) : new Date(d.end) < new Date());
