@@ -249,6 +249,7 @@ class App:
         self.db = self.main = DB(str(self.data_dir / "sunak.db"))
         self.root, self.profile, self.user_dir = self, "default", self.data_dir
         self._profile_dbs, self._profiles_lock = {}, threading.Lock()
+        self._model_lists = {}  # (provider id, address) -> model names of the last success, for every profile
         if not self.main.get_setting("secret"):
             self.main.set_setting("secret", secrets.token_hex(32))
         env_pw = os.environ.get("SUNAK_PASSWORD")
@@ -567,24 +568,31 @@ class App:
 
     def models(self):
         """Ask all providers in parallel for their models; unreachable providers are listed in `errors`. A backend that is
-        busy (Ollama generating on a slow CPU answers late) gets a second, longer try; when that fails too, the list from the
-        last success is kept (marked `stale`) so that the model picker does not empty out while a model is working."""
+        busy (Ollama generating on a slow CPU answers late) must not empty the model picker: when the last answer is known
+        and the backend needs longer than `MODELS_GRACE` seconds, that list is returned at once (`stale` in the error) while
+        the request goes on in the background and refreshes it for the next call. Without a known list the call waits for it."""
         out, errors = [], []
         provs = self.settings()["providers"]
-        known = self.__dict__.setdefault("_model_lists", {})
+        known = self.root._model_lists
 
         def fetch(p):
             key = (p["id"], p["base_url"])
-            err = None
-            for timeout in (providers.MODELS_TIMEOUT, providers.MODELS_TIMEOUT_BUSY):
+            box, done = {}, threading.Event()
+
+            def ask():
                 try:
-                    known[key] = providers.list_models(p, timeout)
-                    return p, known[key], None, False
+                    known[key] = box["names"] = providers.list_models(p, providers.MODELS_TIMEOUT)
                 except Exception as e:  # noqa: BLE001 - surface any provider failure to the UI
-                    err = str(e)
-                    if "timed out" not in err.lower():  # refused, wrong key or address: waiting does not help
-                        break
-            return p, known.get(key, []), err, key in known
+                    box["err"] = str(e)
+                done.set()
+
+            threading.Thread(target=ask, daemon=True).start()
+            done.wait(providers.MODELS_GRACE if key in known else providers.MODELS_TIMEOUT + 2)
+            if "names" in box:
+                return p, box["names"], None, False
+            if "err" in box:  # it answered with an error (refused, wrong key): the old list would be a lie
+                return p, [], box["err"], False
+            return p, known.get(key, []), "The backend is busy and does not answer yet", key in known
 
         with ThreadPoolExecutor(max_workers=max(1, len(provs))) as ex:
             for p, names, err, stale in ex.map(fetch, provs):
