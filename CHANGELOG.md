@@ -4,6 +4,11 @@ All changes to Sunak, newest version first. Sunak shows the entries between your
 
 Format: one section per version, `## [a.b.c] – YYYY-MM-DD`, followed by short points under **Added**, **Changed**, **Fixed** or **Removed**. Every change to Sunak gets a new version and an entry here.
 
+## [0.17.2] – 2026-10-08
+
+### Changed
+- Documentation brought up to date with the current code: README (busy backend in the model list, settings search) and docs/ARCHITECTURE.md (settings search in the frontend). No change in behavior.
+
 ## [0.17.1] – 2026-10-08
 
 ### Fixed
