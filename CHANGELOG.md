@@ -4,7 +4,7 @@ All changes to Sunak, newest version first. Sunak shows the entries between your
 
 Format: one section per version, `## [a.b.c] – YYYY-MM-DD`, followed by short points under **Added**, **Changed**, **Fixed** or **Removed**. Every change to Sunak gets a new version and an entry here.
 
-## [0.14.3] – 2026-10-08
+## [0.15.2] – 2026-10-08
 
 ### Fixed
 - Windows: Sunak did not start from the desktop icon, the Start menu or autostart, because those start it without a console and the color check expected one. Output to a redirected console (`sunak -h | more`) also no longer crashes on symbols such as the sailboat.
@@ -16,6 +16,25 @@ Format: one section per version, `## [a.b.c] – YYYY-MM-DD`, followed by short 
 - Calendar: a lone carriage return in a title or description could add extra lines to the event file; an event address in a sibling folder with a similar name (`/cal2` for `/cal`) is no longer accepted. Truncated or malformed server answers (calendar, MCP, speech) are reported as errors instead of crashing the request.
 - MCP: a tool call to a server that had just exited waited for the five minute timeout; it now fails at once. A closed connection no longer ends the whole answer with an internal error.
 - Mail: folder names with line breaks are refused. Speech: the language code is checked before it is sent.
+
+## [0.15.1] – 2026-10-08
+
+### Fixed
+- Events and e-mails from the chat no longer fire on ordinary messages: picture requests ("Erstelle ein Bild von einem Meeting") stay pictures, and sentences such as "Create an event loop in node", "Make me a meeting summary", "Remind me what we discussed", "Schreib mir eine Zusammenfassung dieser Mail" or "Please write an email template" are normal chats. An event request now needs a date or time, and the recognition works in two steps: an intent (verb or head such as "Termin am Freitag"), then exclusions that only look at the words around the object ("e-mail template", "meeting summary", "Event-Plan"). "Remind me what …" is no reminder.
+- Requests that worked before still work: "add a dentist appointment tomorrow at 3pm", "Leg mir für Montag einen Termin beim Arzt an", addresses such as tom@example.com, "Could you write an email to Tom …?" and dates such as "am 12.10. um 9".
+
+### Added
+- Short forms without a verb: "Termin morgen 10 Uhr Zahnarzt", "Neuer Termin: Freitag 14 Uhr Friseur", "Meeting with Tom on Friday at 2pm", "Zahnarzt morgen um 10 eintragen".
+- Every event and e-mail card has "Send as normal message", which sends your text to the model as a normal chat message when Sunak guessed wrong (it waits while the input box has text).
+- The event card warns when the date is in the past.
+
+## [0.15.0] – 2026-10-08
+
+### Added
+- Events and e-mails from the chat: write "trag mir morgen 10 Uhr Zahnarzt ein" or "schreib Anna eine Mail, dass ich später komme" (German and English) and Sunak prepares them as a card in the chat. The event card has Save and Edit, the mail card has "Open in Mail" and "Copy text". Nothing is saved or sent before you click; sending still needs the Send button and its confirmation in the Mail view.
+- The request is recognized by rules (`sunak/intent.py`), so it works with any model, including small local ones without tool calling. Questions such as "What is on tomorrow?" or "How do I write an email to my boss?" stay normal chats, and picture requests are unchanged.
+- New endpoints `POST /api/assistant/intent` and `POST /api/assistant/mail`. Events reuse `POST /api/calendar/parse`.
+- Without a linked mail account the card says so and offers "Add mail account" instead of an error.
 
 ## [0.14.2] – 2026-10-08
 

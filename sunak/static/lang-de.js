@@ -894,5 +894,22 @@
 "requests": "Anfragen",
 "Cache write": "Cache geschrieben",
 "made by Sunak itself": "von Sunak selbst gestellt",
-"All profiles together": "Alle Profile zusammen"
+"All profiles together": "Alle Profile zusammen",
+"Preparing the event…": "Termin wird vorbereitet…",
+"Writing the e-mail…": "E-Mail wird geschrieben…",
+"Stopped.": "Angehalten.",
+"Event ready: nothing is saved yet": "Termin fertig: noch nichts gespeichert",
+"E-mail ready: nothing is sent": "E-Mail fertig: nichts wird gesendet",
+"Saved in {calendar} ✓": "Gespeichert in {calendar} ✓",
+"address missing": "Adresse fehlt",
+"Open the event form to change it": "Das Termin-Formular zum Ändern öffnen",
+"Open in Mail": "Im Mail-Fenster öffnen",
+"Opens the compose form; sending needs your click and a confirmation there": "Öffnet das Schreiben-Fenster; Senden braucht dort deinen Klick und eine Bestätigung",
+"Copy text": "Text kopieren",
+"Say what the e-mail should be about": "Sag, worum es in der E-Mail gehen soll",
+"The model's answer could not be read as an e-mail. Try again or write it in the Mail view.": "Die Antwort des Modells ließ sich nicht als E-Mail lesen. Versuch es nochmal oder schreib sie in der E-Mail-Ansicht.",
+"Send as normal message": "Als normale Nachricht senden",
+"Not what you meant? Send your message to the model as a normal chat message": "Nicht gemeint? Schick deine Nachricht als normale Chat-Nachricht ans Modell",
+"This date is in the past. Check it before saving, or tell Sunak the date again.": "Dieses Datum liegt in der Vergangenheit. Prüf es vor dem Speichern oder nenn Sunak das Datum nochmal.",
+"Send or clear the text in the input box first": "Schick oder lösch zuerst den Text im Eingabefeld"
 } };

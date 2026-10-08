@@ -461,7 +461,8 @@ function messageEl(m, i, msgs) {
   else {
     if (m.meta?.sources) body.append(sourcesEl(m.meta.sources));
     if (m.meta?.web) body.append(webSourcesEl(m.meta.web));
-    if (m.meta?.tools || m.meta?.agent) body.append(toolsEl(m.meta.tools || m.meta.agent)); // `agent`: chats stored before 0.13.0
+    if (m.meta?.assist) body.append(assistEl(m));
+    else if (m.meta?.tools || m.meta?.agent) body.append(toolsEl(m.meta.tools || m.meta.agent)); // `agent`: chats stored before 0.13.0
     else if (m.meta?.imagegen || m.meta?.pending) body.append(genFigure(m));
     else body.append(el('div', { class: 'md', html: md(m.content) }));
   }
@@ -538,15 +539,17 @@ function stopBusy() {
 // a request waits for the model while others are served first (sunak/jobqueue.py): say its place
 const queueText = (n) => tr('Waiting in the queue: place {n}', { n });
 let sending = false;
-async function send() {
+async function send(skipAssist) {  // skipAssist: a normal chat message, even if it reads like an event or e-mail request
   if (state.busy || sending) return;
   sending = true;
-  try { await sendNow(); } finally { sending = false; }
+  try { await sendNow(skipAssist); } finally { sending = false; }
 }
-async function sendNow() {
+async function sendNow(skipAssist) {
   let text = promptEl.value.trim();
   if (!text && !state.attachments.length) return;
   if (!state.attachments.length) {
+    const act = skipAssist ? null : await assistantIntent(text);
+    if (act && await assistantRequest(act, text)) return;
     const ask = await pictureIntent(text, false, 'chat');
     if (ask && await pictureRequest(text, ask.subject)) return;
   }
@@ -762,6 +765,147 @@ async function runImagine(body) {
   renderMessages();
   if (error && !stopped) $('#messages').append(el('div', { class: 'msg' }, el('div', { class: 'avatar warn' }, icon('alert')), el('div', { class: 'body err' }, error)));
   $('#messages').scrollTop = $('#messages').scrollHeight;
+}
+
+/* ---------------- Events and e-mails from the chat ----------------
+   "trag mir morgen 10 Uhr Zahnarzt ein" / "schreib Anna eine Mail, dass ich später komme": Sunak prepares the event or the
+   draft and shows it as a card. Nothing is saved or sent before a click (Save; in the Mail view Send, which asks again).
+   The server recognises the request by rules (sunak/intent.py), so it works with every model. These cards live only in
+   the open chat (they are not stored with it). */
+async function assistantIntent(text) {
+  if (text.length > 600) return null;
+  try {
+    const r = await api('/api/assistant/intent', { method: 'POST', body: { text } });
+    return r.action || null;
+  } catch (e) { return null; } // no answer: it is a normal chat message
+}
+async function assistantRequest(kind, text) {
+  if (!currentModel()) { toast('Install or connect a model first'); show('settings'); return true; }
+  if (!state.session) {
+    try {
+      state.session = await api('/api/sessions', { method: 'POST', body: { model: currentModel() || '', use_kb: kbOn(), use_web: webOn(), persona: currentPersona() } });
+    } catch (e) { toast(e.message); return true; }
+    state.session.messages = [];
+  }
+  const s = state.session;
+  promptEl.value = ''; autosize();
+  sending = false;
+  const a = { kind, status: 'working', text };
+  const reply = { role: 'assistant', content: '', model: currentModel(), meta: { assist: a } };
+  s.messages.push({ role: 'user', content: text }, reply);
+  const ctrl = new AbortController();
+  state.busy = ctrl;
+  $('#sendBtn').textContent = 'Stop';
+  renderMessages();
+  try {
+    if (kind === 'event') {
+      a.draft = await api('/api/calendar/parse', { method: 'POST', body: { text, now: isoLocal(new Date()), model: currentModel() }, signal: ctrl.signal });
+      reply.content = `${a.draft.summary} (${a.draft.start.replace('T', ' ')})`;
+    } else {
+      a.draft = await api('/api/assistant/mail', { method: 'POST', body: { text, model: currentModel() }, signal: ctrl.signal });
+      reply.content = `${a.draft.subject}\n\n${a.draft.body}`;
+    }
+    a.status = 'ready';
+  } catch (e) {
+    a.status = e.name === 'AbortError' ? 'stopped' : 'error';
+    a.error = e.message;
+    if (kind === 'mail' && /mail account/i.test(e.message)) a.setup = 'mail';
+  }
+  state.busy = null;
+  $('#sendBtn').textContent = 'Send';
+  if (state.session === s) renderMessages();
+  return true;
+}
+// the event the calendar endpoint takes, from a parsed draft: all-day events end the day after (exclusive), timed ones go as UTC
+function eventFromDraft(d) {
+  if (d.all_day) return { summary: d.summary, all_day: true, start: d.start.slice(0, 10), end: ymd(addDays(dayOf(d.end.slice(0, 10)), 1)),
+    location: d.location, description: d.description, repeat: '' };
+  return { summary: d.summary, all_day: false, start: new Date(d.start).toISOString(), end: new Date(d.end).toISOString(),
+    location: d.location, description: d.description, repeat: '' };
+}
+function eventWhen(d) {
+  const day = (s) => dayOf(s.slice(0, 10)).toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'long', year: 'numeric' });
+  if (d.all_day) return d.end === d.start ? day(d.start) : `${day(d.start)} – ${day(d.end)}`;
+  const time = (s) => s.slice(11, 16);
+  return d.end.slice(0, 10) === d.start.slice(0, 10) ? `${day(d.start)}, ${time(d.start)} – ${time(d.end)}` : `${day(d.start)} ${time(d.start)} – ${day(d.end)} ${time(d.end)}`;
+}
+async function saveChatEvent(a, btn) {
+  btn.disabled = true;
+  try {
+    let target = store.get('sunak-cal-target', 'local') || 'local';
+    if (target !== 'local') {
+      try { cal.info = await api('/api/calendar'); } catch (e) { /* Sunak's own calendar always exists */ }
+      if (!calTargets().some((t) => t.value === target)) target = 'local';
+    }
+    const [source, calendar] = target.split(/\|(.*)/s);
+    await api('/api/calendar/events', { method: 'POST', body: { source, calendar, event: eventFromDraft(a.draft) } });
+    a.saved = true;
+    a.savedIn = calTargets().find((t) => t.value === target)?.label || 'Sunak';
+    renderMessages();
+  } catch (e) { toast(e.message); btn.disabled = false; }
+}
+async function editChatEvent(a) {
+  show('calendar');
+  if (!cal.info) await loadCalendar();
+  cal.sel = a.draft.start.slice(0, 10);
+  const s = dayOf(cal.sel);
+  if (s.getFullYear() !== cal.month.getFullYear() || s.getMonth() !== cal.month.getMonth()) { cal.month = new Date(s.getFullYear(), s.getMonth(), 1); loadCalEvents(); }
+  else renderCalGrid();
+  editEvent(null, a.draft);
+}
+async function openChatMail(a) {
+  show('mail');
+  await loadMailView();
+  if (a.draft.account && state.mail.accounts.some((x) => x.id === a.draft.account)) $('#mailAccount').value = a.draft.account;
+  openCompose({ to: a.draft.to, subject: a.draft.subject, start: a.draft.body });
+}
+// "That was a normal question": drop the card and send the message to the chat model as it is
+function sendAsChat(a) {
+  if (state.busy || sending) return;
+  if (promptEl.value.trim() || state.attachments.length) { toast('Send or clear the text in the input box first'); return; }
+  const msgs = state.session.messages, i = msgs.findIndex((x) => x.meta?.assist === a);
+  if (i > 0) msgs.splice(i - 1, 2);
+  renderMessages();
+  promptEl.value = a.text; autosize();
+  send(true);
+}
+const chatInstead = (a) => el('button', { class: 'btn', type: 'button', title: 'Not what you meant? Send your message to the model as a normal chat message', onclick: () => sendAsChat(a) }, 'Send as normal message');
+const eventIsPast = (d) => (d.all_day ? dayOf(d.end.slice(0, 10)) < dayOf(ymd(new Date())) : new Date(d.end) < new Date());
+function assistEl(m) {
+  const a = m.meta.assist;
+  if (a.status === 'working') return el('div', { class: 'muted small', role: 'status' }, a.kind === 'event' ? 'Preparing the event…' : 'Writing the e-mail…');
+  if (a.status === 'stopped') return el('div', { class: 'muted small' }, 'Stopped.');
+  if (a.status === 'error') {
+    return el('div', { class: 'assist-card' },
+      el('div', { class: 'err' }, a.error),
+      el('div', { class: 'row' },
+        a.setup === 'mail' ? el('button', { class: 'btn', type: 'button', onclick: () => { show('settings'); editMailAccount({}); } }, icon('plus'), 'Add mail account') : null,
+        chatInstead(a)));
+  }
+  const d = a.draft;
+  if (a.kind === 'event') {
+    return el('div', { class: 'assist-card' },
+      a.saved ? null : el('div', { class: 'assist-head' }, icon('calendar'), 'Event ready: nothing is saved yet'),
+      el('div', { class: 'assist-title', 'data-no-i18n': '' }, d.summary),
+      el('div', { 'data-no-i18n': '' }, eventWhen(d)),
+      d.location ? el('div', { class: 'muted small', 'data-no-i18n': '' }, d.location) : null,
+      d.description ? el('div', { class: 'muted small', 'data-no-i18n': '' }, d.description) : null,
+      !a.saved && eventIsPast(d) ? el('div', { class: 'err small' }, icon('alert'), 'This date is in the past. Check it before saving, or tell Sunak the date again.') : null,
+      a.saved ? el('div', { class: 'ok small' }, icon('check-circle'), tr('Saved in {calendar} ✓', { calendar: a.savedIn }))
+        : el('div', { class: 'row' },
+          el('button', { class: 'btn primary', type: 'button', onclick: (ev) => saveChatEvent(a, ev.currentTarget) }, 'Save'),
+          el('button', { class: 'btn', type: 'button', title: 'Open the event form to change it', onclick: () => editChatEvent(a) }, 'Edit'),
+          chatInstead(a)));
+  }
+  return el('div', { class: 'assist-card' },
+    el('div', { class: 'assist-head' }, icon('mail'), 'E-mail ready: nothing is sent'),
+    el('div', { 'data-no-i18n': '' }, el('b', {}, `${tr('To')}: `), d.to || (d.to_name ? `${d.to_name} (${tr('address missing')})` : tr('address missing'))),
+    el('div', { 'data-no-i18n': '' }, el('b', {}, `${tr('Subject')}: `), d.subject),
+    el('pre', { class: 'assist-body', 'data-no-i18n': '' }, d.body),
+    el('div', { class: 'row' },
+      el('button', { class: 'btn primary', type: 'button', title: 'Opens the compose form; sending needs your click and a confirmation there', onclick: () => openChatMail(a) }, 'Open in Mail'),
+      el('button', { class: 'btn', type: 'button', onclick: () => navigator.clipboard.writeText(d.body).then(() => toast('Copied')) }, 'Copy text'),
+      chatInstead(a)));
 }
 
 /* ---------------- Tools (MCP) ----------------
