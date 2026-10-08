@@ -182,23 +182,28 @@ def action(text):
     return "event" if _event(t, body, lead) else ""
 
 
-def abilities(now):
+def abilities(now, mail=True):
     """The note for the chat model's system prompt: Sunak can prepare calendar events and e-mails. The model answers with a short
     sentence and a fenced ```sunak-event``` / ```sunak-mail``` block with JSON; the browser turns the block into a card
-    (app.js `actionCards`) and the user saves or sends it with a click. `now` is the local time with offset."""
-    return ("Sunak can prepare calendar events and e-mails for the user. Never say that you cannot add calendar entries or write "
-            "e-mails. Nothing is saved or sent automatically: the user checks a card and clicks. When the user asks you to add "
-            "an appointment, event or reminder to the calendar, answer with one short sentence and then exactly one block:\n"
-            "```sunak-event\n"
-            '{"summary": "short title", "start": "YYYY-MM-DDTHH:MM" (local time) or "YYYY-MM-DD" for an all-day event, "end": same format or null, '
-            '"location": "", "description": ""}\n'
-            "```\n"
-            "When the user asks you to write or send an e-mail, answer with one short sentence and then exactly one block:\n"
-            "```sunak-mail\n"
-            '{"to": "address or empty", "to_name": "name or empty", "subject": "short subject", "body": "the e-mail text"}\n'
-            "```\n"
-            f"The current local date and time is {now.strftime('%A, %Y-%m-%d %H:%M')} (UTC{now.strftime('%z')[:3]}:{now.strftime('%z')[3:]}); "
-            'resolve "tomorrow" or "next Tuesday" against it. Only use these blocks when the user wants an event or an e-mail, never otherwise.')
+    (app.js `actionCards`) and the user saves or sends it with a click. `now` is the local time with offset; without `mail`
+    (no mail account linked) the model is told to point to the settings instead of writing the block."""
+    out = ("Sunak can prepare calendar events and e-mails for the user. Never say that you cannot add calendar entries. Nothing is "
+           "saved or sent automatically: the user checks a card and clicks. When the user asks you to add an appointment, event or "
+           "reminder to the calendar, answer with one short sentence and then exactly one block:\n"
+           "```sunak-event\n"
+           '{"summary": "short title", "start": "YYYY-MM-DDTHH:MM" (local time) or "YYYY-MM-DD" for an all-day event, "end": same format or null, '
+           '"location": "", "description": ""}\n'
+           "```\n")
+    if mail:
+        out += ("When the user asks you to write or send an e-mail, answer with one short sentence and then exactly one block:\n"
+                "```sunak-mail\n"
+                '{"to": "address or empty", "to_name": "name or empty", "subject": "short subject", "body": "the e-mail text"}\n'
+                "```\n")
+    else:
+        out += "No mail account is linked yet: if the user wants an e-mail, say that they first add one in Settings → Mail accounts.\n"
+    z = now.strftime("%z")
+    return out + (f"The current local date and time is {now.strftime('%A, %Y-%m-%d %H:%M')} (UTC{z[:3]}:{z[3:]}); resolve \"tomorrow\" or "
+                  '"next Tuesday" against it. Only use these blocks when the user wants an event or an e-mail, never otherwise.')
 
 
 def addresses(text):

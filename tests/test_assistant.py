@@ -94,13 +94,27 @@ class AbilitiesTest(unittest.TestCase):
         for want in ("sunak-event", "sunak-mail", "Never say that you cannot add calendar entries", "Thursday, 2026-10-08 12:30 (UTC+02:00)"):
             self.assertIn(want, note)
 
-    def test_it_is_part_of_every_chat_prompt(self):
+    def test_the_mail_part_needs_a_mail_account(self):
+        import datetime
+        now = datetime.datetime(2026, 10, 8, 12, 30, tzinfo=datetime.timezone.utc)
+        note = intent.abilities(now, mail=False)
+        self.assertIn("sunak-event", note)
+        self.assertNotIn("```sunak-mail", note)
+        self.assertIn("add one in Settings", note)
+
+    def test_only_chat_and_tools_get_the_note(self):
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             srv = make_server("127.0.0.1", 0, tmp)
             try:
-                system = srv.RequestHandlerClass.app.build_messages({}, [{"role": "user", "content": "trag mir einen Termin ein"}])[0]["content"]
+                app = srv.RequestHandlerClass.app
+                msgs = [{"role": "user", "content": "trag mir einen Termin ein"}]
+                self.assertNotIn("sunak-event", app.build_messages({}, msgs)[0]["content"])  # compare, documents ...
+                app.db.set_setting("mail_accounts", [])
+                system = app.build_messages({}, msgs, abilities=True)[0]["content"]
                 self.assertIn("```sunak-event", system)
-                self.assertIn("```sunak-mail", system)
+                self.assertNotIn("```sunak-mail", system)  # no mail account linked
+                app.db.set_setting("mail_accounts", [{"id": "a1", "name": "Max", "email": "max@example.com", "password": "pw"}])
+                self.assertIn("```sunak-mail", app.build_messages({}, msgs, abilities=True)[0]["content"])
             finally:
                 srv.server_close()
 

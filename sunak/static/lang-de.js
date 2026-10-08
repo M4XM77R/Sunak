@@ -947,5 +947,6 @@
 "The ntfy server answered with HTTP {code}. Check the address and the topic.": "Der ntfy-Server hat mit HTTP {code} geantwortet. Prüf die Adresse und das Thema.",
 "reminder must be a whole number of minutes before the start (up to 7 days)": "Die Erinnerung muss eine ganze Zahl Minuten vor dem Beginn sein (bis zu 7 Tage).",
 "An event card was shown here.": "Hier wurde eine Termin-Karte angezeigt.",
-"An e-mail card was shown here.": "Hier wurde eine E-Mail-Karte angezeigt."
+"An e-mail card was shown here.": "Hier wurde eine E-Mail-Karte angezeigt.",
+"Already in the calendar ✓": "Schon im Kalender ✓"
 } };

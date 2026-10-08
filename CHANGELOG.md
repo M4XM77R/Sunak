@@ -11,6 +11,9 @@ Format: one section per version, `## [a.b.c] – YYYY-MM-DD`, followed by short 
 
 ### Added
 - `POST /api/assistant/check` checks such a block (same rules as "Event from text" and the e-mail draft) before the card appears. The block is shown as text on the card, never as HTML. The pattern recognition from 0.15.x stays as the fast path for small models.
+- Saving an event from a chat card checks the calendar first and says "Already in the calendar" instead of adding the same title and start twice (for example after a reload).
+- The note for the model is only added to the normal chat and the tool loop, not to Compare, and the mail part only when a mail account is linked.
+- A block inside a four-backtick code example stays text, a half-written block is hidden while the answer streams, and Copy leaves the block out.
 
 ## [0.16.0] – 2026-10-08
 

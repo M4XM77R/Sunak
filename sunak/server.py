@@ -709,10 +709,11 @@ class App:
                 return p["prompt"]
         return ""
 
-    def build_messages(self, session, history, extra="", with_images=False, vision=True):
+    def build_messages(self, session, history, extra="", with_images=False, vision=True, abilities=False):
         """Chat history for the model: system prompt, persona, session prompt, memory notes, `extra`
         (knowledge-base excerpts), then the messages. `with_images` adds attached images (see
-        images.attach); with `vision` False the model gets a note instead of the pictures."""
+        images.attach); with `vision` False the model gets a note instead of the pictures. `abilities` (chat and tools only, not
+        compare) adds the note that Sunak can prepare events and e-mails (intent.abilities; the mail part only with a linked account)."""
         s = self.settings()
         persona = self.persona_prompt(session.get("persona", ""), s["personas"])
         system = "\n\n".join(x for x in (s["system_prompt"], persona, session.get("system", "")) if x.strip())
@@ -720,7 +721,8 @@ class App:
             mem = self.db.memories()
             if mem:
                 system += "\n\nThings you remember about the user:\n" + "\n".join(f"- {m}" for m in mem)
-        system += "\n\n" + intent.abilities(datetime.datetime.now().astimezone())
+        if abilities:
+            system += "\n\n" + intent.abilities(datetime.datetime.now().astimezone(), bool(self.mail_accounts()))
         if extra:
             system += "\n\n" + extra
         msgs = [{"role": "system", "content": system}] if system.strip() else []
@@ -1516,7 +1518,7 @@ class Handler(BaseHTTPRequestHandler):
             if web:
                 extras.append(web[0])
                 meta["web"] = web[1]
-        messages = self.app.build_messages(session, session["messages"], "\n\n".join(extras), with_images=True, vision=vision)
+        messages = self.app.build_messages(session, session["messages"], "\n\n".join(extras), with_images=True, vision=vision, abilities=True)
         meta = meta or None
         chunks = []
 
@@ -1632,7 +1634,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.emit({"type": "notice", "t": f"MCP server {name}: {err}"})
             if not tools:
                 return self.emit({"type": "error", "error": "None of the MCP servers is available."})
-            run = toolrun.ToolRun(prov, model, self.app.build_messages(session, session["messages"]), self.emit,
+            run = toolrun.ToolRun(prov, model, self.app.build_messages(session, session["messages"], abilities=True), self.emit,
                                   self.app.options(), allowed, tools, run_id)
             self.app.tool_runs.add(run)
             run.run()
