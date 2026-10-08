@@ -4,14 +4,21 @@ All changes to Sunak, newest version first. Sunak shows the entries between your
 
 Format: one section per version, `## [a.b.c] – YYYY-MM-DD`, followed by short points under **Added**, **Changed**, **Fixed** or **Removed**. Every change to Sunak gets a new version and an entry here.
 
+## [0.17.1] – 2026-10-08
+
+### Fixed
+- The model list no longer blocks while a backend is busy. When the last list is known and the backend needs longer than 3 s, that list is shown at once and refreshed in the background, for every profile (before, it was kept only for the main profile and a timing-out backend could hold the picker for about half a minute). A refused connection or wrong key still shows the error and no old list.
+- Fewer needless calendar notes in the chat: code questions ("event listener", cron "schedule", "busy-wait"), "Kalenderblatt in CSS", a song about Monday or a greeting like "Morgen!" no longer add the calendar. Questions like "Kann ich um 14 Uhr zum Zahnarzt?", "Wann habe ich Zeit für ein Treffen?" and "Do I have anything on at 3pm?" now do.
+- Backticks are removed from event titles and places in that note, so an event in a shared calendar cannot fake a Sunak card. Events that began earlier and still run (a multi-day trip) are now included.
+
 ## [0.17.0] – 2026-10-08
 
 ### Added
-- The chat model can now see your calendar (issue #13). When your message is about time or the schedule ("Was steht morgen an?", "Am I free on Friday?", "meine Termine diese Woche", weekday names, "today"), Sunak adds your appointments of today and the next 7 days to that request, read-only and from all calendars shown in the calendar (own, CalDAV, ICS), with times in your local time. Other messages get nothing, so no tokens are spent. Only the profile you are using is read. A calendar that cannot be read is named instead of being treated as empty. Event texts are marked as data, never as instructions, and backticks are removed from titles and places so that an event cannot fake a Sunak card. Events that began earlier and still run are included. Questions about code (a "schedule" in cron, an "event listener"), a greeting like "Morgen!" and similar do not trigger it. Works in the normal chat and in the tool loop, not in Compare.
+- The chat model can now see your calendar (issue #13). When your message is about time or the schedule ("Was steht morgen an?", "Am I free on Friday?", "meine Termine diese Woche", weekday names, "today"), Sunak adds your appointments of today and the next 7 days to that request, read-only and from all calendars shown in the calendar (own, CalDAV, ICS), with times in your local time. Other messages get nothing, so no tokens are spent. Only the profile you are using is read. A calendar that cannot be read is named instead of being treated as empty. Event texts are marked as data, never as instructions. Works in the normal chat and in the tool loop, not in Compare.
 - Settings has a search box at the top (issue #15). It hides every section and setting that does not match what you type, in English and German.
 
 ### Fixed
-- Models no longer vanish from the model picker while a model is busy (issue #15). The model list now waits up to 25 s for a busy backend. When the last list is known and the backend needs longer than 3 s, that list is shown at once and refreshed in the background (for every profile); the provider then shows "busy, last list shown" instead of "offline". The Ollama status check waits 10 s instead of 3–4 s. If no model can be loaded, the picker says "Models could not be loaded" and shows the reason on hover instead of "No model installed".
+- Models no longer vanish from the model picker while a model is busy (issue #15). Asking the backend for its model list now waits longer (8 s, then once more up to 25 s when it only timed out) and keeps the list from the last success when the backend is still busy; the provider then shows "busy, last list shown" instead of "offline". The Ollama status check waits 10 s instead of 3–4 s. If no model can be loaded, the picker says "Models could not be loaded" and shows the reason on hover instead of "No model installed".
 
 ## [0.16.1] – 2026-10-08
 
