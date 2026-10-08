@@ -57,12 +57,34 @@ class AlarmTest(unittest.TestCase):
         ev = cal.clean_event({"summary": "Zahnarzt", "start": "2026-10-10T10:00:00Z", "end": "2026-10-10T11:00:00Z"})
         self.assertNotIn("reminder", ev)
         self.assertEqual(events(cal.update_event(text, "u@sunak", ev))[0]["alarms"], [30])  # not asked: stays
-        ev["reminder"] = 5
+        ev["reminder"], ev["reminder_was"] = 5, 30
         self.assertEqual(events(cal.update_event(text, "u@sunak", ev))[0]["alarms"], [5])
         ev["reminder"] = None
         self.assertEqual(events(cal.update_event(text, "u@sunak", ev))[0]["alarms"], [])
-        email = text.replace("BEGIN:VALARM", "BEGIN:VALARM\r\nACTION:EMAIL\r\nTRIGGER:-PT1H\r\nEND:VALARM\r\nBEGIN:VALARM", 1)
-        self.assertIn("ACTION:EMAIL", cal.update_event(email, "u@sunak", ev))  # an e-mail reminder is left alone
+        ev["reminder"], ev["reminder_was"] = 15, None  # nothing was shown: one is added
+        self.assertEqual(events(cal.update_event(text, "u@sunak", ev))[0]["alarms"], [15, 30])
+        ev["reminder"] = 30  # already there: not twice
+        self.assertEqual(cal.update_event(text, "u@sunak", ev).count("BEGIN:VALARM"), 1)
+
+    def test_change_keeps_the_other_reminders(self):
+        start = dt.datetime(2026, 10, 10, 10, 0, tzinfo=UTC)
+        text = cal.build_event("u@sunak", "Zahnarzt", start, start + dt.timedelta(hours=1), False, reminder=30)
+        extra = ("BEGIN:VALARM\r\nACTION:DISPLAY\r\nTRIGGER;RELATED=END:-PT5M\r\nEND:VALARM\r\n"
+                 "BEGIN:VALARM\r\nACTION:DISPLAY\r\nTRIGGER;VALUE=DATE-TIME:20261010T090000Z\r\nEND:VALARM\r\n"
+                 "BEGIN:VALARM\r\nACTION:AUDIO\r\nTRIGGER:-P1D\r\nEND:VALARM\r\n"
+                 "BEGIN:VALARM\r\nACTION:EMAIL\r\nTRIGGER:-PT1H\r\nEND:VALARM\r\n")
+        text = text.replace("END:VEVENT", extra + "END:VEVENT")
+        ev = cal.clean_event({"summary": "Zahnarzt", "start": "2026-10-10T10:00:00Z", "end": "2026-10-10T11:00:00Z",
+                              "reminder": 5, "reminder_was": 30})
+        changed = cal.update_event(text, "u@sunak", ev)
+        self.assertEqual(events(changed)[0]["alarms"], [5, 1440])  # 30 became 5, the day before stayed
+        for kept in ("TRIGGER;RELATED=END:-PT5M", "TRIGGER;VALUE=DATE-TIME:20261010T090000Z", "ACTION:EMAIL", "TRIGGER:-P1D"):
+            self.assertIn(kept, changed)
+        self.assertNotIn("TRIGGER:-PT30M", changed)
+        gone = cal.update_event(text, "u@sunak", cal.clean_event({"summary": "Zahnarzt", "start": "2026-10-10T10:00:00Z",
+                                                                  "end": "2026-10-10T11:00:00Z", "reminder": None, "reminder_was": 30}))
+        self.assertEqual(events(gone)[0]["alarms"], [1440])
+        self.assertEqual(gone.count("BEGIN:VALARM"), 4)
 
     def test_clean_event_reminder(self):
         base = {"summary": "x", "start": "2026-10-10T10:00:00Z", "end": "2026-10-10T11:00:00Z"}
@@ -71,6 +93,23 @@ class AlarmTest(unittest.TestCase):
         for bad in (True, "15", 1.5, 10081, -1441, [5]):
             with self.assertRaises(ValueError, msg=bad):
                 cal.clean_event({**base, "reminder": bad})
+        self.assertEqual(cal.clean_event({**base, "reminder": 5, "reminder_was": 30})["reminder_was"], 30)
+        self.assertIsNone(cal.clean_event({**base, "reminder": 5})["reminder_was"])
+        with self.assertRaises(ValueError):
+            cal.clean_event({**base, "reminder": 5, "reminder_was": "30"})
+
+
+class Berlin(dt.tzinfo):
+    """Europe/Berlin for 2026 without a time zone database (not every system has one)."""
+    def utcoffset(self, d):
+        naive = d.replace(tzinfo=None)
+        return dt.timedelta(hours=2 if dt.datetime(2026, 3, 29, 3) <= naive < dt.datetime(2026, 10, 25, 3) else 1)
+
+    def dst(self, d):
+        return self.utcoffset(d) - dt.timedelta(hours=1)
+
+    def tzname(self, d):
+        return "CEST" if self.dst(d) else "CET"
 
 
 class DueTest(unittest.TestCase):
@@ -98,6 +137,20 @@ class DueTest(unittest.TestCase):
         before = event(midnight, 900, all_day=True)  # the day before at 9:00
         self.assertEqual(len(self.keys([before], midnight - dt.timedelta(hours=14))), 1)
         self.assertEqual(self.keys([before], midnight - dt.timedelta(hours=16)), [])
+
+    def test_all_day_on_clock_change_days(self):
+        """Europe/Berlin: the clocks change on 2026-03-29 (23-hour day) and 2026-10-25 (25-hour day). "9:00 on the
+        day" and "9:00 the day before" stay 9:00 on the wall clock."""
+        berlin = Berlin()
+        local = lambda y, m, d, h: dt.datetime(y, m, d, h, tzinfo=berlin)  # noqa: E731
+        for day, lead, wall in ((dt.date(2026, 10, 25), -540, local(2026, 10, 25, 9)), (dt.date(2026, 3, 29), -540, local(2026, 3, 29, 9)),
+                                (dt.date(2026, 10, 26), 900, local(2026, 10, 25, 9)), (dt.date(2026, 3, 30), 900, local(2026, 3, 29, 9)),
+                                (dt.date(2026, 10, 26), 2340, local(2026, 10, 24, 9)), (dt.date(2026, 3, 30), 2340, local(2026, 3, 28, 9))):
+            ev = event(dt.datetime.combine(day, dt.time()), lead, all_day=True)
+            fire, _ = reminders.moments(ev, lead, berlin)
+            self.assertEqual(fire, wall, (day, lead))
+            self.assertEqual(len(reminders.due([ev], wall + dt.timedelta(minutes=1), berlin)), 1)
+            self.assertEqual(reminders.due([ev], wall - dt.timedelta(minutes=1), berlin), [])
 
     def test_message(self):
         start = dt.datetime(2026, 10, 10, 10, 0, tzinfo=UTC)
@@ -193,7 +246,6 @@ class ReminderServerTest(unittest.TestCase):
         for row in self.app.db.cal_events():
             self.app.db.cal_delete(row["uid"])
         self.app.db._q("DELETE FROM reminders_sent")
-        self.app.reminders._pending.clear()
         self.app.reminders._cache.clear()
         self.call("PUT", "/api/settings", {"reminders": False, "ntfy_url": "", "ntfy_topic": ""})
 
@@ -223,31 +275,53 @@ class ReminderServerTest(unittest.TestCase):
         self.soon(10, 15)
         self.soon(300, 15)  # far away: not yet
         self.call("PUT", "/api/settings", {"reminders": True, "ntfy_url": self.ntfy_url, "ntfy_topic": "sunak-abc123", "reminder_lang": "en"})
-        before = self.call("GET", "/api/reminders")["now"]
         self.app.reminders.tick()
         self.app.reminders.tick()
         self.assertEqual(len(FakeNtfy.posts), 1)
         post = FakeNtfy.posts[0]
         self.assertEqual((post["topic"], post["title"]), ("sunak-abc123", "Zahnarzt"))
         self.assertTrue(post["message"].startswith("Starts in 15 minutes (") and post["message"].endswith(") · Praxis"), post["message"])
-        got = self.call("GET", f"/api/reminders?since={before - 1}")
-        self.assertEqual([i["title"] for i in got["items"]], ["Zahnarzt"])
-        self.assertEqual(self.call("GET", f"/api/reminders?since={got['now']}")["items"], [])
-        self.assertEqual(len(self.call("GET", "/api/reminders")["items"]), 1)  # a page opened now still sees it
+        got = self.call("GET", "/api/reminders")["items"]
+        self.assertEqual([(i["title"], i["text"].startswith("Starts in 15 minutes")) for i in got], [("Zahnarzt", True)])
+        self.assertEqual(self.call("GET", "/api/reminders")["items"], [])  # handed out once
 
     def test_off_and_changed_events(self):
         self.soon(10, 15)
         self.app.reminders.tick()  # reminders are off
         self.assertEqual((FakeNtfy.posts, self.call("GET", "/api/reminders")["items"]), ([], []))
         self.call("PUT", "/api/settings", {"reminders": True})
+        self.assertEqual(self.call("GET", "/api/reminders")["items"], [])  # the first look has not happened yet
         self.app.reminders.tick()  # no topic: only the page
         self.assertEqual((FakeNtfy.posts, len(self.call("GET", "/api/reminders")["items"])), ([], 1))
         self.soon(10, None)  # without a reminder nothing happens
         self.app.reminders.tick()
-        self.assertEqual(len(self.call("GET", "/api/reminders")["items"]), 1)
+        self.assertEqual(self.call("GET", "/api/reminders")["items"], [])
         self.soon(10, 15)  # a new event is noticed at once (the list of events is read again)
         self.app.reminders.tick()
-        self.assertEqual(len(self.call("GET", "/api/reminders")["items"]), 2)
+        self.assertEqual(len(self.call("GET", "/api/reminders")["items"]), 1)
+
+    def test_page_gets_what_it_missed(self):
+        """Nobody looked when the reminder fell due, and Sunak restarted meanwhile: the next page still gets it."""
+        self.soon(10, 15)
+        self.call("PUT", "/api/settings", {"reminders": True})
+        self.app.reminders.tick()
+        self.app.reminders._cache.clear()  # a restart forgets the events (the table of given reminders stays)
+        self.assertEqual(self.call("GET", "/api/reminders")["items"], [])
+        self.app.reminders.tick()
+        self.assertEqual(len(self.call("GET", "/api/reminders")["items"]), 1)
+        self.assertEqual(self.call("GET", "/api/reminders")["items"], [])
+        # an event that has started is not announced any more
+        past = dt.datetime.now(UTC) - dt.timedelta(minutes=1)
+        self.app.db.cal_put("late@sunak", cal.build_event("late@sunak", "Vorbei", past, past + dt.timedelta(hours=1), False, reminder=15))
+        self.app.reminders.invalidate("default")
+        self.app.reminders.tick()
+        self.assertEqual(self.call("GET", "/api/reminders")["items"], [])
+
+    def test_deleted_profile_is_left_alone(self):
+        self.app.reminders._cache["ghost"] = (0, [])
+        self.app.reminders.tick()
+        self.assertNotIn("ghost", self.app.reminders._cache)
+        self.assertFalse(self.app.profile_dir("ghost").exists())
 
     def test_failing_push_is_tried_again(self):
         self.soon(10, 15)
@@ -260,7 +334,7 @@ class ReminderServerTest(unittest.TestCase):
         self.app.reminders.tick()
         self.app.reminders.tick()
         self.assertEqual(len(FakeNtfy.posts), 1)
-        self.assertEqual(len(self.call("GET", "/api/reminders")["items"]), 1)  # and only once
+        self.assertEqual(self.call("GET", "/api/reminders")["items"], [])  # the page has had it once already
 
     def test_test_message(self):
         r = self.call("POST", "/api/reminders/test", {"ntfy_url": self.ntfy_url, "ntfy_topic": "sunak-abc123", "lang": "de"})
@@ -270,7 +344,6 @@ class ReminderServerTest(unittest.TestCase):
         FakeNtfy.mode = "error"
         self.assertIn("HTTP 500", self.error("POST", "/api/reminders/test", {"ntfy_url": self.ntfy_url, "ntfy_topic": "sunak-abc123"})[1])
         self.assertIn("ntfy topic", self.error("POST", "/api/reminders/test", {"ntfy_topic": "no good"})[1])
-        self.assertIn("since", self.error("GET", "/api/reminders?since=x")[1])
 
     def test_event_form_roundtrip(self):
         self.soon(600, 30)

@@ -386,6 +386,7 @@ def main(argv=None):
     except KeyboardInterrupt:
         pass
     srv.server_close()
+    app.reminders.stop()
     app.mcp.close_all()
     log.get("main").info("Sunak stopped")
     print("\n  Bye 👋")

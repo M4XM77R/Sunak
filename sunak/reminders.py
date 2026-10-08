@@ -23,7 +23,6 @@ TICK = 30                         # seconds between two looks at the due reminde
 REFRESH = 600                     # seconds an event list is reused (a change in Sunak's own calendar refreshes it at once)
 HORIZON = dt.timedelta(days=8)    # how far ahead events are read (the longest reminder is 7 days before)
 LATE = 600                        # a reminder at or after the start is still shown this many seconds late
-KEEP = 900                        # seconds a due reminder waits for a page that is not open yet
 DEFAULT_NTFY = "https://ntfy.sh"
 TOPIC_RE = re.compile(r"[A-Za-z0-9_-]{1,64}")
 NTFY_TIMEOUT = 10
@@ -68,26 +67,30 @@ def message(ev, lead, start, lang="en"):
 
 # which reminders are due -------------------------------------------------------------------------
 
-def start_of(ev):
-    """The start of an event as an aware datetime (all-day events: midnight of this computer's time zone)."""
+def moments(ev, lead, tz=None):
+    """(fire time, start) of the reminder `lead` minutes before the start, as aware datetimes. All-day events start at
+    midnight of this computer's time zone (`tz`: another one, for tests); the lead is taken off the local clock time
+    before it is turned into an instant, so "9:00 on the day" stays 9:00 on days when the clock changes."""
     if ev["all_day"]:
-        return dt.datetime.combine(dt.date.fromisoformat(ev["start"]), dt.time()).astimezone()
-    return dt.datetime.fromisoformat(ev["start"].replace("Z", "+00:00"))
+        day = dt.datetime.combine(dt.date.fromisoformat(ev["start"]), dt.time())
+        local = (lambda d: d.replace(tzinfo=tz)) if tz else (lambda d: d.astimezone())
+        return local(day - dt.timedelta(minutes=lead)), local(day)
+    start = dt.datetime.fromisoformat(ev["start"].replace("Z", "+00:00"))
+    return start - dt.timedelta(minutes=lead), start
 
 
-def due(events, now):
+def due(events, now, tz=None):
     """[(key, event, lead, start)] of the reminders that should have gone off by `now` and are not too late:
     from the moment `lead` minutes before the start until the start (a reminder at or after the start: for LATE seconds)."""
     out = []
     for ev in events:
         if ev.get("status") == "cancelled" or not ev.get("alarms"):
             continue
-        try:
-            start = start_of(ev)
-        except ValueError:
-            continue
         for lead in ev["alarms"]:
-            fire = start - dt.timedelta(minutes=lead)
+            try:
+                fire, start = moments(ev, lead, tz)
+            except ValueError:
+                continue
             if fire <= now < (start if lead > 0 else fire + dt.timedelta(seconds=LATE)):
                 out.append((f"{ev['id']}|{lead}", ev, lead, start))
     return out
@@ -118,12 +121,12 @@ def send_ntfy(url, topic, title, text):
 # the background thread ---------------------------------------------------------------------------
 
 class Reminders:
-    """Looks for due reminders of all profiles (every TICK seconds) once `start` was called."""
+    """Looks for due reminders of all profiles (every TICK seconds) once `start` was called and sends the push
+    messages. The open pages ask for theirs with `page_items`."""
     def __init__(self, app):
         self.app = app
         self._lock = threading.Lock()
         self._cache = {}      # profile -> (read at, events)
-        self._pending = {}    # profile -> [item, …] for the open pages
         self._failed = set()  # keys of push messages that failed (logged once)
         self._stop = threading.Event()
         self._thread = None
@@ -148,11 +151,6 @@ class Reminders:
         with self._lock:
             self._cache.pop(pid, None)
 
-    def items(self, pid, since):
-        """The reminders of a profile that went off after `since` (a time stamp)."""
-        with self._lock:
-            return [i for i in self._pending.get(pid, []) if i["ts"] > since]
-
     def events(self, view, pid, now):
         with self._lock:
             hit = self._cache.get(pid)
@@ -165,40 +163,61 @@ class Reminders:
             self._cache[pid] = (time.time(), events)
         return events
 
+    def page_items(self, view, pid, now=None):
+        """The reminders an open page of this profile has not been given yet, as [{id, title, text, start, all_day}].
+        They are marked as given here, not when they fall due, so a reminder that went off while no page was open
+        (or Sunak was off) is shown at the next look for as long as the event has not started. Works on the events the
+        background check has read (nothing before the first look)."""
+        s = view.settings()
+        with self._lock:
+            hit = self._cache.get(pid)
+        if not s["reminders"] or not hit:
+            return []
+        out = []
+        for key, ev, lead, start in due(hit[1], now or dt.datetime.now(dt.timezone.utc)):
+            if view.db.reminder_seen(key + "|page"):
+                continue
+            view.db.reminder_mark(key + "|page")
+            title, text = message(ev, lead, start, s["reminder_lang"])
+            out.append({"id": key, "title": title, "text": text, "start": ev["start"], "all_day": ev["all_day"]})
+        return out
+
     def tick(self, now=None):
         """One look at all profiles."""
         now = now or dt.datetime.now(dt.timezone.utc)
-        for p in self.app.profiles():
+        ids = {p["id"] for p in self.app.profiles()}
+        with self._lock:
+            for gone in set(self._cache) - ids:
+                del self._cache[gone]
+        for pid in sorted(ids):
             try:
-                self.profile_tick(p["id"], now)
+                self.profile_tick(pid, now)
             except Exception:  # noqa: BLE001 - the other profiles still get their reminders
-                log_rem.warning("Reminder check for profile %s failed", p["id"], exc_info=True)
+                log_rem.warning("Reminder check for profile %s failed", pid, exc_info=True)
 
     def profile_tick(self, pid, now):
         view = self.app.view(pid)
         s = view.settings()
         if not s["reminders"]:
-            with self._lock:
-                self._cache.pop(pid, None)
+            self.invalidate(pid)
+            return
+        events = self.events(view, pid, now)
+        if self.app.profile_info(pid) is None:  # deleted while the calendars were read: nothing to do, nothing to recreate
+            self.invalidate(pid)
             return
         topic = s["ntfy_topic"]
-        if topic:
-            log.add_secret(topic)
-        db = view.db
-        for key, ev, lead, start in due(self.events(view, pid, now), now):
+        if not topic:
+            return
+        log.add_secret(topic)
+        for key, ev, lead, start in due(events, now):
+            if view.db.reminder_seen(key + "|ntfy"):
+                continue
             title, text = message(ev, lead, start, s["reminder_lang"])
-            if not db.reminder_seen(key + "|page"):
-                db.reminder_mark(key + "|page")
-                item = {"id": key, "ts": time.time(), "title": title, "text": text, "start": ev["start"], "all_day": ev["all_day"]}
-                with self._lock:
-                    kept = [i for i in self._pending.get(pid, []) if i["ts"] > time.time() - KEEP]
-                    self._pending[pid] = kept + [item]
-            if topic and not db.reminder_seen(key + "|ntfy"):
-                try:
-                    send_ntfy(s["ntfy_url"], topic, title, text)
-                    db.reminder_mark(key + "|ntfy")
-                    self._failed.discard(key)
-                except ReminderError as e:  # tried again at the next look while the reminder is due
-                    if key not in self._failed:
-                        self._failed.add(key)
-                        log_rem.warning("Push message for “%s” not sent: %s", title, e)
+            try:
+                send_ntfy(s["ntfy_url"], topic, title, text)
+                view.db.reminder_mark(key + "|ntfy")
+                self._failed.discard(key)
+            except ReminderError as e:  # tried again at the next look while the reminder is due
+                if key not in self._failed:
+                    self._failed.add(key)
+                    log_rem.warning("Push message for “%s” not sent: %s", title, e)

@@ -1837,10 +1837,10 @@ for (const id of ['#mailDesktop', '#remindersDesktop']) {
   };
 }
 
-/* calendar reminders: the server says which ones went off (every 30 seconds); each gets a notice in the page and,
-   when allowed, a notification of the system. The newest time stamp seen is kept so nothing shows twice. */
+/* calendar reminders: every 30 seconds the server hands out the due ones this profile has not been given yet (each
+   only once); each gets a notice in the page and, when allowed, a notification of the system. */
 const REMINDER_POLL = 30000;
-let remindersSince = Number(store.get('sunak-reminders-since', '0')) || 0, remindersPolling = false;
+let remindersPolling = false;
 function showReminder(r) {
   toast(`${r.title} · ${r.text}`, { label: tr('Open'), fn: () => show('calendar') });
   if (window.Notification?.permission === 'granted') {
@@ -1854,10 +1854,7 @@ async function checkReminders() {
   if (remindersPolling || !state.settings?.reminders) return;
   remindersPolling = true;
   try {
-    const r = await api('/api/reminders' + (remindersSince ? `?since=${remindersSince}` : ''));
-    remindersSince = r.now;
-    store.set('sunak-reminders-since', String(r.now));
-    r.items.forEach(showReminder);
+    (await api('/api/reminders')).items.forEach(showReminder);
   } catch (e) { /* the next look tries again */ }
   remindersPolling = false;
 }
@@ -2717,6 +2714,7 @@ function calTargets() {
   }
   return out;
 }
+const remLabel = (n) => (n < 0 ? tr('{n} minutes after the start', { n: -n }) : tr('{n} minutes before', { n }));
 function editEvent(e, draft) {
   // e: an existing event, or null with `draft` {summary, start, end, all_day, location, description} in local form
   cal.editing = e;
@@ -2755,7 +2753,7 @@ function editEvent(e, draft) {
     const opts = allDay.checked ? [['', 'No reminder'], ['-540', 'On the day at 9:00'], ['900', 'The day before at 9:00'], ['2340', '2 days before at 9:00']]
       : [['', 'No reminder'], ['0', 'At the start'], ['5', '5 minutes before'], ['10', '10 minutes before'], ['15', '15 minutes before'],
         ['30', '30 minutes before'], ['60', '1 hour before'], ['120', '2 hours before'], ['1440', '1 day before'], ['2880', '2 days before']];
-    if (keep !== '' && !opts.some(([v]) => v === keep)) opts.push([keep, tr('{n} minutes before', { n: keep })]);
+    if (keep !== '' && !opts.some(([v]) => v === keep)) opts.push([keep, remLabel(Number(keep))]);
     remSel.replaceChildren(...opts.map(([v, t]) => el('option', { value: v }, t)));
     remSel.value = keep;
   };
@@ -2763,7 +2761,7 @@ function editEvent(e, draft) {
   fillRem(remStart);
   remSel.onchange = () => { remDirty = true; };
   const syncTimes = () => [startT, endT].forEach((i) => i.classList.toggle('hidden', allDay.checked));
-  allDay.onchange = () => { syncTimes(); fillRem(''); remDirty = true; }; syncTimes();  // the choices differ, so start over
+  allDay.onchange = () => { syncTimes(); fillRem(remSel.value); }; syncTimes();  // a chosen reminder stays, as an extra choice if need be
   startD.onchange = () => { if (endD.value < startD.value) endD.value = startD.value; };
   const save = async () => {
     if (!title.value.trim()) { title.focus(); return toast('Give the event a title'); }
@@ -2775,7 +2773,10 @@ function editEvent(e, draft) {
       end = new Date(`${endD.value || startD.value}T${endT.value || startT.value || '00:00'}`).toISOString();
     }
     const event = { summary: title.value, all_day: allDay.checked, start, end, location: place.value, description: notes.value, repeat: e ? '' : repeat.value };
-    if (remDirty || !e) event.reminder = remSel.value === '' ? null : Number(remSel.value);
+    if (remDirty || !e) {
+      event.reminder = remSel.value === '' ? null : Number(remSel.value);
+      if (e) event.reminder_was = e.alarms?.length ? e.alarms[0] : null;  // only the reminder that was shown is replaced
+    }
     if (!e) store.set('sunak-cal-reminder', allDay.checked ? '' : remSel.value);
     try {
       if (e) await api('/api/calendar/events', { method: 'PUT', body: { source: e.source, uid: e.uid, href: e.href, etag: e.etag, recurring: series, event } });
@@ -2998,6 +2999,7 @@ function renderSettings() {
   $('#mailNotify').checked = s.mail_notify;
   $('#remindersOn').checked = s.reminders;
   $('#ntfyUrl').value = s.ntfy_url;
+  $('#ntfyUrl').disabled = !isAdmin();
   $('#ntfyTopic').value = s.ntfy_topic;
   renderMailDesktop();
   $('#checkUpdates').checked = s.check_updates;
@@ -3159,7 +3161,7 @@ $('#saveSettings').onclick = async () => {
     const install = !isAdmin() ? {} : {
       ...(mcpChanged ? { mcp_servers: draftMcp.map(mcpBody) } : {}),
       providers: draftProviders.filter((p) => p.base_url.trim()), check_updates: $('#checkUpdates').checked,
-      error_reports: $('#reportMode').value,
+      error_reports: $('#reportMode').value, ntfy_url: $('#ntfyUrl').value,
       speech_input: $('#speechInput').value, whisper_url: $('#whisperUrl').value, whisper_model: $('#whisperModel').value,
       ai_image_detect: $('#aiImageDetect').checked,
       image_gen: $('#imageGen').value, image_gen_url: $('#imageGenUrl').value,
@@ -3168,7 +3170,7 @@ $('#saveSettings').onclick = async () => {
     };
     state.settings = await api('/api/settings', { method: 'PUT', body: { ...install,
       system_prompt: $('#sysPrompt').value, temperature: parseFloat($('#temperature').value), use_memory: $('#useMemory').checked, auto_memory: $('#autoMemory').checked,
-      mail_notify: $('#mailNotify').checked, reminders: $('#remindersOn').checked, ntfy_url: $('#ntfyUrl').value,
+      mail_notify: $('#mailNotify').checked, reminders: $('#remindersOn').checked,
       ntfy_topic: $('#ntfyTopic').value, reminder_lang: sunakLang, accent: s.accent, theme: s.theme, default_model: $('#defaultModel').value, personas: draftPersonas,
     } });
     applyLook();
@@ -3191,7 +3193,7 @@ $('#remindersTest').onclick = async () => {
   const msg = $('#remindersMsg');
   msg.textContent = '';
   try {
-    const r = await api('/api/reminders/test', { method: 'POST', body: { ntfy_url: $('#ntfyUrl').value, ntfy_topic: $('#ntfyTopic').value, lang: sunakLang } });
+    const r = await api('/api/reminders/test', { method: 'POST', body: { ...(isAdmin() ? { ntfy_url: $('#ntfyUrl').value } : {}), ntfy_topic: $('#ntfyTopic').value, lang: sunakLang } });
     showReminder({ id: 'test', title: r.title, text: r.text });
     msg.textContent = r.pushed ? tr('Test sent to your phone and shown here.') : tr('Test shown here. Enter a topic to test the push message.');
   } catch (e) { msg.textContent = e.message; }

@@ -303,19 +303,21 @@ def parse_duration(v):
     return -delta if sign == "-" else delta
 
 
+def alarm_lead(c):
+    """Minutes before the start at which the reminder component `c` (VALARM) goes off, or None when it is not one
+    Sunak handles: only reminders relative to the start count (not to the end, not at a fixed time), and not
+    e-mail or program ones."""
+    if c.name != "VALARM" or c.text("ACTION").upper() not in ("", "DISPLAY", "AUDIO"):
+        return None
+    p, v = c.get("TRIGGER")
+    delta = parse_duration(v) if v and (p or {}).get("VALUE", "DURATION").upper() == "DURATION" \
+        and (p or {}).get("RELATED", "START").upper() == "START" else None
+    return None if delta is None else round(-delta.total_seconds() / 60)
+
+
 def alarms(ev):
-    """Minutes before the start at which the event's reminders (VALARM) go off, sorted. Only reminders relative
-    to the start count (not to the end, not at a fixed time), and not e-mail or program ones."""
-    out = set()
-    for c in ev.children:
-        if c.name != "VALARM" or c.text("ACTION").upper() not in ("", "DISPLAY", "AUDIO"):
-            continue
-        p, v = c.get("TRIGGER")
-        delta = parse_duration(v) if v and (p or {}).get("VALUE", "DURATION").upper() == "DURATION" \
-            and (p or {}).get("RELATED", "START").upper() == "START" else None
-        if delta is not None:
-            out.add(round(-delta.total_seconds() / 60))
-    return sorted(out)
+    """Minutes before the start at which the event's reminders go off (see alarm_lead), sorted."""
+    return sorted({m for m in map(alarm_lead, ev.children) if m is not None})
 
 
 def trigger(minutes):
@@ -613,8 +615,9 @@ def serialize(cals):
 
 def update_event(text, uid, ev, times=True):
     """`text` with the event `uid` changed to `ev` (from clean_event): title, place and notes, and for a
-    single event also the times and the repeat rule. The reminder changes only when `ev` has a "reminder" key
-    (None removes it). Everything else (other reminders, guests…) stays."""
+    single event also the times and the repeat rule. The reminder changes only when `ev` has a "reminder" key: the
+    reminder that was shown (`reminder_was`, minutes, or None) is replaced by it (None removes it); every other
+    reminder of the event stays. Everything else (guests…) stays too."""
     cals = parse(text)
     master = None
     for cal in cals:
@@ -643,8 +646,11 @@ def update_event(text, uid, ev, times=True):
     uid_at = next((i for i, p in enumerate(props) if p[0] == "UID"), -1)
     master.props = props[:uid_at + 1] + new + props[uid_at + 1:]
     if "reminder" in ev:
-        master.children = [c for c in master.children if c.name != "VALARM" or c.text("ACTION").upper() not in ("", "DISPLAY", "AUDIO")]
-        if ev["reminder"] is not None:
+        was = ev.get("reminder_was")
+        shown = next((c for c in master.children if was is not None and alarm_lead(c) == was), None)
+        if shown is not None:
+            master.children.remove(shown)
+        if ev["reminder"] is not None and ev["reminder"] not in alarms(master):
             alarm = Component("VALARM")
             alarm.props = [("ACTION", {}, "DISPLAY"), ("DESCRIPTION", {}, "Reminder"), ("TRIGGER", {}, trigger(ev["reminder"]))]
             master.children.append(alarm)
@@ -701,6 +707,10 @@ def clean_event(d):
             raise ValueError("reminder must be a whole number of minutes before the start (up to 7 days)")
         else:
             out["reminder"] = int(r)
+        w = d.get("reminder_was")  # the reminder the form showed, so that only this one is replaced
+        if w is not None and (isinstance(w, bool) or not isinstance(w, (int, float)) or w != int(w)):
+            raise ValueError("reminder_was must be a whole number of minutes")
+        out["reminder_was"] = None if w is None else int(w)
     for k, size in (("location", 300), ("description", 8000)):
         v = d.get(k) or ""
         if not isinstance(v, str):

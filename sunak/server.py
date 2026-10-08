@@ -63,7 +63,7 @@ DEFAULT_SETTINGS = {
     "error_reports": "off",  # unexpected errors as GitHub issues (reports.py): "off", "ask" (the user sends each one), "auto"
     "mail_notify": True,     # 📬 look for new mail every few minutes while Sunak is open, and say so
     "reminders": False,      # 🔔 calendar reminders (reminders.py): pages show them, ntfy sends them as push messages
-    "ntfy_url": "",          # ntfy server for the push messages ("" = https://ntfy.sh)
+    "ntfy_url": "",          # ntfy server for the push messages ("" = https://ntfy.sh); of the installation, only admins set it
     "ntfy_topic": "",        # the topic the phone subscribes to ("" = no push messages); it is the only secret of a public topic
     "reminder_lang": "en",   # language of the push messages: the interface language the settings were last saved in
 }
@@ -71,7 +71,8 @@ INT_PREFS = {"image_gen_size": (512, 1024),
              "image_gen_steps": (1, imagegen.MAX_STEPS)}  # allowed ranges
 # Settings of the whole installation (only admin profiles change them); all other prefs are per profile.
 GLOBAL_PREFS = {"check_updates", "speech_input", "whisper_url", "whisper_model",
-                "image_gen", "image_gen_url", "image_gen_model", "image_gen_size", "image_gen_steps", "error_reports", "ai_image_detect"}
+                "image_gen", "image_gen_url", "image_gen_model", "image_gen_size", "image_gen_steps", "error_reports", "ai_image_detect",
+                "ntfy_url"}
 GLOBAL_KEYS = GLOBAL_PREFS | {"providers", "mcp_servers", "password"}
 MAX_PROFILES = 20
 
@@ -2431,21 +2432,17 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json({"ok": True})
 
     def reminders_poll(self):
-        """GET /api/reminders?since=<time stamp>: the calendar reminders of this profile that went off after `since`
-        (without it: in the last minutes), as {now, items}. The page asks again with `now`."""
-        try:
-            since = float(self.query("since") or 0)
-        except ValueError:
-            raise ValueError("since must be a number") from None
-        now = time.time()
-        self.send_json({"now": now, "items": self.app.reminders.items(self.app.profile, since or now - 300)})
+        """GET /api/reminders: the calendar reminders of this profile that are due and that no page has been given yet,
+        as {items}. Each reminder is handed out once."""
+        self.send_json({"items": self.app.reminders.page_items(self.app, self.app.profile)})
 
     def reminders_test(self):
         """POST /api/reminders/test {ntfy_url, ntfy_topic, lang} (all optional, else the saved ones): send a test push
-        message to the ntfy topic, if there is one. The page shows its own test notification."""
+        message to the ntfy topic, if there is one. The page shows its own test notification. The server address is
+        a setting of the installation: only admins may try another one than the saved one."""
         d = self.body()
         s = self.app.settings()
-        url = _check_pref("ntfy_url", d.get("ntfy_url", s["ntfy_url"]), "")
+        url = _check_pref("ntfy_url", d.get("ntfy_url", s["ntfy_url"]), "") if self.profile.get("admin") else s["ntfy_url"]
         topic = _check_pref("ntfy_topic", d.get("ntfy_topic", s["ntfy_topic"]), "")
         lang = _check_pref("reminder_lang", d.get("lang", s["reminder_lang"]), "")
         text = reminders.TEXTS[lang]
