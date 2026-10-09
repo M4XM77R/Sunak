@@ -13,6 +13,12 @@ Format: one section per version, `## [a.b.c] – YYYY-MM-DD`, followed by short 
 ### Changed
 - An admin profile without a PIN can only be opened on the computer Sunak runs on as soon as there are other profiles. From a phone, the network or behind a reverse proxy its tile shows a lock and Sunak asks for a PIN to be set first (Settings → Profile). Devices that are already in the profile, single-profile setups and admin profiles with a PIN are unchanged. Settings → Profile explains this.
 - `GET /api/profiles` has a new field `locked` per profile.
+- "On the computer itself" is checked more strictly (also for `sunak stop` through the page): besides loopback and no `X-Forwarded-For`/`Forwarded`, the request must be addressed as `localhost` or an IP address and carry none of `X-Forwarded-Host`, `X-Forwarded-Proto`, `X-Real-IP`, `Via`, `CF-Connecting-IP`, `True-Client-IP`. A reverse proxy on the same computer that adds no such header cannot be told from a local visit, so it has to set `X-Forwarded-For` (nginx: `proxy_set_header X-Forwarded-For $remote_addr;`); the README says so.
+
+### Fixed
+- The login and PIN limits count an attempt before the slow password check, not after it, so a burst of parallel requests cannot get past the limit.
+
+Note: because the password and each PIN also lock after 20 wrong tries from all devices together, someone guessing from many addresses can lock the owner out for up to 15 minutes (restarting Sunak clears it). This is a deliberate trade-off.
 
 ## [0.19.0] – 2026-10-09
 

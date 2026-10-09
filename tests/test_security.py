@@ -194,6 +194,19 @@ class LimiterTest(unittest.TestCase):
         lim.ok("a")
         self.assertEqual(lim.wait("a"), 0)
 
+    def test_acquire_is_atomic(self):
+        t = [0.0]
+        lim = netguard.LoginLimiter(free=5, clock=lambda: t[0])
+        got = []
+        threads = [threading.Thread(target=lambda: got.append(lim.acquire("a"))) for _ in range(40)]
+        for th in threads:
+            th.start()
+        for th in threads:
+            th.join()
+        self.assertEqual(sorted(got).count(0), 5)  # exactly the free tries went through
+        lim.ok("a")
+        self.assertEqual(lim.acquire("a"), 0)
+
     def test_forgets_old_failures_and_stays_small(self):
         t = [0.0]
         lim = netguard.LoginLimiter(free=2, forget=100, max_keys=10, clock=lambda: t[0])
@@ -258,6 +271,21 @@ class ServerTest(unittest.TestCase):
         # another client address is not locked by the first one
         self.assertEqual(self.req("POST", "/api/login", {"password": "secret-pw"}, self.REMOTE)[0], 200)
 
+    def test_parallel_burst_cannot_pass_the_limit(self):
+        self.app.main.set_setting("password_hash", hash_password("secret-pw"))
+
+        def slow_check(pw, stored):  # like a slow hash: all requests are in before the first answer
+            threading.Event().wait(0.4)
+            return False
+        codes = []
+        with mock.patch.object(server, "check_password", slow_check):
+            threads = [threading.Thread(target=lambda: codes.append(self.req("POST", "/api/login", {"password": "x"})[0])) for _ in range(20)]
+            for th in threads:
+                th.start()
+            for th in threads:
+                th.join()
+        self.assertEqual((codes.count(401), codes.count(429)), (5, 15))
+
     def test_login_success_resets(self):
         self.app.main.set_setting("password_hash", hash_password("secret-pw"))
         for _ in range(4):
@@ -287,6 +315,15 @@ class ServerTest(unittest.TestCase):
         # this computer itself can still open it (and set the PIN)
         self.assertEqual(self.req("POST", "/api/profiles/select", {"id": "default", "pin": ""})[0], 200)
         self.assertFalse(self.req("GET", "/api/profiles")[1]["profiles"][0]["locked"])
+
+    def test_proxy_headers_and_foreign_host_are_not_local(self):
+        self.two_profiles()
+        with mock.patch.dict(os.environ, {"SUNAK_ALLOWED_HOSTS": "sunak.example.org"}):
+            for h in ({"X-Real-IP": "203.0.113.7"}, {"Via": "1.1 proxy"}, {"CF-Connecting-IP": "203.0.113.7"}, {"X-Forwarded-Proto": "https"},
+                      {"Host": "sunak.example.org"}):
+                self.assertEqual(self.req("POST", "/api/profiles/select", {"id": "default", "pin": ""}, h)[0], 403, h)
+            for h in ({"Host": "localhost:7000"}, {"Host": "127.0.0.1:7000"}, {}):
+                self.assertEqual(self.req("POST", "/api/profiles/select", {"id": "default", "pin": ""}, h)[0], 200, h)
 
     def test_admin_with_pin_and_single_profile_are_unchanged(self):
         self.two_profiles(admin_pin="9999")

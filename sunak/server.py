@@ -1237,9 +1237,19 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError:
             return False
 
+    FORWARD_HEADERS = ("X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Proto", "Forwarded", "X-Real-IP", "Via",
+                       "CF-Connecting-IP", "True-Client-IP")
+
     def is_direct_local(self):
-        """From this computer and not forwarded by a reverse proxy (then anyone could be behind it)."""
-        return self.is_loopback() and not (self.headers.get("X-Forwarded-For") or self.headers.get("Forwarded"))
+        """From this computer and not forwarded by a reverse proxy (then anyone could be behind it): from
+        loopback, addressed as localhost or an IP address of this computer, and without any of the headers
+        proxies add. A proxy on this computer that adds none of them and passes the Host header of its upstream
+        cannot be told apart; it has to set X-Forwarded-For (see the README)."""
+        if not self.is_loopback() or any(self.headers.get(h) for h in self.FORWARD_HEADERS):
+            return False
+        host = (self.headers.get("Host") or "").strip().lower()
+        host = host[1:].split("]")[0] if host.startswith("[") else host.rsplit(":", 1)[0] if host.count(":") == 1 else host
+        return not host or host == "localhost" or host.endswith(".localhost") or host in ("127.0.0.1", "::1")
 
     def is_loopback(self):
         """True when the request comes from this computer."""
@@ -1357,8 +1367,11 @@ class Handler(BaseHTTPRequestHandler):
         return "ip:" + (fwd if fwd and self.is_loopback() else self.client_address[0])
 
     def too_many_attempts(self, *keys):
-        """True (after answering 429 with Retry-After) while one of the keys is locked for wrong passwords or PINs."""
-        wait = max(self.app.ip_limit.wait(keys[0]), self.app.account_limit.wait(*keys[1:]))
+        """Reserve an attempt for a password or PIN check (the first key is the client, the rest the account):
+        False when it may go ahead (it is already counted as wrong, `attempt` takes that back after a right
+        answer, so parallel requests cannot all pass before the first check ends), True after answering 429
+        with Retry-After while one of the keys is locked."""
+        wait = self.app.ip_limit.acquire(keys[0]) or self.app.account_limit.acquire(*keys[1:])
         if not wait:
             return False
         body = json.dumps({"error": "Too many wrong attempts. Try again later.", "retry_after": wait}).encode()
@@ -1371,13 +1384,10 @@ class Handler(BaseHTTPRequestHandler):
         return True
 
     def attempt(self, good, *keys):
-        """Record the result of a password or PIN check for the keys (the first is the client, the rest the account)."""
+        """After a password or PIN check: a right answer clears the counters reserved by too_many_attempts."""
         if good:
             self.app.ip_limit.ok(keys[0])
             self.app.account_limit.ok(*keys[1:])
-        else:
-            self.app.ip_limit.fail(keys[0])
-            self.app.account_limit.fail(*keys[1:])
 
     def login(self):
         """POST /api/login: check the password and set the login cookie (wrong ones are counted, see too_many_attempts)."""

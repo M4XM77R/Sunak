@@ -162,23 +162,37 @@ class LoginLimiter:
             left = max((self._state[k][1] - now for k in keys if k in self._state), default=0)
         return max(0, int(left) + (1 if left > int(left) else 0))
 
+    def acquire(self, *keys):
+        """Reserve one attempt for the keys, atomically: 0 when it may go ahead (it is counted as a failure right
+        away, `ok` takes it back after a right answer), else the seconds to wait (nothing is counted). Counting
+        before the slow password check means a burst of parallel requests cannot all slip past the limit."""
+        with self._lock:
+            now = self.clock()
+            left = max((self._state[k][1] - now for k in keys if k in self._state), default=0)
+            if left > 0:
+                return int(left) + (1 if left > int(left) else 0)
+            self._fail(now, keys)
+            return 0
+
     def fail(self, *keys):
         """Record a failed attempt for the keys."""
-        now = self.clock()
         with self._lock:
-            if len(self._state) >= self.max_keys:
-                self._state = {k: v for k, v in self._state.items() if now - v[2] < self.forget}
-                while len(self._state) >= self.max_keys:  # still full: drop the oldest
-                    self._state.pop(min(self._state, key=lambda k: self._state[k][2]))
-            for k in keys:
-                s = self._state.get(k)
-                if s is None or now - s[2] >= self.forget:
-                    s = self._state[k] = [0, 0.0, now]
-                s[0] += 1
-                s[2] = now
-                over = s[0] - self.free
-                if over >= 0:
-                    s[1] = now + min(self.cap, self.base * 2 ** min(over, 20))
+            self._fail(self.clock(), keys)
+
+    def _fail(self, now, keys):
+        if len(self._state) >= self.max_keys:
+            self._state = {k: v for k, v in self._state.items() if now - v[2] < self.forget}
+            while len(self._state) >= self.max_keys:  # still full: drop the oldest
+                self._state.pop(min(self._state, key=lambda k: self._state[k][2]))
+        for k in keys:
+            s = self._state.get(k)
+            if s is None or now - s[2] >= self.forget:
+                s = self._state[k] = [0, 0.0, now]
+            s[0] += 1
+            s[2] = now
+            over = s[0] - self.free
+            if over >= 0:
+                s[1] = now + min(self.cap, self.base * 2 ** min(over, 20))
 
     def ok(self, *keys):
         """Forget the keys after a successful login."""
