@@ -630,3 +630,18 @@ input.emoji { width: 52px; min-width: 0; flex: none; text-align: center; }
 .assist-title { font-weight: 600; font-size: 1.05em; }
 .assist-body { margin: 0; white-space: pre-wrap; word-break: break-word; font: inherit; max-height: 260px; overflow: auto; background: color-mix(in srgb, var(--border) 25%, transparent); border-radius: 8px; padding: 8px 10px; }
 .assist-card .row { margin: 4px 0 0; flex-wrap: wrap; }
+
+/* slash commands: the list above the message box */
+.slash-panel { position: absolute; left: 0; right: 0; bottom: calc(100% + 8px); z-index: 30; max-height: min(50vh, 420px); overflow: auto; padding: 6px; display: flex; flex-direction: column; gap: 2px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 14px; box-shadow: 0 10px 30px #0000004d; }
+.slash-panel.hidden { display: none; }
+.slash-panel h3 { margin: 6px 8px 4px; font-size: 14px; }
+.slash-panel h4 { margin: 8px 8px 2px; font-size: 13px; color: var(--muted); }
+.slash-panel p { margin: 2px 8px; }
+.slash-item { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; width: 100%; padding: 8px 10px; border: 0; background: none; color: var(--text); font: inherit; text-align: left; border-radius: 10px; cursor: pointer; }
+.slash-item:hover, .slash-item.on { background: var(--panel-2); }
+.slash-item.on { box-shadow: inset 2px 0 0 var(--accent); }
+.slash-desc { flex-basis: 100%; }
+@media (min-width: 700px) { .slash-desc { flex-basis: auto; margin-left: auto; text-align: right; } }
+.slash-event { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; padding: 6px 10px; border-left: 3px solid var(--c, var(--accent)); margin: 2px 8px; }
+.slash-event .when { color: var(--muted); min-width: 5.5em; font-size: 13px; }

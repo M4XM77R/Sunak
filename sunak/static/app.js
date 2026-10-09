@@ -348,6 +348,7 @@ function show(view) {
   $('#personaSelect').classList.toggle('hidden', view !== 'chat');
   syncExport();
   closeSidebar();
+  slashClose();
   if (view === 'documents') loadDocs();
   if (view === 'notes') loadNotes();
   if (view === 'knowledge') loadKb();
@@ -580,8 +581,203 @@ const promptEl = $('#prompt');
 function autosize() { promptEl.style.height = 'auto'; promptEl.style.height = `${Math.min(promptEl.scrollHeight, 240)}px`; }
 promptEl.addEventListener('input', autosize);
 promptEl.addEventListener('keydown', (e) => {
+  if (slashKey(e)) return;
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); }
 });
+
+/* ---------------- Slash commands ----------------
+   "/" at the start of the message box lists the commands; German and English names do the same ("/termin" = "/event").
+   They reuse what the chat already does (cards, pictures, web search, knowledge base, export); nothing here is a new
+   backend. /web and /wissen apply to that one message only (the server gets "once", see prepare_chat in server.py). */
+// BEGIN slashCommands (tests/test_slash_js.py runs this part with node)
+// arg: what comes after the name (shown as a hint), need: it must be given
+const SLASH = [
+  { name: 'termin', alias: ['event'], arg: 'what and when', need: true, desc: 'Prepare a calendar event as a card' },
+  { name: 'mail', alias: [], arg: 'to whom and what', need: true, desc: 'Draft an e-mail as a card' },
+  { name: 'bild', alias: ['image'], arg: 'what to paint', need: true, desc: 'Paint a picture' },
+  { name: 'web', alias: [], arg: 'question', need: true, desc: 'Answer with a web search (this message only)' },
+  { name: 'heute', alias: ['today'], arg: '', desc: 'Show today’s calendar' },
+  { name: 'woche', alias: ['week'], arg: '', desc: 'Show the next 7 days of your calendar' },
+  { name: 'wissen', alias: ['knowledge'], arg: 'question', need: true, desc: 'Answer from your knowledge base only (this message only)' },
+  { name: 'modell', alias: ['model'], arg: 'model name', desc: 'Switch the model for this chat' },
+  { name: 'persona', alias: [], arg: 'persona name', desc: 'Switch the persona for this chat' },
+  { name: 'neu', alias: ['new'], arg: 'first message', desc: 'Start a new chat' },
+  { name: 'export', alias: [], arg: 'md, json or print', desc: 'Export this chat' },
+  { name: 'suche', alias: ['search'], arg: 'words', desc: 'Search in all chats' },
+  { name: 'zusammenfassen', alias: ['summarize'], arg: 'focus', desc: 'Summarize this chat' },
+  { name: 'hilfe', alias: ['help'], arg: '', desc: 'List all commands' },
+];
+// "/termin morgen 10 Uhr Zahnarzt" → { word, cmd (or null), arg }; null when the text is not of the form "/word …"
+function slashParse(text) {
+  const m = /^\/([^\s/]+)(?:\s+([\s\S]*))?$/.exec(String(text).trim());
+  if (!m) return null;
+  const word = m[1].toLowerCase();
+  return { word, cmd: SLASH.find((c) => c.name === word || c.alias.includes(word)) || null, arg: (m[2] || '').trim() };
+}
+// the commands to offer while the name is being typed ("/", "/te", "/ev"); nothing once a space follows
+function slashSuggest(text) {
+  const m = /^\/([^\s/]*)$/.exec(String(text));
+  if (!m) return [];
+  const p = m[1].toLowerCase();
+  return SLASH.filter((c) => [c.name, ...c.alias].some((n) => n.startsWith(p)));
+}
+// the name to write for a command: the one the typed start belongs to ("/ev" → event)
+const slashWord = (c, text) => [c.name, ...c.alias].find((n) => n.startsWith(String(text).slice(1).toLowerCase())) || c.name;
+// END slashCommands
+
+const slashPanel = el('div', { class: 'slash-panel hidden', id: 'slashPanel' });
+$('#composer .composer-row').append(slashPanel);
+const slash = { mode: 'off', items: [], idx: 0 };
+function slashClose() { slash.mode = 'off'; slash.items = []; slashPanel.classList.add('hidden'); slashPanel.replaceChildren(); }
+function slashShow(title, nodes) {  // a read-only panel above the message box (calendar, help, model list)
+  slash.mode = 'info';
+  slashPanel.setAttribute('role', 'region');
+  slashPanel.replaceChildren(el('h3', {}, title), ...nodes);
+  slashPanel.classList.remove('hidden');
+}
+function slashFill(c, word) {
+  promptEl.value = `/${word || c.name}${c.arg ? ' ' : ''}`;
+  autosize(); promptEl.focus(); slashClose();
+}
+function slashRender() {
+  slash.items = slashSuggest(promptEl.value);
+  if (!slash.items.length) { slashClose(); return; }
+  slash.mode = 'list';
+  slash.idx = Math.min(slash.idx, slash.items.length - 1);
+  slashPanel.setAttribute('role', 'listbox');
+  slashPanel.replaceChildren(...slash.items.map((c, i) => el('button', { class: `slash-item${i === slash.idx ? ' on' : ''}`, type: 'button', role: 'option', 'aria-selected': String(i === slash.idx),
+    onmousedown: (e) => { e.preventDefault(); slashFill(c, slashWord(c, promptEl.value)); } },
+  el('b', { 'data-no-i18n': '' }, `/${c.name}`), c.alias.length ? el('span', { class: 'muted', 'data-no-i18n': '' }, c.alias.map((a) => `/${a}`).join(' ')) : null,
+  c.arg ? el('span', { class: 'muted small slash-arg' }, `<${tr(c.arg)}>`) : null, el('span', { class: 'muted small slash-desc' }, tr(c.desc)))));
+  slashPanel.querySelector('.on')?.scrollIntoView({ block: 'nearest' });
+  slashPanel.classList.remove('hidden');
+}
+promptEl.addEventListener('input', () => { slash.idx = 0; slashRender(); });
+// true when the key was used by the command list
+function slashKey(e) {
+  if (slash.mode === 'off' || e.isComposing) return false;
+  if (e.key === 'Escape') { e.preventDefault(); slashClose(); return true; }
+  if (slash.mode !== 'list') return false;
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault();
+    slash.idx = (slash.idx + (e.key === 'ArrowDown' ? 1 : slash.items.length - 1)) % slash.items.length;
+    slashRender();
+    return true;
+  }
+  const typed = promptEl.value.trim().slice(1).toLowerCase();
+  const exact = slash.items.some((c) => c.name === typed || c.alias.includes(typed));
+  if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey && !exact)) {
+    e.preventDefault();
+    const c = slash.items[slash.idx];
+    slashFill(c, slashWord(c, promptEl.value));
+    return true;
+  }
+  return false;
+}
+document.addEventListener('click', (e) => { if (slash.mode !== 'off' && !e.target.closest('#slashPanel, #prompt')) slashClose(); });
+
+let sendOverride = null; // set while a slash command sends its text as an ordinary chat message: the request fields to change
+async function runSlash(sl) {
+  const c = sl.cmd;
+  slashClose();
+  if (!c) { toast(tr('Unknown command /{name}. Type /help for the list.', { name: sl.word })); return; }
+  if (c.need && !sl.arg) { toast(tr('Usage: {usage}', { usage: `/${c.name} <${tr(c.arg)}>` })); return; }
+  const clear = () => { promptEl.value = ''; autosize(); slashClose(); };
+  const plain = async (text, over) => {  // as a normal message, with the request fields changed for this one message
+    if (!currentModel()) { toast('Install or connect a model first'); show('settings'); return; }
+    promptEl.value = text; autosize(); slashClose();
+    sendOverride = over;
+    try { await sendNow(true); } finally { sendOverride = null; }
+  };
+  switch (c.name) {
+    case 'termin': await assistantRequest('event', sl.arg); break;
+    case 'mail': await assistantRequest('mail', sl.arg); break;
+    case 'bild': await pictureRequest(sl.arg, sl.arg); break;
+    case 'web': case 'wissen':
+      if (mcpOn()) { toast('Tools (MCP) are on. Switch them off to use this command.'); return; }
+      await plain(sl.arg, c.name === 'web' ? { use_web: true, once: true } : { use_kb: true, use_web: false, once: true });
+      break;
+    case 'heute': await slashAgenda(1); break;
+    case 'woche': await slashAgenda(7); break;
+    case 'modell': slashPick('model', sl.arg); break;
+    case 'persona': slashPick('persona', sl.arg); break;
+    case 'neu':
+      clear(); newChat();
+      if (sl.arg) { promptEl.value = sl.arg; autosize(); setTimeout(send, 0); }  // after this send is over
+      break;
+    case 'export': slashExport(sl.arg); break;
+    case 'suche':
+      clear();
+      $('#sidebar').classList.add('open'); $('#scrim').classList.add('open');
+      $('#sessionFilter').value = sl.arg; $('#sessionFilter').dispatchEvent(new Event('input')); $('#sessionFilter').focus();
+      break;
+    case 'zusammenfassen':
+      if (!state.session?.messages?.length) { toast('There is nothing to summarize yet'); return; }
+      await plain(`${tr('Summarize our conversation so far in a few short bullet points.')}${sl.arg ? ` ${sl.arg}` : ''}`, {});
+      break;
+    case 'hilfe':
+      clear();
+      slashShow(tr('Slash commands'), [el('p', { class: 'muted small' }, 'Type / in the message box. German and English names both work.'),
+        ...SLASH.map((x) => el('button', { class: 'slash-item', type: 'button', onclick: () => slashFill(x) },
+          el('b', { 'data-no-i18n': '' }, `/${x.name}`), x.alias.length ? el('span', { class: 'muted', 'data-no-i18n': '' }, x.alias.map((a) => `/${a}`).join(' ')) : null,
+          x.arg ? el('span', { class: 'muted small slash-arg' }, `<${tr(x.arg)}>`) : null, el('span', { class: 'muted small slash-desc' }, tr(x.desc))))]);
+      break;
+  }
+}
+// /modell and /persona: pick by name (or part of it); several matches or none → a list to click
+function slashPick(what, q) {
+  const isModel = what === 'model';
+  const all = isModel ? state.models.map((m) => ({ id: m.id, name: m.name, sub: m.provider_name })) : (state.settings?.personas || []).map((p) => ({ id: p.id, name: p.name, sub: '' }));
+  const low = q.toLowerCase();
+  const exact = all.filter((x) => x.id.toLowerCase() === low || x.name.toLowerCase() === low);
+  const hits = !q ? all : exact.length ? exact : all.filter((x) => `${x.name} ${x.id}`.toLowerCase().includes(low));
+  const choose = (x) => {
+    const sel = $(isModel ? '#modelSelect' : '#personaSelect');
+    sel.value = x.id;
+    sel.dispatchEvent(new Event('change'));
+    promptEl.value = ''; autosize(); slashClose(); promptEl.focus();
+  };
+  if (hits.length === 1 && q) { choose(hits[0]); return; }
+  if (!hits.length && !q) { toast(tr('No model installed')); return; }
+  if (!hits.length) { toast(tr(isModel ? 'No model matches “{q}”' : 'No persona matches “{q}”', { q })); return; }
+  promptEl.value = ''; autosize();
+  slashShow(tr(isModel ? 'Pick a model' : 'Pick a persona'), hits.map((x) => el('button', { class: 'slash-item', type: 'button', onclick: () => choose(x) },
+    el('b', { 'data-no-i18n': '' }, x.name), x.sub ? el('span', { class: 'muted small', 'data-no-i18n': '' }, x.sub) : null)));
+}
+function slashExport(arg) {
+  const s = state.session, fmt = (arg || 'md').toLowerCase();
+  if (!s?.id || !s.messages?.length) { toast('There is nothing to export yet'); return; }
+  if (!['md', 'json', 'print'].includes(fmt)) { toast(tr('Usage: {usage}', { usage: `/export <${tr('md, json or print')}>` })); return; }
+  promptEl.value = ''; autosize(); slashClose();
+  if (fmt === 'print') { window.print(); return; }
+  const a = el('a', { href: `/api/sessions/${s.id}/export?format=${fmt}`, download: '' });
+  document.body.append(a); a.click(); a.remove();
+}
+// /heute and /woche: the calendar entries of today / the next 7 days, as events of the calendar view (hidden calendars stay hidden)
+async function slashAgenda(days) {
+  const t = new Date(), start = new Date(t.getFullYear(), t.getMonth(), t.getDate());
+  let res;
+  try { res = await api(`/api/calendar/events?${new URLSearchParams({ start: isoLocal(start), end: isoLocal(addDays(start, days)) })}`); }
+  catch (e) { toast(e.message); return; }
+  promptEl.value = ''; autosize();
+  const hidden = calHidden();
+  const evs = res.events.filter((e) => e.status !== 'cancelled' && !hidden.has(calKey(e)) && !hidden.has(e.source));
+  const rows = [];
+  for (let i = 0; i < days; i++) {
+    const day = addDays(start, i), key = ymd(day);
+    const list = evs.filter((e) => eventDays(e).includes(key)).sort((a, b) => (b.all_day - a.all_day) || (new Date(a.start) - new Date(b.start)));
+    if (days > 1 && !list.length) continue;
+    if (days > 1) rows.push(el('h4', {}, day.toLocaleDateString(uiLocale(), { weekday: 'long', day: 'numeric', month: 'long' })));
+    if (!list.length) rows.push(el('p', { class: 'muted small' }, 'No events.'));
+    for (const e of list) {
+      rows.push(el('div', { class: 'slash-event', style: `--c:${calColor(e)}` }, el('span', { class: 'when' }, timeText(e)), el('b', { 'data-no-i18n': '' }, e.summary || '…'),
+        e.location ? el('span', { class: 'muted small', 'data-no-i18n': '' }, e.location) : null));
+    }
+  }
+  if (!rows.length) rows.push(el('p', { class: 'muted small' }, 'No events in the next 7 days.'));
+  for (const err of res.errors || []) rows.push(el('p', { class: 'err small' }, tr('A calendar could not be read'), ': ', el('span', { 'data-no-i18n': '' }, err.name || calNameOf(err.source))));
+  slashShow(tr(days === 1 ? 'Today' : 'Next 7 days'), rows);
+}
 $('#composer').onsubmit = (e) => { e.preventDefault(); state.busy ? stopBusy() : send(); };
 function stopBusy() {
   if (state.toolRun) api('/api/tools/cancel', { method: 'POST', body: { run: state.toolRun } }).catch(() => {});
@@ -599,7 +795,11 @@ async function send(skipAssist) {  // skipAssist: a normal chat message, even if
 async function sendNow(skipAssist) {
   let text = promptEl.value.trim();
   if (!text && !state.attachments.length) return;
-  if (!state.attachments.length) {
+  if (!state.attachments.length && !sendOverride) {
+    const sl = slashParse(text);
+    if (sl && (sl.cmd || !sl.arg)) { await runSlash(sl); return; }
+  }
+  if (!state.attachments.length && !sendOverride) {
     const act = skipAssist ? null : await assistantIntent(text);
     if (act && await assistantRequest(act, text)) return;
     const ask = await pictureIntent(text, false, 'chat');
@@ -623,7 +823,7 @@ async function sendNow(skipAssist) {
   promptEl.value = ''; autosize();
   state.attachments = []; renderAttachments();
   sending = false; // from here on state.busy guards against a second send
-  const payload = { content: text };
+  const payload = { content: text, ...sendOverride };
   if (pics.length) payload.images = pics.map((a) => ({ name: a.name, data: a.data }));
   const result = await runChat(payload, { role: 'user', content: text, localImages: pics.map((a) => a.url) });
   // the server refused before storing anything (e.g. a model without vision): give the message back

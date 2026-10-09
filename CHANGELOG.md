@@ -4,6 +4,13 @@ All changes to Sunak, newest version first. Sunak shows the entries between your
 
 Format: one section per version, `## [a.b.c] – YYYY-MM-DD`, followed by short points under **Added**, **Changed**, **Fixed** or **Removed**. Every change to Sunak gets a new version and an entry here.
 
+## [0.19.0] – 2026-10-09
+
+### Added
+- Slash commands in the chat. Type `/` at the start of the message box and a list of commands opens (arrow keys and `Tab` or `Enter` pick one, `Esc` closes it). Every command has a German and an English name: `/termin` (`/event`) prepares a calendar event as a card, `/mail` drafts an e-mail as a card, `/bild` (`/image`) paints a picture, `/web` answers with a web search, `/wissen` (`/knowledge`) answers from your knowledge base only, `/heute` (`/today`) and `/woche` (`/week`) show today's calendar or the next 7 days, `/modell` (`/model`) and `/persona` switch the model or persona of this chat, `/neu` (`/new`) starts a new chat (with an optional first message), `/export` downloads the chat (`md`, `json` or `print`), `/suche` (`/search`) searches all chats, `/zusammenfassen` (`/summarize`) summarizes the chat and `/hilfe` (`/help`) lists everything. The commands reuse what the chat already does; nothing is sent or saved without the usual click.
+- `/web` and `/wissen` apply to that one message only: the chat's own switches (Web search, Knowledge base in the **+** menu) stay as they are. For this the chat request takes an optional `once` field (`POST /api/chat`: with `once: true`, `use_web` and `use_kb` count for this answer only and are not stored with the chat).
+- A text that only looks like a path (`/etc/hosts`, `/Users/me/file.txt please read`) is still an ordinary message. An unknown command such as `/foo` is reported and not sent; with text after it (`/foo bar`) it goes to the model as it is.
+
 ## [0.18.0] – 2026-10-08
 
 ### Added

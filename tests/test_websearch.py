@@ -90,6 +90,16 @@ class WebSearchTest(unittest.TestCase):
         self.assertEqual(len(fake_search.queries), 1)
         self.assertTrue(self.call("GET", f"/api/sessions/{s['id']}")["use_web"])
 
+    def test_once_searches_for_this_answer_only(self):
+        """Slash command /web: "once" turns the search on for one answer and leaves the chat's switch alone."""
+        s = self.call("POST", "/api/sessions", {})
+        ev = self.call("POST", "/api/chat", {"session_id": s["id"], "model": "ollama::tiny:1b", "content": "x", "use_web": True, "once": True})
+        self.assertEqual(len(fake_search.queries), 1)
+        self.assertEqual([e["type"] for e in ev if e["type"] == "web"], ["web"])
+        self.assertFalse(self.call("GET", f"/api/sessions/{s['id']}")["use_web"])
+        self.call("POST", "/api/chat", {"session_id": s["id"], "model": "ollama::tiny:1b", "content": "y", "use_web": False})
+        self.assertEqual(len(fake_search.queries), 1)
+
     def test_failed_search_still_answers(self):
         s = self.call("POST", "/api/sessions", {"use_web": True})
         with mock.patch.object(research, "search", side_effect=OSError("offline")):
