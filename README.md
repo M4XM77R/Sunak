@@ -111,6 +111,7 @@ Your data then lives in the `data/` folder next to the Compose file (Ollama mode
 |---|---|
 | Send / new line | `Enter` / `Shift+Enter` |
 | New chat | `Ctrl+K` (Mac: `⌘K`) |
+| Slash commands | Type `/` at the start of the message box for the list (German or English names): `/termin` (`/event`), `/mail`, `/bild` (`/image`), `/web`, `/heute` (`/today`), `/woche` (`/week`), `/wissen` (`/knowledge`), `/modell` (`/model`), `/persona`, `/neu` (`/new`), `/export`, `/suche` (`/search`), `/zusammenfassen` (`/summarize`), `/hilfe` (`/help`). Details below |
 | Switch model | Selector at the top right |
 | Switch persona | Selector at the top next to the model, applies to the current chat. Your own personas: Settings → Personas |
 | Find old chats | Search box above the chat list: searches titles and all messages, a click jumps to the spot |
@@ -119,6 +120,8 @@ Your data then lives in the `data/` folder next to the Compose file (Ollama mode
 | Restore a backup | Settings → Data → Import backup (or `sunak import FILE`): adds the backup, or a single chat exported as JSON, to the profile you are in. Nothing is overwritten: chats, documents and notes with the same id (notes also with the same text), knowledge-base files with the same name, calendar events with the same id, mail accounts with the same address and calendar accounts with the same address are skipped, and a setting is taken over only when you have not set it yourself. Settings of the whole installation and model providers only come in from an admin profile. The result lists what was added and skipped and which passwords and API keys you have to enter again. Only import files you trust |
 
 **The input box:** Next to it on the left are the paperclip (attach files and images), the **+** and, on the right, Send. The **+** menu opens upwards and contains Knowledge base, Web search, Tools (MCP) and Speak, each with an on/off switch. Tools (MCP) appears only when a server is switched on, and only for admin profiles; Speak appears as long as voice input is not switched off. This leaves room for typing on a phone.
+
+**Slash commands:** `/` at the start of the message box opens a list of commands; arrow keys and `Tab`/`Enter` pick one, `Esc` closes it. `/termin morgen 10 Uhr Zahnarzt` and `/mail an Anna: komme später` show the usual event or e-mail card (nothing is saved or sent before your click), `/bild a cat in a hat` paints a picture, `/web <question>` answers with a web search and `/wissen <question>` from your knowledge base only, each for this one message and without changing the switches in the **+** menu. `/heute` and `/woche` list your calendar entries for today or the next 7 days, `/modell <name>` and `/persona <name>` switch by (part of) the name (without a name you get a list to click), `/neu [message]` starts a new chat, `/export [md|json|print]` exports the open chat, `/suche <words>` searches all chats, `/zusammenfassen [focus]` asks the model for a short summary of the chat, and `/hilfe` shows this list. `/web`, `/wissen` and `/zusammenfassen` are sent as a normal message; they do not work with Tools (MCP) switched on. A path like `/etc/hosts` is not a command.
 
 **Attaching files:** Paperclip or drag and drop. Text, PDF, Word and PowerPoint are read and added to the message. For many files that should stay available, the knowledge base is better.
 

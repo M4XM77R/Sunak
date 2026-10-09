@@ -1670,7 +1670,9 @@ class Handler(BaseHTTPRequestHandler):
         updates = {"model": model_id}
         for k in ("use_kb", "use_web"):
             if k in d:
-                updates[k] = session[k] = self.flag(d, k)
+                session[k] = self.flag(d, k)
+                if not self.flag(d, "once"):  # "once" (slash commands /web, /wissen): for this answer only, not stored with the chat
+                    updates[k] = session[k]
         if "persona" in d:
             updates["persona"] = session["persona"] = str(d["persona"] or "")
         if session["title"] == "New chat":
@@ -1685,7 +1687,7 @@ class Handler(BaseHTTPRequestHandler):
         """POST /api/chat: store the user message, stream the answer, store it.
 
         `truncate_from` deletes that message and everything after it first (regenerate / edit).
-        `use_kb` switches the knowledge base on or off for this chat, `persona` picks a persona id
+        `use_kb` / `use_web` switch the knowledge base / web search on or off for this chat (with `once` only for this answer), `persona` picks a persona id
         (both are stored with the chat).
         Events: start, sources (knowledge base only), think, text, done | error.
         A partial answer is kept if the stream breaks."""
