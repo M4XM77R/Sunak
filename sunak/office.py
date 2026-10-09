@@ -5,11 +5,14 @@ The chat model writes Markdown (headings, paragraphs, lists, tables, bold / ital
 `render` writes the file. Documents (.docx, .odt) take every block; spreadsheets (.xlsx, .ods) take the tables, one sheet per
 table, named after the heading above it. Nothing here touches the network or the disk except the temporary folder of the PDF."""
 
+import bisect
 import datetime
 import io
 import json
 import os
+import pathlib
 import re
+import signal
 import shutil
 import subprocess
 import tempfile
@@ -45,35 +48,123 @@ def clean(text):
 # ---------------------------------------------------------------- Markdown → blocks
 # blocks: ("h", level, runs) · ("p", runs) · ("list", ordered, [runs]) · ("table", [[text]]) · ("code", text)
 # runs: [(text, bold, italic, code)]
-_INLINE = re.compile(
-    r"(?P<code>`+)(?P<c>.+?)(?P=code)"
-    r"|(?P<link>\[(?P<lt>[^\]\n]+)\]\((?P<lu>[^)\s]+)\))"
-    r"|(?<!\w)(?P<b1>\*\*|__)(?=\S)(?P<bt>.+?)(?<=\S)(?P=b1)(?!\w)"
-    r"|\*\*(?=\S)(?P<bs>.+?)(?<=\S)\*\*"
-    r"|(?<![\w*])\*(?=[^\s*])(?P<is>.+?)(?<=[^\s*])\*(?![\w*])"
-    r"|(?<!\w)_(?=[^\s_])(?P<iu>.+?)(?<=[^\s_])_(?!\w)", re.S)
+MAX_INLINE = 20_000     # a longer paragraph, heading or cell is kept as plain text (no formatting is looked for)
+MAX_DEPTH = 3           # bold inside italic inside a link, no deeper
 
 
-def inline(text, b=False, i=False, c=False):
-    """Runs of an inline Markdown text. Links become "text (address)"; anything that is not recognised stays text."""
-    out, pos = [], 0
-    for m in _INLINE.finditer(text):
-        if m.start() > pos:
-            out.append((text[pos:m.start()], b, i, c))
-        if m.group("c") is not None:
-            out.append((m.group("c").strip() or m.group("c"), b, i, True))
-        elif m.group("link"):
-            label, url = m.group("lt"), m.group("lu")
-            out += inline(label, b, i, c)
-            if url and url != label and re.match(r"(?:https?://|mailto:)", url, re.I):
+def _word(ch):
+    return ch.isalnum() or ch == "_"
+
+
+def _delims():
+    """(delimiter, may it open at i, may it close at i) for the emphasis marks. Written for a single left-to-right scan:
+    the closing test looks at the two neighbours only, so the closers of a text can be listed once."""
+    def at(t, i):
+        return t[i] if 0 <= i < len(t) else ""
+    return (
+        ("**", lambda t, i: at(t, i + 2) not in ("", " ", "\t"), lambda t, i: at(t, i - 1) not in ("", " ", "\t")),
+        ("__", lambda t, i: not _word(at(t, i - 1)) and at(t, i + 2) not in ("", " ", "\t"),
+         lambda t, i: at(t, i - 1) not in ("", " ", "\t") and not _word(at(t, i + 2))),
+        ("*", lambda t, i: at(t, i - 1) not in ("*",) and not _word(at(t, i - 1)) and at(t, i + 1) not in ("", " ", "\t", "*"),
+         lambda t, i: at(t, i - 1) not in ("", " ", "\t", "*") and at(t, i + 1) != "*" and not _word(at(t, i + 1))),
+        ("_", lambda t, i: not _word(at(t, i - 1)) and at(t, i + 1) not in ("", " ", "\t", "_"),
+         lambda t, i: at(t, i - 1) not in ("", " ", "\t", "_") and not _word(at(t, i + 1))),
+    )
+
+
+_DELIMS = _delims()
+
+
+def inline(text, b=False, i=False, c=False, _depth=0):
+    """Runs of an inline Markdown text: **bold**, *italic*, `code`, [links](address) become "text (address)"; whatever is
+    not recognised stays text. One left-to-right scan with every lookup answered from lists made once per text (no
+    backtracking), so a hostile text costs time in proportion to its length."""
+    text = text.replace("\n", " ")
+    if not text:
+        return []
+    if len(text) > MAX_INLINE or _depth > MAX_DEPTH:
+        return [(text, b, i, c)]
+    positions = {}      # mark → where it occurs
+    closers = {}        # emphasis mark → where it may close
+    failed = set()      # backtick runs that have no partner
+    links = {}          # position of "]" → address or None
+
+    def where(mark):
+        if mark not in positions:
+            found, k = [], text.find(mark)
+            while k != -1:
+                found.append(k)
+                k = text.find(mark, k + 1)
+            positions[mark] = found
+        return positions[mark]
+
+    def after(lst, k):
+        j = bisect.bisect_left(lst, k)
+        return lst[j] if j < len(lst) else -1
+
+    def closing(mark, test, start):
+        if mark not in closers:
+            closers[mark] = [p for p in where(mark) if test(text, p)]
+        return after(closers[mark], start)
+
+    out, flushed, pos, n = [], 0, 0, len(text)
+
+    def flush(upto):
+        if upto > flushed:
+            out.append((text[flushed:upto], b, i, c))
+    while pos < n:
+        ch = text[pos]
+        if ch == "`":
+            end = pos
+            while end < n and text[end] == "`":
+                end += 1
+            mark = text[pos:end]
+            k = -1 if mark in failed else text.find(mark, end + 1)
+            if k == -1:
+                failed.add(mark)
+                pos = end
+                continue
+            flush(pos)
+            body = text[end:k]
+            out.append((body.strip() or body, b, i, True))
+            pos = flushed = k + len(mark)
+        elif ch == "[":
+            k = after(where("]"), pos + 2)
+            if k == -1:
+                pos += 1
+                continue
+            if k not in links:
+                e = after(where(")"), k + 2) if text[k + 1:k + 2] == "(" else -1
+                url = text[k + 2:e] if e != -1 else ""
+                links[k] = url if url and not any(x.isspace() for x in url) else None
+            url = links[k]
+            if url is None:
+                pos += 1
+                continue
+            flush(pos)
+            label = text[pos + 1:k]
+            out += inline(label, b, i, c, _depth + 1)
+            if url != label and re.match(r"(?:https?://|mailto:)", url, re.I):
                 out.append((f" ({url})", b, i, c))
-        elif m.group("bt") is not None or m.group("bs") is not None:
-            out += inline(m.group("bt") if m.group("bt") is not None else m.group("bs"), True, i, c)
+            pos = flushed = k + 2 + len(url) + 1
+        elif ch in "*_":
+            for mark, can_open, can_close in _DELIMS:
+                if text.startswith(mark, pos):
+                    break
+            else:  # pragma: no cover (every "*" or "_" starts one of the marks)
+                pos += 1
+                continue
+            k = closing(mark, can_close, pos + len(mark) + 1) if can_open(text, pos) else -1
+            if k == -1:
+                pos += len(mark)
+                continue
+            flush(pos)
+            bold = b or len(mark) == 2
+            out += inline(text[pos + len(mark):k], bold, i or len(mark) == 1, c, _depth + 1)
+            pos = flushed = k + len(mark)
         else:
-            out += inline(m.group("is") if m.group("is") is not None else m.group("iu"), b, True, c)
-        pos = m.end()
-    if pos < len(text):
-        out.append((text[pos:], b, i, c))
+            pos += 1
+    flush(n)
     return [r for r in out if r[0]]
 
 
@@ -82,7 +173,7 @@ def plain(runs):
 
 
 _FENCE = re.compile(r"^\s{0,3}(`{3,}|~{3,})")
-_HEADING = re.compile(r"^\s{0,3}(#{1,6})\s+(.*?)\s*#*\s*$")
+_HEADING = re.compile(r"^\s{0,3}(#{1,6})\s+(.*)$")
 _ITEM = re.compile(r"^(\s*)([-*+•]|\d{1,9}[.)])\s+(.*)$")
 _RULE = re.compile(r"^\s{0,3}([-*_])(\s*\1){2,}\s*$")
 _SEP = re.compile(r"^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$")
@@ -131,7 +222,7 @@ def parse(markdown):
         m = _HEADING.match(line)
         if m:
             flush()
-            blocks.append(("h", len(m.group(1)), inline(m.group(2))))
+            blocks.append(("h", len(m.group(1)), inline(m.group(2).rstrip().rstrip("#").rstrip())))
             i += 1
             continue
         if _RULE.match(line) and not _ITEM.match(line):
@@ -583,21 +674,44 @@ def to_pdf(docx, soffice=None):
     soffice = soffice or soffice_path()
     if not soffice:
         raise OfficeError("PDF needs LibreOffice. Install it and try again.")
-    with _pdf_lock, tempfile.TemporaryDirectory(prefix="sunak-pdf-") as tmp:
+    with _pdf_lock, tempfile.TemporaryDirectory(prefix="sunak-pdf-", ignore_cleanup_errors=True) as tmp:
         src = os.path.join(tmp, "document.docx")
         with open(src, "wb") as f:
             f.write(docx)
-        profile = "file:///" + os.path.join(tmp, "profile").replace("\\", "/").lstrip("/")
+        profile = pathlib.Path(tmp, "profile").as_uri()
         cmd = [soffice, f"-env:UserInstallation={profile}", "--headless", "--norestore", "--convert-to", "pdf", "--outdir", tmp, src]
+        # a process group of its own: the `soffice` program starts `soffice.bin`, and on a timeout both must end
+        extra = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt" else {"start_new_session": True}
         try:
-            subprocess.run(cmd, capture_output=True, timeout=PDF_TIMEOUT, check=False, stdin=subprocess.DEVNULL)
-        except (OSError, subprocess.TimeoutExpired):
+            proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **extra)
+        except OSError:
+            raise OfficeError("LibreOffice could not make the PDF") from None
+        try:
+            proc.wait(timeout=PDF_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            _kill_tree(proc)
             raise OfficeError("LibreOffice could not make the PDF in time") from None
         out = os.path.join(tmp, "document.pdf")
         if not os.path.isfile(out):
             raise OfficeError("LibreOffice could not make the PDF")
         with open(out, "rb") as f:
             return f.read()
+
+
+def _kill_tree(proc):
+    """End a process and the programs it started (`soffice` → `soffice.bin`), then wait for it."""
+    try:
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)], capture_output=True, timeout=20, check=False)
+        else:
+            os.killpg(proc.pid, signal.SIGKILL)
+    except (OSError, subprocess.SubprocessError):
+        pass
+    try:
+        proc.kill()
+        proc.wait(timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        pass
 
 
 # ---------------------------------------------------------------- the public entry points

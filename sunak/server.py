@@ -2311,7 +2311,9 @@ class Handler(BaseHTTPRequestHandler):
         card ({summary, start, end, all_day, location, description} or {to, to_name, subject, body, account}). `kind` doc is a
         ```sunak-doc``` block: {title, markdown, formats}. No model call; nothing is saved or sent."""
         d = self.body()
-        kind, raw = self.text(d, "kind"), self.text(d, "json")[:20000]
+        kind, raw = self.text(d, "kind"), self.text(d, "json")
+        if kind != "doc":
+            raw = raw[:20000]  # a whole answer may become a document (office.MAX_CHARS says when it is too long), a block is short
         if kind == "event":
             try:
                 now = datetime.datetime.fromisoformat(str(d.get("now") or "").replace("Z", "+00:00"))

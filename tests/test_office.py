@@ -5,9 +5,10 @@ Run:  python -m unittest discover tests"""
 import io
 import json
 import pathlib
-import shutil
+import subprocess
 import tempfile
 import threading
+import time
 import unittest
 import urllib.error
 import urllib.request
@@ -207,11 +208,76 @@ class FilesTest(unittest.TestCase):
     def test_pdf_needs_libreoffice(self):
         with mock.patch("sunak.office.soffice_path", return_value=None), self.assertRaises(office.OfficeError):
             office.render("pdf", MD)
-        with mock.patch("sunak.office.soffice_path", return_value="/x/soffice"), mock.patch("sunak.office.subprocess.run") as run:
+        proc = mock.Mock(pid=4242)
+        with mock.patch("sunak.office.soffice_path", return_value="/x/soffice"), mock.patch("sunak.office.subprocess.Popen", return_value=proc) as popen:
             with self.assertRaises(office.OfficeError):  # the program ran but made no file
                 office.render("pdf", MD)
-        self.assertIn("--headless", run.call_args[0][0])
-        self.assertTrue(any(a.startswith("-env:UserInstallation=file:///") for a in run.call_args[0][0]))
+        cmd = popen.call_args[0][0]
+        self.assertIn("--headless", cmd)
+        self.assertTrue(any(a.startswith("-env:UserInstallation=file:///") for a in cmd))
+        self.assertTrue(popen.call_args[1].get("start_new_session") or popen.call_args[1].get("creationflags"))  # a group of its own
+        with mock.patch("sunak.office.soffice_path", return_value="/x/soffice"), mock.patch("sunak.office.subprocess.Popen", side_effect=OSError):
+            with self.assertRaises(office.OfficeError):
+                office.render("pdf", MD)
+
+    def test_a_timeout_ends_the_whole_process_group(self):
+        proc = mock.Mock(pid=4242)
+        proc.wait.side_effect = [subprocess.TimeoutExpired("soffice", 1), None]
+        with mock.patch("sunak.office.soffice_path", return_value="/x/soffice"), mock.patch("sunak.office.subprocess.Popen", return_value=proc), \
+                mock.patch("sunak.office.os.killpg", create=True) as killpg, mock.patch("sunak.office.subprocess.run") as run:
+            with self.assertRaises(office.OfficeError) as cm:
+                office.render("pdf", MD)
+        self.assertIn("in time", str(cm.exception))
+        self.assertTrue(killpg.called or run.called)  # killpg (Linux, macOS) or taskkill /T (Windows)
+        proc.kill.assert_called()
+
+
+class SpeedTest(unittest.TestCase):
+    """Hostile Markdown must cost time in proportion to its size (it used to backtrack quadratically)."""
+    LIMIT = 5.0
+
+    def timed(self, text, fmt="docx"):
+        t = time.monotonic()
+        office.render(fmt, text)
+        took = time.monotonic() - t
+        self.assertLess(took, self.LIMIT, text[:20])
+        return took
+
+    def test_open_marks_without_partners(self):
+        for unit in ("*a ", "**a ", "_a ", "__a ", "[a", "`a ", "[a](", "![](", "*a** ", "**a* ", "_*_*"):
+            self.timed(unit * (office.MAX_CHARS // len(unit) - 1))
+
+    def test_many_paragraphs_headings_cells_and_lists(self):
+        self.timed("word *x\n\n" * 30000)
+        self.timed("# " + "a " * 100000)
+        self.timed("#  " + " " * 300000 + "x")
+        self.timed("- *a\n" * 60000)
+        self.timed("| *a | **b |\n|---|---|\n" + "| *x | _y |\n" * 20000, "xlsx")
+        self.timed("[a](b c) " * 40000)
+        self.timed("|" * 300000)
+        self.timed("- " * 150000)
+
+    def test_a_huge_paragraph_stays_plain_text(self):
+        runs = office.inline("**x** " * 10000)
+        self.assertEqual(len(runs), 1)  # past MAX_INLINE nothing is looked for
+        self.assertEqual(runs[0][1:], (False, False, False))
+
+    def test_the_check_endpoint_takes_a_whole_answer(self):
+        self.timed("word " * 70000)  # 350,000 characters are fine
+
+
+class InlineTest(unittest.TestCase):
+    def test_marks(self):
+        runs = office.inline("a **b *c* d** e `f` [g](https://x.y) _h_ snake_case 2*3*4")
+        self.assertEqual(runs, [("a ", False, False, False), ("b ", True, False, False), ("c", True, True, False), (" d", True, False, False),
+                                (" e ", False, False, False), ("f", False, False, True), (" ", False, False, False), ("g", False, False, False),
+                                (" (https://x.y)", False, False, False), (" ", False, False, False), ("h", False, True, False),
+                                (" snake_case 2*3*4", False, False, False)])
+        self.assertEqual(office.inline("**a *b"), [("**a *b", False, False, False)])
+        self.assertEqual(office.inline("* a * b"), [("* a * b", False, False, False)])
+        self.assertEqual(office.inline("[](x) [a]( b) [a](c d)"), [("[](x) [a]( b) [a](c d)", False, False, False)])
+        self.assertEqual(office.plain(office.inline("a\nb **c**")), "a b c")
+
 
     @unittest.skipUnless(office.soffice_path(), "LibreOffice is not installed")
     def test_real_libreoffice_opens_every_file(self):
@@ -223,7 +289,6 @@ class FilesTest(unittest.TestCase):
                 path = f"{tmp}/f.{fmt}"
                 with open(path, "wb") as f:
                     f.write(office.render(fmt, MD)[0])
-                import subprocess
                 subprocess.run([office.soffice_path(), f"-env:UserInstallation={pathlib.Path(tmp, 'p').as_uri()}", "--headless", "--convert-to", "pdf", "--outdir", tmp, path],
                                capture_output=True, timeout=120, check=False)
                 with open(f"{tmp}/f.pdf", "rb") as f:
