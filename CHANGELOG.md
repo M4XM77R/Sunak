@@ -4,6 +4,15 @@ All changes to Sunak, newest version first. Sunak shows the entries between your
 
 Format: one section per version, `## [a.b.c] – YYYY-MM-DD`, followed by short points under **Added**, **Changed**, **Fixed** or **Removed**. Every change to Sunak gets a new version and an entry here.
 
+## [0.18.0] – 2026-10-08
+
+### Added
+- Backups can be imported. Settings → Data has a new "Import backup" button next to "Download backup", and `sunak import FILE` does the same in a terminal (`--profile ID` picks the profile, default the main one; `--data-dir PATH` another data folder). It takes a backup file, or a single chat exported as JSON, and adds it to the profile you are in. Nothing is overwritten and nothing is added twice: chats, documents and notes with the same id (notes also with the same text), knowledge-base files with the same name, calendar events with the same id, mail accounts and calendar accounts with the same address are skipped, and a setting is taken over only when you have not set it yourself. Settings of the whole installation and model providers come in only from an admin profile; a profile never touches another profile's data.
+- After an import Sunak says what was added, what was skipped (already there, or damaged) and which passwords and API keys you have to enter again (they are never part of a backup). Pictures are not part of a backup either, so chats come back without them.
+- Imported chats are rebuilt from a safe subset: sources shown under an answer keep only http(s) links, and pictures, picture jobs and event or mail cards are dropped, so a backup from anywhere cannot add a harmful link or a spinner that never ends. Chats without an id are recognised by title, time and first message; a knowledge-base file with the same name but other text comes in as "name (imported)" instead of being skipped or replaced. A database error (for example a busy database) skips only the item it hit and the report says the import is partial.
+- The links under web-search answers are shown only for http(s) addresses and a broken address no longer breaks the chat view; a chat with a picture whose file is missing shows a short note instead of failing.
+- `POST /api/import` is the endpoint behind the button. A file that is not a Sunak backup is refused with a clear message; single damaged entries inside a backup are skipped and counted instead of stopping the import.
+
 ## [0.17.2] – 2026-10-08
 
 ### Changed

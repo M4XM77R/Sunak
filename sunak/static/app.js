@@ -98,6 +98,57 @@ function renderUsage() {
 }
 $('#usageLine').onclick = () => { show('settings'); $('#usageLast').scrollIntoView({ block: 'center' }); };
 
+/* ---------------- Import a backup (sunak/backup.py) ---------------- */
+const IMPORT_COUNT = {
+  chats: (n) => trn(n, '{n} chat', '{n} chats'),
+  documents: (n) => trn(n, '{n} document', '{n} documents'),
+  notes: (n) => trn(n, '{n} note', '{n} notes'),
+  knowledge: (n) => trn(n, '{n} knowledge-base file', '{n} knowledge-base files'),
+  events: (n) => trn(n, '{n} calendar event', '{n} calendar events'),
+  mail_accounts: (n) => trn(n, '{n} mail account', '{n} mail accounts'),
+  calendars: (n) => trn(n, '{n} calendar account', '{n} calendar accounts'),
+  personas: (n) => trn(n, '{n} persona', '{n} personas'),
+  providers: (n) => trn(n, '{n} provider', '{n} providers'),
+  settings: (n) => trn(n, '{n} setting', '{n} settings'),
+};
+const IMPORT_SECRET = {
+  mail: (name) => tr('Mail account {name}: password', { name }),
+  calendar: (name) => tr('Calendar {name}: password', { name }),
+  provider: (name) => tr('Provider {name}: API key (if it needs one)', { name }),
+};
+function importCounts(group) {
+  return Object.entries(group).filter(([, n]) => n).map(([k, n]) => IMPORT_COUNT[k](n)).join(', ');
+}
+function renderImport(r) {
+  const box = $('#importResult');
+  box.replaceChildren();
+  const line = (text) => box.append(el('p', {}, text));
+  line(`${tr('Added')}: ${importCounts(r.added) || tr('nothing')}`);
+  if (importCounts(r.skipped)) line(`${tr('Skipped, already there')}: ${importCounts(r.skipped)}`);
+  if (r.invalid) line(`${tr('Skipped, damaged')}: ${r.invalid}`);
+  if (r.failed) line(`${tr('Could not be saved')}: ${r.failed}`);
+  if (r.secrets.length) line(`${tr('Enter again in Settings')}: ${r.secrets.map((x) => IMPORT_SECRET[x.kind](x.name)).join('; ')}`);
+  r.notes.forEach((n) => line(tr(n))); // the server's notes are fixed English sentences
+  if (['mail_accounts', 'calendars', 'personas', 'providers', 'settings'].some((k) => r.added[k])) {
+    box.append(el('button', { class: 'btn', type: 'button', onclick: () => location.reload() }, 'Reload page'));
+  }
+}
+$('#importInput').onchange = async (e) => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  const box = $('#importResult');
+  if (file.size > 24 * 1024 * 1024) { box.textContent = tr('This file is too big for the browser (24 MB at most). Use "sunak import" in a terminal.'); return; }
+  box.textContent = tr('Importing…');
+  try {
+    let data;
+    try { data = JSON.parse(await file.text()); } catch { throw new Error(tr('The file is not valid JSON')); }
+    const r = await api('/api/import', { method: 'POST', body: data });
+    renderImport(r);
+    if (Object.values(r.added).some((n) => n)) await loadSessions();
+  } catch (err) { box.textContent = err.message; }
+};
+
 function toast(msg, action) {
   const t = $('#toast');
   t.innerHTML = '';
@@ -687,7 +738,9 @@ function genFigure(m) {
   if (m.meta.pending) {
     return el('div', { class: 'gen-wait', role: 'status' }, el('progress', { max: 1 }), el('span', { class: 'muted small gen-status' }, 'Painting the picture…'), el('div', { class: 'muted small gen-prompt', 'data-no-i18n': '' }));
   }
-  const g = m.meta.imagegen, src = `/api/images/${m.meta.images[0]}`;
+  const g = m.meta.imagegen;
+  if (!g || !m.meta.images?.length) return el('div', { class: 'muted small' }, 'The picture is not available.');
+  const src = `/api/images/${m.meta.images[0]}`;
   return el('figure', { class: 'gen-figure' },
     el('a', { href: src, target: '_blank', rel: 'noopener' }, el('img', { src, alt: g.prompt, loading: 'lazy', width: g.width, height: g.height, 'data-no-i18n': '' })),
     el('figcaption', { class: 'muted small' },
@@ -1433,11 +1486,14 @@ $('#webToggle').onclick = async () => {
   await setWeb(on);
   toast(on ? 'Web search on: your question goes to the search engine' : 'Web search off');
 };
+const isWebUrl = (u) => typeof u === 'string' && /^https?:\/\//i.test(u);  // never javascript:, data: or file: in a link
+function hostOf(u) { try { return new URL(u).hostname; } catch { return u; } }
 function webSourcesEl(web) {
+  const list = (web.sources || []).filter((src) => isWebUrl(src.url));
   return el('div', { class: 'sources kb-sources' },
     el('span', { class: 'muted small', title: tr('Searched for: {query}', { query: web.query }) }, icon('globe', 'solo')),
-    web.sources.map((src, i) => el('a', { class: 'chip', href: src.url, target: '_blank', rel: 'noopener noreferrer', title: src.url },
-      `[${i + 1}] ${src.title || new URL(src.url).hostname}`)));
+    list.map((src, i) => el('a', { class: 'chip', href: src.url, target: '_blank', rel: 'noopener noreferrer', title: src.url },
+      `[${i + 1}] ${src.title || hostOf(src.url)}`)));
 }
 
 async function loadKbData() {

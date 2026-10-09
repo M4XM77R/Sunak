@@ -28,7 +28,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlparse
 
-from . import (__version__, cal, extract, gpu, imagegen, images, intent, jobqueue, knowledge, log, mail, mcp, memory, modelsearch,
+from . import (__version__, backup, cal, extract, gpu, imagegen, images, intent, jobqueue, knowledge, log, mail, mcp, memory, modelsearch,
                ollama, providers, qr, reminders, reports, research, sdcpp, speech, toolrun, updates, usage)
 from .db import DB, new_id
 
@@ -273,6 +273,7 @@ class App:
         self.host, self.port, self.handler = None, None, None  # set by make_server
         self.lan, self.lan_error = None, ""  # second server on the network address (phone access)
         self._lan_lock = threading.Lock()
+        self._import_lock = threading.Lock()  # one backup import at a time (backup.py)
 
     def _detect_gpu(self):
         try:
@@ -416,6 +417,163 @@ class App:
             if not pw and self.lan is not None:  # never reachable from the network without a password
                 self.stop_lan()
         return self.settings()
+
+    # backup import (backup.py) -------------------------------------------
+    def import_backup(self, data, admin):
+        """Add a backup, or one exported chat, to this profile and return the report (backup.new_report). Nothing that
+        exists is overwritten; a setting is taken over only when this profile has not set it yet. Settings of the whole
+        installation and providers only come in when `admin`. Raises ValueError when `data` is no backup."""
+        report = backup.new_report()
+        kind = backup.classify(data, report)
+        with self._import_lock:  # the stages read, merge and write the same settings
+            backup.restore_content(self.db, data, report)
+            if kind == "backup":
+                mail_ids = {}
+                with backup.guard(report):
+                    mail_ids = self._import_mail(data.get("mail_accounts", []), report)
+                with backup.guard(report):
+                    self._import_calendars(data.get("calendars", []), mail_ids, report)
+                with backup.guard(report):
+                    self._import_settings(data.get("settings", {}), admin, report)
+                self.reminders.invalidate(self.profile)
+        return report
+
+    def _import_settings(self, s, admin, report):
+        main_prefs = self.main.get_setting("prefs", {})
+        own = main_prefs if self.db is self.main else self.db.get_setting("prefs", {})
+        left_out, current = False, self.settings()
+        for k, v in s.items():
+            if k not in DEFAULT_SETTINGS or k == "ntfy_topic":  # the topic works like a password and is never in a backup
+                continue
+            target = main_prefs if k in GLOBAL_PREFS else own
+            if k in GLOBAL_PREFS and not admin:
+                left_out = True
+                continue
+            try:
+                value = _check_pref(k, v, DEFAULT_SETTINGS[k])
+            except (ValueError, KeyError):
+                report["invalid"] += 1
+                continue
+            if value == current[k]:
+                continue  # nothing to take over (a backup lists every setting, also those never changed)
+            if k in target:
+                report["skipped"]["settings"] += 1
+            else:
+                target[k] = value
+                report["added"]["settings"] += 1
+        if admin:
+            self.main.set_setting("prefs", main_prefs)
+        if own is not main_prefs:
+            self.db.set_setting("prefs", own)
+        have = self.settings()["personas"]
+        added = False
+        for p in s.get("personas", []) if isinstance(s.get("personas"), list) else []:
+            try:
+                new = self._clean_personas([p])[0]
+            except ValueError:
+                report["invalid"] += 1
+                continue
+            if new["id"] in {x["id"] for x in have} or new["name"].casefold() in {x["name"].casefold() for x in have}:
+                report["skipped"]["personas"] += 1
+                continue
+            have = have + [new]
+            report["added"]["personas"] += 1
+            added = True
+        if added:
+            self.db.set_setting("personas", have)
+        if isinstance(s.get("providers"), list) and s["providers"]:
+            if admin:
+                self._import_providers(s["providers"], report)
+            else:
+                left_out = True
+        if left_out:
+            report["notes"].append("Settings of the whole installation and the model providers were left out: "
+                                   "only an admin profile can import them.")
+
+    def _import_providers(self, items, report):
+        stored = self.main.get_setting("providers")
+        have = providers.default_providers() if stored is None else stored
+        added = False
+        for p in items:
+            if not isinstance(p, dict):
+                report["invalid"] += 1
+                continue
+            url = str(p.get("base_url") or "").strip().rstrip("/").lower()
+            if any(h["id"] == p.get("id") or (h["type"] == p.get("type") and h["base_url"].rstrip("/").lower() == url) for h in have):
+                report["skipped"]["providers"] += 1
+                continue
+            try:
+                have = self._clean_providers(have + [dict(p, api_key="")])
+            except ValueError:
+                report["invalid"] += 1
+                continue
+            report["added"]["providers"] += 1
+            added = True
+            if have[-1]["type"] != "ollama":
+                report["secrets"].append({"kind": "provider", "name": have[-1]["name"]})
+        if added:
+            self.main.set_setting("providers", have)
+
+    def _import_mail(self, items, report):
+        """Link the backup's mail accounts that are not linked yet (without passwords). Returns {id in the backup: id here}."""
+        accounts, ids, changed = self.mail_accounts(), {}, False
+        for raw in items:
+            if not isinstance(raw, dict):
+                report["invalid"] += 1
+                continue
+            old = str(raw.get("id") or "")
+            same = next((a for a in accounts if a["email"].lower() == str(raw.get("email") or "").strip().lower()), None)
+            if same:
+                ids[old] = same["id"]
+                report["skipped"]["mail_accounts"] += 1
+                continue
+            try:
+                acc = mail.clean_account(dict(raw, id="", password="x"), accounts, new_id)  # "x": the password is not in a backup
+            except mail.MailError:
+                report["invalid"] += 1
+                continue
+            if backup.ID_RE.fullmatch(old) and not any(a["id"] == old for a in accounts):
+                acc["id"] = old  # calendars refer to it
+            acc["password"] = ""
+            accounts.append(acc)
+            ids[old] = acc["id"]
+            changed = True
+            report["added"]["mail_accounts"] += 1
+            report["secrets"].append({"kind": "mail", "name": acc["email"]})
+        if changed:
+            self.db.set_setting("mail_accounts", accounts)
+        return ids
+
+    def _import_calendars(self, items, mail_ids, report):
+        """Link the backup's CalDAV and ICS accounts that are not linked yet (without passwords)."""
+        sources, mails, changed = self.calendars(), self.mail_accounts(), False
+
+        def key(c):
+            return (c.get("type"), str(c.get("url") or "").strip().rstrip("/").lower(), str(c.get("username") or "").lower())
+        for raw in items:
+            if not isinstance(raw, dict):
+                report["invalid"] += 1
+                continue
+            if any(key(c) == key(raw) for c in sources):
+                report["skipped"]["calendars"] += 1
+                continue
+            link = mail_ids.get(raw.get("mail_account"), raw.get("mail_account") if any(a["id"] == raw.get("mail_account") for a in mails) else "")
+            try:
+                src = cal.clean_source(dict(raw, id="", mail_account=link, password="x"), sources, mails)
+            except ValueError:
+                report["invalid"] += 1
+                continue
+            if src["type"] == "caldav":
+                src["password"] = ""
+            else:
+                src.pop("password", None)
+            sources.append(src)
+            changed = True
+            report["added"]["calendars"] += 1
+            if src["type"] == "caldav" and not src["mail_account"]:
+                report["secrets"].append({"kind": "calendar", "name": src["name"]})
+        if changed:
+            self.db.set_setting("calendars", sources)
 
     # phone access -------------------------------------------------------
     def listens_everywhere(self):
@@ -1423,6 +1581,11 @@ class Handler(BaseHTTPRequestHandler):
                     calendars=[cal.public(c) for c in self.app.calendars()])
         self.send_download(json.dumps(data, indent=2, ensure_ascii=False),
                            f"sunak-backup-{time.strftime('%Y-%m-%d')}.json", "application/json; charset=utf-8")
+
+    def import_data(self):
+        """POST /api/import <a backup file or one exported chat as the request body>: add it to this profile. Answers with
+        what was added and skipped, and which passwords and keys have to be entered again."""
+        self.send_json(self.app.import_backup(self.body(), bool(self.profile.get("admin"))))
 
     def delete_session(self, sid):
         """DELETE /api/sessions/<id>"""
@@ -2751,6 +2914,7 @@ ROUTES = [
     (rf"/api/sessions/{ID}/export", "GET", Handler.export_session),
     (r"/api/search", "GET", Handler.search),
     (r"/api/export", "GET", Handler.export_all),
+    (r"/api/import", "POST", Handler.import_data),
     (r"/api/chat", "POST", Handler.chat),
     (r"/api/lan", "GET", Handler.lan_get),
     (r"/api/lan", "POST", Handler.lan_set),

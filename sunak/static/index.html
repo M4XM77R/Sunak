@@ -439,7 +439,10 @@
 
         <h2>Data</h2>
         <p class="muted small">All chats, documents, notes and your knowledge base in one JSON file. API keys and the password are not included.</p>
-        <div class="row"><a class="btn" href="/api/export" download><i data-i="download"></i>Download backup</a></div>
+        <div class="row"><a class="btn" href="/api/export" download><i data-i="download"></i>Download backup</a>
+          <label class="btn"><i data-i="upload"></i>Import backup<input type="file" id="importInput" accept=".json,application/json" hidden></label></div>
+        <p class="muted small">Import adds a backup, or a single chat exported as JSON, to this profile. Nothing is overwritten: what is there already is skipped. Passwords and API keys are not in a backup, so you enter them again.</p>
+        <div id="importResult" class="small" role="status"></div>
 
         <h2>Token counter</h2>
         <p class="muted small">Sunak counts the tokens of every model request in this profile, also of requests it makes by itself (picture check, remembering, improving picture prompts). Cache reads are shown separately and count in the total. A number the model does not report stays empty instead of being guessed.</p>
