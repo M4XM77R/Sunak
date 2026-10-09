@@ -42,13 +42,14 @@ class SlashCommandsTest(unittest.TestCase):
 
     def test_suggest(self):
         got = run_node("slashSuggest(t).map((c) => c.name)", ["/", "/te", "/ev", "/s", "/zzz", "/termin ", "hi", "/mo", "/h"])
-        self.assertEqual(len(got[0]), 14)
+        self.assertEqual(len(got[0]), 15)
         self.assertEqual(got[1], ["termin"])
         self.assertEqual(got[2], ["termin"])  # by the English name
         self.assertEqual(got[3], ["suche", "zusammenfassen"])  # "search" and "summarize" count as well
         self.assertEqual(got[4:7], [[], [], []])
         self.assertEqual(got[7], ["modell"])
         self.assertEqual(got[8], ["heute", "hilfe"])
+        self.assertEqual(run_node("slashSuggest(t).map((c) => c.name)", ["/do", "/doc"]), [["dokument"], ["dokument"]])
 
     def test_word_follows_the_typed_start(self):
         self.assertEqual(run_node("slashWord(SLASH[0], t)", ["/te", "/ev", "/"]), ["termin", "event", "termin"])
@@ -56,7 +57,7 @@ class SlashCommandsTest(unittest.TestCase):
     def test_the_commands(self):
         got = run_node("SLASH.map((c) => [c.name, c.alias])", [0])[0]
         names = [n for n, _ in got]
-        self.assertEqual(names, ["termin", "mail", "bild", "web", "heute", "woche", "wissen", "modell", "persona", "neu", "export", "suche", "zusammenfassen", "hilfe"])
+        self.assertEqual(names, ["termin", "mail", "dokument", "bild", "web", "heute", "woche", "wissen", "modell", "persona", "neu", "export", "suche", "zusammenfassen", "hilfe"])
         for n, alias in got:  # every German name has an English one, unless the word is the same
             self.assertTrue(alias or n in ("mail", "web", "persona", "export"), n)
 

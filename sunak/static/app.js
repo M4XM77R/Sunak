@@ -533,6 +533,10 @@ function messageEl(m, i, msgs) {
     if (isUser) meta.append(el('button', { onclick: () => editMessage(m) }, 'Edit'));
     if (!isUser && i === msgs.length - 1) meta.append(el('button', { onclick: () => regenerate(m) }, 'Regenerate'));
   }
+  if (!isUser && m.content && !gen && !m.meta?.pending && !m.meta?.assist && !m.meta?.tools && m.id) {
+    const doc = el('button', { title: 'Make a Word, LibreOffice, Excel or PDF file from this answer', onclick: () => answerAsDocument(m, body, meta, doc) }, icon('file'), 'As document');
+    meta.append(doc);
+  }
   if (!isUser && tts && m.content && !gen && !m.meta?.pending) meta.append(speakButton(m));
   if (!isUser && m.model) meta.append(el('span', {}, m.model.split('::')[1] || m.model));
   body.append(meta);
@@ -594,6 +598,7 @@ promptEl.addEventListener('keydown', (e) => {
 const SLASH = [
   { name: 'termin', alias: ['event'], arg: 'what and when', need: true, desc: 'Prepare a calendar event as a card' },
   { name: 'mail', alias: [], arg: 'to whom and what', need: true, desc: 'Draft an e-mail as a card' },
+  { name: 'dokument', alias: ['doc'], arg: 'what it should contain', need: true, desc: 'Write a document or table as a file (Word, LibreOffice, Excel, PDF)' },
   { name: 'bild', alias: ['image'], arg: 'what to paint', need: true, desc: 'Paint a picture' },
   { name: 'web', alias: [], arg: 'question', need: true, desc: 'Answer with a web search (this message only)' },
   { name: 'heute', alias: ['today'], arg: '', desc: 'Show today’s calendar' },
@@ -692,6 +697,7 @@ async function runSlash(sl) {
   switch (c.name) {
     case 'termin': await assistantRequest('event', sl.arg); break;
     case 'mail': await assistantRequest('mail', sl.arg); break;
+    case 'dokument': await assistantRequest('doc', sl.arg); break;
     case 'bild': await pictureRequest(sl.arg, sl.arg); break;
     case 'web': case 'wissen':
       if (mcpOn()) { toast('Tools (MCP) are on. Switch them off to use this command.'); return; }
@@ -1055,6 +1061,9 @@ async function assistantRequest(kind, text) {
     if (kind === 'event') {
       a.draft = await api('/api/calendar/parse', { method: 'POST', body: { text, now: isoLocal(new Date()), model: currentModel() }, signal: ctrl.signal });
       reply.content = `${a.draft.summary} (${a.draft.start.replace('T', ' ')})`;
+    } else if (kind === 'doc') {
+      a.draft = await api('/api/assistant/doc', { method: 'POST', body: { text, model: currentModel() }, signal: ctrl.signal });
+      reply.content = a.draft.title;
     } else {
       a.draft = await api('/api/assistant/mail', { method: 'POST', body: { text, model: currentModel() }, signal: ctrl.signal });
       reply.content = `${a.draft.subject}\n\n${a.draft.body}`;
@@ -1142,7 +1151,7 @@ const eventIsPast = (d) => (d.all_day ? dayOf(d.end.slice(0, 10)) < dayOf(ymd(ne
 // BEGIN parseActions (tests/test_actions_js.py runs this part with node)
 // Line by line, so that a block inside another code fence (a 4-backtick example) stays text: returns the text without the blocks,
 // the blocks [{kind, json}] and hides what may still become a block while the answer streams (an open block, a dangling "```sun").
-const DANGLING = /^`{1,3}(?:s(?:u(?:n(?:a(?:k(?:-(?:e(?:v(?:e(?:n(?:t)?)?)?)?|m(?:a(?:i(?:l)?)?)?)?)?)?)?)?)?)?$/;
+const DANGLING = /^`{1,3}(?:s(?:u(?:n(?:a(?:k(?:-(?:e(?:v(?:e(?:n(?:t)?)?)?)?|m(?:a(?:i(?:l)?)?)?|d(?:o(?:c)?)?)?)?)?)?)?)?)?$/;
 function parseActions(text) {
   const out = [], blocks = [];
   let fence = 0, cur = null;  // fence: length of the ordinary code fence we are inside; cur: the block being read
@@ -1160,7 +1169,7 @@ function parseActions(text) {
       out.push(line);
     } else if (isLast && DANGLING.test(line)) { /* may still become a block: hide it for now */ }
     else if (m) {
-      const act = m[1].length === 3 && /^sunak-(event|mail)\s*$/.exec(m[2]);
+      const act = m[1].length === 3 && /^sunak-(event|mail|doc)\s*$/.exec(m[2]);
       if (act) cur = { kind: act[1], lines: [] };
       else { fence = m[1].length; out.push(line); }
     } else out.push(line);
@@ -1187,7 +1196,7 @@ function actionCards(m, last) {
   if (!blocks.length) return null;
   const box = el('div', { class: 'assist-cards' });
   for (const { kind, json } of blocks) {
-    if (!last) { box.append(el('div', { class: 'muted small' }, kind === 'event' ? 'An event card was shown here.' : 'An e-mail card was shown here.')); continue; }
+    if (!last) { box.append(el('div', { class: 'muted small' }, kind === 'event' ? 'An event card was shown here.' : kind === 'doc' ? 'A document card was shown here.' : 'An e-mail card was shown here.')); continue; }
     const key = `${state.session?.id}\n${kind}\n${json}`;
     let a = actionCache.get(key);
     if (!a) { a = { kind, status: 'working', fromModel: true }; actionCache.set(key, a); if (actionCache.size > 50) actionCache.delete(actionCache.keys().next().value); }
@@ -1199,7 +1208,7 @@ function actionCards(m, last) {
 }
 function assistEl(m) {
   const a = m.meta.assist;
-  if (a.status === 'working') return el('div', { class: 'muted small', role: 'status' }, a.kind === 'event' ? 'Preparing the event…' : 'Writing the e-mail…');
+  if (a.status === 'working') return el('div', { class: 'muted small', role: 'status' }, a.kind === 'event' ? 'Preparing the event…' : a.kind === 'doc' ? 'Writing the document…' : 'Writing the e-mail…');
   if (a.status === 'stopped') return el('div', { class: 'muted small' }, 'Stopped.');
   if (a.status === 'error') {
     return el('div', { class: 'assist-card' },
@@ -1209,6 +1218,7 @@ function assistEl(m) {
         a.fromModel ? null : chatInstead(a)));
   }
   const d = a.draft;
+  if (a.kind === 'doc') return docCard(d, a.fromModel ? null : chatInstead(a));
   if (a.kind === 'event') {
     return el('div', { class: 'assist-card' },
       a.saved ? null : el('div', { class: 'assist-head' }, icon('calendar'), 'Event ready: nothing is saved yet'),
@@ -1232,6 +1242,48 @@ function assistEl(m) {
       el('button', { class: 'btn primary', type: 'button', title: 'Opens the compose form; sending needs your click and a confirmation there', onclick: () => openChatMail(a) }, 'Open in Mail'),
       el('button', { class: 'btn', type: 'button', onclick: () => navigator.clipboard.writeText(d.body).then(() => toast('Copied')) }, 'Copy text'),
       a.fromModel ? null : chatInstead(a)));
+}
+
+/* ---------------- Documents: .docx, .odt, .xlsx, .ods, PDF ----------------
+   The card shows the text the model wrote (Markdown) and offers the file types that fit; the file is made by the server
+   (sunak/office.py, POST /api/office) and downloaded on a click. Nothing is stored. */
+const OFFICE_TYPES = { docx: 'Word (.docx)', odt: 'LibreOffice (.odt)', xlsx: 'Excel (.xlsx)', ods: 'LibreOffice Calc (.ods)', pdf: 'PDF' };
+async function downloadOffice(d, fmt, btn) {
+  const label = btn.textContent;
+  btn.disabled = true; btn.textContent = '…';
+  try {
+    const r = await fetch('/api/office', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'sunak' },
+      body: JSON.stringify({ markdown: d.markdown, title: d.title, format: fmt }) });
+    if (r.status === 401) { location.reload(); return; }
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `HTTP ${r.status}`);
+    const blob = await r.blob();
+    const name = /filename\*=UTF-8''([^;]+)/.exec(r.headers.get('Content-Disposition') || '');
+    const a = el('a', { href: URL.createObjectURL(blob), download: name ? decodeURIComponent(name[1]) : `document.${fmt}` });
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+  } catch (e) { toast(e.message); } finally { btn.disabled = false; btn.textContent = label; }
+}
+function docCard(d, extra) {
+  return el('div', { class: 'assist-card' },
+    el('div', { class: 'assist-head' }, icon('file'), 'Document ready: nothing is saved yet'),
+    el('div', { class: 'assist-title', 'data-no-i18n': '' }, d.title),
+    el('div', { class: 'md assist-preview', 'data-no-i18n': '', html: md(d.markdown) }),
+    el('div', { class: 'row' },
+      d.formats.map((f, i) => el('button', { class: `btn${i === 0 ? ' primary' : ''}`, type: 'button', 'data-no-i18n': '', onclick: (ev) => downloadOffice(d, f, ev.currentTarget) }, OFFICE_TYPES[f] || f)),
+      el('button', { class: 'btn', type: 'button', onclick: () => navigator.clipboard.writeText(d.markdown).then(() => toast('Copied')) }, 'Copy text'),
+      extra),
+    d.formats.includes('pdf') ? null : el('div', { class: 'muted small' }, 'PDF appears here once LibreOffice is installed.'));
+}
+// "As document" under an answer: the answer itself becomes the document
+async function answerAsDocument(m, body, meta, btn) {
+  const old = body.querySelector(':scope > .assist-card');
+  if (old) { old.remove(); return; }
+  btn.disabled = true;
+  try {
+    const text = stripActions(m.content).replace(/<think>[\s\S]*?(<\/think>|$)/g, '').trim();
+    const d = await api('/api/assistant/check', { method: 'POST', body: { kind: 'doc', json: text } });
+    body.insertBefore(docCard(d, null), meta);
+  } catch (e) { toast(e.message); } finally { btn.disabled = false; }
 }
 
 /* ---------------- Tools (MCP) ----------------
