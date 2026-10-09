@@ -144,6 +144,18 @@ class SunakTest(unittest.TestCase):
                                "claude::claude-opus-5-5", "claude::claude-haiku-4-5"])
         self.assertEqual(r["errors"], [])
 
+    def test_chat_follows_the_interface_language(self):
+        s = self.call("POST", "/api/sessions", {})
+        ask = {"session_id": s["id"], "model": "ollama::tiny:1b", "content": "Hi"}
+        for code, name in (("de", "German"), ("en", "English")):  # switching takes effect with the next message
+            self.call("POST", "/api/chat", {**ask, "lang": code})
+            self.assertIn(f"Answer in {name}", FakeBackend.last_messages[0]["content"])
+        for lang in ("xx", None):  # unknown or missing: no language note
+            self.call("POST", "/api/chat", {**ask, "lang": lang})
+            self.assertNotIn("Answer in", FakeBackend.last_messages[0]["content"])
+        self.call("POST", "/api/compare", {"prompt": "Hi", "models": ["ollama::tiny:1b", "cloud::gpt-fake"], "lang": "de"})
+        self.assertIn("Answer in German", FakeBackend.last_messages[0]["content"])
+
     def test_chat_flow_ollama_and_regenerate(self):
         s = self.call("POST", "/api/sessions", {})
         events = self.call("POST", "/api/chat", {"session_id": s["id"], "model": "ollama::tiny:1b", "content": "Hey there"})

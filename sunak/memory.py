@@ -7,6 +7,7 @@ memory switched off. Secrets (passwords, keys, card numbers) are never stored.""
 import json
 import re
 
+from . import lang as lang_mod
 from . import providers
 
 MAX_NEW = 3       # facts per answer
@@ -77,7 +78,7 @@ def clean(facts, known):
     return out[:MAX_NEW]
 
 
-def extract(prov, model, history, known, explicit=False):
+def extract(prov, model, history, known, explicit=False, lang=""):
     """New facts about the user from the last exchange of `history` ([{role, content}]), given the
     `known` memory texts. Raises providers.ProviderError when the model cannot be reached."""
     last_user = next((i for i in range(len(history) - 1, -1, -1) if history[i]["role"] == "user"), None)
@@ -92,7 +93,8 @@ def extract(prov, model, history, known, explicit=False):
     rule = ("The user explicitly asks you to remember something: include it (unless it is a secret or already known)."
             if explicit else "When in doubt, leave it out: most exchanges contain nothing worth remembering.")
     reply = providers.chat_once(prov, model, [
-        {"role": "system", "content": PROMPT.format(explicit=rule, max=MAX_NEW)},
+        {"role": "system", "content": PROMPT.format(explicit=rule, max=MAX_NEW) + (
+            f"\nWrite the facts in {lang_mod.NAMES[lang_mod.clean(lang)]}." if lang_mod.clean(lang) else "")},
         {"role": "user", "content": f"Known facts:\n{known_txt}\n\nLatest exchange:\n{convo}"},
     ], {"temperature": 0})
     return clean(parse(reply), known)

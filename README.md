@@ -279,7 +279,7 @@ The setting survives a restart. If you start Sunak with `--host 0.0.0.0`, it is 
 ### Themes and language
 
 - **Themes:** Sunak Dark and Sunak Light (pink), Retro (green terminal with monospace font), Cyberpunk (neon), Ocean, Forest, Sunset (light and warm) and 80s Corporate (beige office tech, navy title bar, burgundy, angular buttons with a 3D edge). Switch with the palette button at the top right or with a preview in Settings → Look, plus custom accent colors. All themes are checked for good readability. The theme applies per profile.
-- **Language:** Settings → Look → Language. "Automatic" follows the browser's language; the page reloads afterwards. Further languages can be added as a single file (see [Architecture](docs/ARCHITECTURE.md#languages)).
+- **Language:** Settings → Look → Language. "Automatic" follows the browser's language; the page reloads afterwards. The chat model answers in the interface language too (unless you ask for another one in a message). Further languages can be added as a single file (see [Architecture](docs/ARCHITECTURE.md#languages)).
 - **App:** Sunak can be installed as a web app (PWA) where the browser allows it (on `localhost` or with https).
 
 ## Commands (`sunak -h`)

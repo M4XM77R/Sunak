@@ -30,6 +30,7 @@ from urllib.parse import parse_qs, quote, urlparse
 
 from . import (__version__, backup, cal, extract, gpu, imagegen, images, intent, jobqueue, knowledge, log, mail, mcp, memory, modelsearch,
                ollama, providers, qr, reminders, reports, research, sdcpp, speech, toolrun, updates, usage)
+from . import lang as sunak_lang
 from .db import DB, new_id
 
 log_http = log.get("http")
@@ -899,11 +900,12 @@ class App:
                 return p["prompt"]
         return ""
 
-    def build_messages(self, session, history, extra="", with_images=False, vision=True, abilities=False):
+    def build_messages(self, session, history, extra="", with_images=False, vision=True, abilities=False, lang=""):
         """Chat history for the model: system prompt, persona, session prompt, memory notes, `extra`
         (knowledge-base excerpts), then the messages. `with_images` adds attached images (see
         images.attach); with `vision` False the model gets a note instead of the pictures. `abilities` (chat and tools only, not
-        compare) adds the note that Sunak can prepare events and e-mails (intent.abilities; the mail part only with a linked account)."""
+        compare) adds the note that Sunak can prepare events and e-mails (intent.abilities; the mail part only with a linked account).
+        `lang` (the interface language) adds the note to answer in it (lang.py)."""
         s = self.settings()
         persona = self.persona_prompt(session.get("persona", ""), s["personas"])
         system = "\n\n".join(x for x in (s["system_prompt"], persona, session.get("system", "")) if x.strip())
@@ -919,6 +921,8 @@ class App:
                 system += "\n\n" + self.agenda_note(now)
         if extra:
             system += "\n\n" + extra
+        if lang_note := sunak_lang.note(lang):
+            system = (system + "\n\n" + lang_note).strip()
         msgs = [{"role": "system", "content": system}] if system.strip() else []
         for m in history:
             content = providers.strip_think(m["content"]) if m["role"] == "assistant" else m["content"]
@@ -1719,7 +1723,8 @@ class Handler(BaseHTTPRequestHandler):
             if web:
                 extras.append(web[0])
                 meta["web"] = web[1]
-        messages = self.app.build_messages(session, session["messages"], "\n\n".join(extras), with_images=True, vision=vision, abilities=True)
+        messages = self.app.build_messages(session, session["messages"], "\n\n".join(extras), with_images=True, vision=vision, abilities=True,
+                                           lang=d.get("lang"))
         meta = meta or None
         chunks = []
 
@@ -1835,7 +1840,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.emit({"type": "notice", "t": f"MCP server {name}: {err}"})
             if not tools:
                 return self.emit({"type": "error", "error": "None of the MCP servers is available."})
-            run = toolrun.ToolRun(prov, model, self.app.build_messages(session, session["messages"], abilities=True), self.emit,
+            run = toolrun.ToolRun(prov, model, self.app.build_messages(session, session["messages"], abilities=True, lang=d.get("lang")), self.emit,
                                   self.app.options(), allowed, tools, run_id)
             self.app.tool_runs.add(run)
             run.run()
@@ -1908,7 +1913,7 @@ class Handler(BaseHTTPRequestHandler):
             raise ValueError("Pick at least two models and enter a prompt")
         targets = [self.app.resolve(mid) for mid in model_ids[:4]]
         session = {"system": ""}
-        messages = self.app.build_messages(session, [{"role": "user", "content": prompt}])
+        messages = self.app.build_messages(session, [{"role": "user", "content": prompt}], lang=d.get("lang"))
         q = queue.Queue()
         stop = threading.Event()
 
@@ -2007,7 +2012,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.emit({"type": "error", "error": "Could not read any of the found pages."})
             self.emit({"type": "sources", "sources": [{"title": s["title"], "url": s["url"]} for s in sources]})
             self.emit({"type": "status", "t": f"Writing report from {len(sources)} sources…"})
-            for kind, c in providers.chat_stream(prov, model, research.report_prompt(question, sources), {"temperature": 0.3}):
+            for kind, c in providers.chat_stream(prov, model, research.report_prompt(question, sources, d.get("lang")), {"temperature": 0.3}):
                 self.emit({"type": kind, "t": c})
             self.emit({"type": "done"})
         except providers.ProviderError as e:
@@ -2097,6 +2102,7 @@ class Handler(BaseHTTPRequestHandler):
         the user from the last exchange and store them as memory notes (see memory.py). Runs when memory
         is on and either automatic memory is on or the user asked for something to be remembered; not
         after tool runs or pictures. Returns {added: [notes]} (and `error` when the model failed)."""
+        d = self.body()
         db, s = self.app.db, self.app.settings()
         session = db.get_session(sid)
         if not session:
@@ -2112,7 +2118,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json({"added": []})
         try:
             prov, model = self.app.resolve(session["model"] or None)
-            facts = memory.extract(prov, model, history, db.memories(), explicit)
+            facts = memory.extract(prov, model, history, db.memories(), explicit, d.get("lang"))
         except providers.ProviderError as e:
             return self.send_json({"added": [], "error": str(e)})
         self.send_json({"added": [db.add_note(f, True, sid) for f in facts]})
@@ -2802,7 +2808,7 @@ class Handler(BaseHTTPRequestHandler):
         instruction = d.get("instruction") if isinstance(d.get("instruction"), str) else ""
         acc = self.app.mail_account(d["account"]) if d.get("account") else None
         memories = self.app.db.memories() if self.app.settings()["use_memory"] else []
-        messages = mail.ai_messages(d.get("task"), acc, text[:40000], instruction.strip()[:2000], memories)
+        messages = mail.ai_messages(d.get("task"), acc, text[:40000], instruction.strip()[:2000], memories, d.get("lang"))
         prov, model = self.app.resolve(d.get("model"))
         self.start_stream()
         try:
