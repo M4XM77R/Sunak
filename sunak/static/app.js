@@ -3780,7 +3780,7 @@ async function showProfilePicker(res) {
     el('h1', {}, 'Who is using Sunak?'),
     el('div', { class: 'profile-tiles' }, res.profiles.map((p) => el('button', { class: 'profile-tile', type: 'button', onclick: () => pick(p) },
       profileFace(p),
-      el('span', p.name ? { 'data-no-i18n': '' } : {}, profileName(p)), p.has_pin ? el('span', { class: 'muted small', title: 'PIN' }, icon('lock', 'solo')) : null))),
+      el('span', p.name ? { 'data-no-i18n': '' } : {}, profileName(p)), p.has_pin || p.locked ? el('span', { class: 'muted small', title: p.locked ? tr('Needs a PIN') : 'PIN' }, icon('lock', 'solo')) : null))),
     pinBox);
   async function select(p, pin) {
     try { await api('/api/profiles/select', { method: 'POST', body: { id: p.id, pin } }); location.reload(); }
@@ -3822,6 +3822,7 @@ function profileForm(p, onSave, isNew) {
     el('div', { class: 'row' }, pin,
       p.has_pin ? el('button', { class: 'btn', type: 'button', onclick: () => onSave({ pin: '' }) }, 'Remove PIN') : null),
     isAdmin() ? el('label', { class: 'check' }, admin, 'Admin: may change providers, tools, password and profiles') : null,
+    !p.has_pin && p.admin ? el('p', { class: 'muted small' }, 'Admin profiles need a PIN. Without one, only this computer can open the profile as long as there are other profiles.') : null,
     el('div', { class: 'row' }, save, isNew ? el('button', { class: 'btn', type: 'button', onclick: () => renderProfile() }, 'Cancel') : null));
   form.onsubmit = (e) => {
     e.preventDefault();
