@@ -4,9 +4,11 @@
 has to be a public one, so a search result or a link cannot make Sunak read from localhost, the home network
 or a cloud metadata service. `LoginLimiter` is the in-memory counter behind the login and PIN rate limits."""
 
+import http.client
 import ipaddress
 import os
 import socket
+import ssl
 import threading
 import time
 import urllib.error
@@ -52,8 +54,9 @@ def _proxied(url):
     return scheme in urllib.request.getproxies() and not urllib.request.proxy_bypass(urllib.parse.urlsplit(url).hostname or "")
 
 
-def check_url(url, resolve=socket.getaddrinfo):
+def check_url(url, resolve=None):
     """Raise BlockedAddress unless `url` is an http(s) address whose host (every address it resolves to) is public."""
+    resolve = resolve or socket.getaddrinfo
     parts = urllib.parse.urlsplit(url)
     if parts.scheme not in ("http", "https") or not parts.hostname:
         raise BlockedAddress("not a web address")
@@ -71,28 +74,74 @@ def check_url(url, resolve=socket.getaddrinfo):
         raise BlockedAddress("%s is not a public address" % host)
 
 
+def _connect_public(address, timeout=socket._GLOBAL_DEFAULT_TIMEOUT, source_address=None):
+    """socket.create_connection that resolves the name itself, refuses unless every answer is a public address,
+    and connects to exactly the address it checked. Host header and TLS server name still use the name, so the
+    check and the connection cannot see different answers (DNS rebinding)."""
+    host, port = address
+    infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    ips = [i[4][0] for i in infos]
+    if not allow_private() and (not ips or not all(is_public_ip(ip) for ip in ips)):
+        raise BlockedAddress("%s is not a public address" % host)
+    err = None
+    for ip in ips:
+        try:
+            return socket.create_connection((ip, port), timeout, source_address)
+        except OSError as e:
+            err = e
+    raise err or OSError("no address for %s" % host)
+
+
+class _PinnedHTTP(http.client.HTTPConnection):
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        self._create_connection = _connect_public  # urllib's own sockets would skip the check
+
+
+class _PinnedHTTPS(http.client.HTTPSConnection):
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        self._create_connection = _connect_public  # urllib's own sockets would skip the check
+
+
+class _PinnedHandlers(urllib.request.HTTPHandler, urllib.request.HTTPSHandler):
+    def http_open(self, req):
+        return self.do_open(_PinnedHTTP, req)
+
+    def https_open(self, req):
+        return self.do_open(_PinnedHTTPS, req, context=ssl.create_default_context())
+
+
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, *a, **kw):
         return None
 
 
-# no system proxy hook for the check itself; the opener still honours proxy settings of the environment
-_OPENER = urllib.request.build_opener(_NoRedirect)
+# no proxy: connections go to the checked address (see _connect_public)
+_DIRECT = urllib.request.build_opener(urllib.request.ProxyHandler({}), _PinnedHandlers(), _NoRedirect)
+# with a system proxy the proxy looks the name up, so only the check before the request is possible
+_PROXIED = urllib.request.build_opener(_NoRedirect)
 
 
-def fetch_public(url, headers=None, timeout=10, opener=None, resolve=socket.getaddrinfo):
-    """Open `url` like urlopen, but only public addresses: the check runs before the request and before every
-    redirect (at most MAX_REDIRECTS). Returns the open response (use as a context manager); raises BlockedAddress."""
-    opener = opener or _OPENER
+def fetch_public(url, headers=None, timeout=10, opener=None, resolve=None):
+    """Open `url` like urlopen, but only public addresses: the name is checked before the request and before
+    every redirect (followed by hand, at most MAX_REDIRECTS), and without a system proxy the connection goes to
+    the very address that was checked. Returns the open response (use as a context manager); raises BlockedAddress."""
+    resolve = resolve or socket.getaddrinfo
     for _ in range(MAX_REDIRECTS + 1):
         check_url(url, resolve)
+        op = opener or (_PROXIED if _proxied(url) else _DIRECT)
         try:
-            return opener.open(urllib.request.Request(url, headers=headers or {}), timeout=timeout)
+            return op.open(urllib.request.Request(url, headers=headers or {}), timeout=timeout)
         except urllib.error.HTTPError as e:
             if e.code not in (301, 302, 303, 307, 308) or not e.headers.get("Location"):
                 raise
             url = urllib.parse.urljoin(url, e.headers["Location"])
             e.close()
+        except urllib.error.URLError as e:
+            if isinstance(e.reason, BlockedAddress):
+                raise e.reason from None
+            raise
     raise urllib.error.URLError("too many redirects")
 
 

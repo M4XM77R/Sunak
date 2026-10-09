@@ -86,6 +86,73 @@ class RedirectTest(unittest.TestCase):
             netguard.fetch_public("http://a.example/", opener=opener, resolve=resolver("93.184.216.34"))
 
 
+class PinnedConnectionTest(unittest.TestCase):
+    """The connection goes to the address that was checked, not to a second DNS answer (DNS rebinding)."""
+
+    @classmethod
+    def setUpClass(cls):
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+        cls.hosts = []
+
+        class H(BaseHTTPRequestHandler):
+            def do_GET(self):
+                cls.hosts.append(self.headers["Host"])
+                body = b"hello"
+                self.send_response(200)
+                self.send_header("Content-Length", "5")
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *a):
+                pass
+        cls.srv = HTTPServer(("127.0.0.1", 0), H)
+        cls.port = cls.srv.server_address[1]
+        threading.Thread(target=cls.srv.serve_forever, daemon=True).start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.srv.shutdown()
+        cls.srv.server_close()
+
+    def answers(self, *per_call):
+        """getaddrinfo stand-in: the n-th lookup of the test name gets the n-th address (the last one repeats)."""
+        calls = []
+        real = socket.getaddrinfo
+
+        def fake(host, port, *a, **kw):
+            if host != "rebind.example":
+                return real(host, port, *a, **kw)
+            ip = per_call[min(len(calls), len(per_call) - 1)]
+            calls.append(ip)
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (ip, port))]
+        return fake
+
+    def test_second_dns_answer_is_not_used(self):
+        self.hosts.clear()
+        # the check sees a public address, the connection lookup sees 127.0.0.1: refused, and the server is never hit
+        with mock.patch.object(socket, "getaddrinfo", self.answers("93.184.216.34", "127.0.0.1")), \
+                mock.patch.object(netguard, "_proxied", return_value=False):
+            with self.assertRaises(netguard.BlockedAddress):
+                netguard.fetch_public("http://rebind.example:%d/" % self.port, opener=None)
+        self.assertEqual(self.hosts, [])
+
+    def test_connects_to_the_checked_address_with_the_name_as_host(self):
+        self.hosts.clear()
+        with mock.patch.dict(os.environ, {"SUNAK_ALLOW_PRIVATE_FETCH": "1"}), \
+                mock.patch.object(socket, "getaddrinfo", self.answers("127.0.0.1")), \
+                mock.patch.object(netguard, "_proxied", return_value=False):
+            with netguard.fetch_public("http://rebind.example:%d/" % self.port) as r:
+                self.assertEqual(r.read(), b"hello")
+        self.assertEqual(self.hosts, ["rebind.example:%d" % self.port])
+
+    def test_local_address_is_refused_before_connecting(self):
+        self.hosts.clear()
+        with mock.patch.object(netguard, "_proxied", return_value=False):
+            with self.assertRaises(netguard.BlockedAddress):
+                netguard.fetch_public("http://127.0.0.1:%d/" % self.port)
+        self.assertEqual(self.hosts, [])
+
+
 class ResearchTest(unittest.TestCase):
     def test_read_page_refuses_local_addresses(self):
         for url in ("http://127.0.0.1:11434/api/tags", "http://localhost/", "http://[::1]/", "http://169.254.169.254/"):
