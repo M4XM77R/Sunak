@@ -718,6 +718,7 @@ async function runSlash(sl) {
     case 'hilfe':
       clear();
       slashShow(tr('Slash commands'), [el('p', { class: 'muted small' }, 'Type / in the message box. German and English names both work.'),
+        el('p', { class: 'muted small' }, 'To send a message that starts with a slash (like /tmp), type two slashes: //tmp'),
         ...SLASH.map((x) => el('button', { class: 'slash-item', type: 'button', onclick: () => slashFill(x) },
           el('b', { 'data-no-i18n': '' }, `/${x.name}`), x.alias.length ? el('span', { class: 'muted', 'data-no-i18n': '' }, x.alias.map((a) => `/${a}`).join(' ')) : null,
           x.arg ? el('span', { class: 'muted small slash-arg' }, `<${tr(x.arg)}>`) : null, el('span', { class: 'muted small slash-desc' }, tr(x.desc))))]);
@@ -796,8 +797,11 @@ async function sendNow(skipAssist) {
   let text = promptEl.value.trim();
   if (!text && !state.attachments.length) return;
   if (!state.attachments.length && !sendOverride) {
-    const sl = slashParse(text);
-    if (sl && (sl.cmd || !sl.arg)) { await runSlash(sl); return; }
+    if (text.startsWith('//')) text = text.slice(1);  // "//tmp" sends "/tmp" as an ordinary message
+    else {
+      const sl = slashParse(text);
+      if (sl && (sl.cmd || !sl.arg)) { await runSlash(sl); return; }
+    }
   }
   if (!state.attachments.length && !sendOverride) {
     const act = skipAssist ? null : await assistantIntent(text);
@@ -3903,12 +3907,13 @@ function introClose() {
   document.removeEventListener('keydown', introKey, true);
   intro.back?.focus?.(); intro.back = null;
   if (!state.settings?.intro_seen) {
-    state.settings.intro_seen = true;
-    api('/api/settings', { method: 'PUT', body: { intro_seen: true } }).catch(() => {}); // seen: not shown again, even when saving fails
+    state.settings.intro_seen = true;  // not shown again in this session, whatever happens below
+    api('/api/settings', { method: 'PUT', body: { intro_seen: true } }).catch((e) => toast(tr('Could not save that the introduction was shown, so it may open again: {error}', { error: e.message })));
   }
 }
 function introKey(e) {
-  if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); introClose(); }
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); e.stopPropagation(); }  // no new chat behind the tour
+  else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); introClose(); }
   else if (e.key === 'Tab') {  // keep the focus inside the dialog
     const f = [...intro.el.querySelectorAll('button')];
     if (!f.length) return;

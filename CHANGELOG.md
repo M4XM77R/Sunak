@@ -4,6 +4,14 @@ All changes to Sunak, newest version first. Sunak shows the entries between your
 
 Format: one section per version, `## [a.b.c] – YYYY-MM-DD`, followed by short points under **Added**, **Changed**, **Fixed** or **Removed**. Every change to Sunak gets a new version and an entry here.
 
+## [0.20.1] – 2026-10-09
+
+### Fixed
+- A message that is only a slash word, such as `/tmp` or `/home`, could not be sent because it was taken for an unknown command. Type two slashes (`//tmp`) to send it as ordinary text (one slash is removed); `/hilfe` and the README say so.
+- If saving "the introduction was shown" fails, Sunak now says so (the tour may open again after a reload) instead of staying silent.
+- `Ctrl+K` (new chat) no longer works behind the introduction while it is open.
+- docs/ARCHITECTURE.md: the `POST /api/chat` row names the `once` field.
+
 ## [0.20.0] – 2026-10-09
 
 ### Added

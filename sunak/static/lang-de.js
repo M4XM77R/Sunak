@@ -1054,5 +1054,7 @@
 "Skip": "Überspringen",
 "Back": "Zurück",
 "Get started": "Los geht’s",
-"Next": "Weiter"
+"Next": "Weiter",
+"To send a message that starts with a slash (like /tmp), type two slashes: //tmp": "Um eine Nachricht zu senden, die mit einem Schrägstrich beginnt (wie /tmp), tippe zwei Schrägstriche: //tmp",
+"Could not save that the introduction was shown, so it may open again: {error}": "Konnte nicht speichern, dass die Einführung gezeigt wurde, sie öffnet sich eventuell erneut: {error}"
 } };
