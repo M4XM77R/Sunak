@@ -4,7 +4,7 @@ All changes to Sunak, newest version first. Sunak shows the entries between your
 
 Format: one section per version, `## [a.b.c] – YYYY-MM-DD`, followed by short points under **Added**, **Changed**, **Fixed** or **Removed**. Every change to Sunak gets a new version and an entry here.
 
-## [0.24.0] – 2026-10-09
+## [0.22.0] – 2026-10-09
 
 ### Added
 - Office files. Sunak now writes real documents and tables as files: Word (`.docx`), LibreOffice (`.odt`, and `.ods` for tables) and Excel (`.xlsx`). They are made by Sunak itself from the Python standard library (ZIP + XML), so LibreOffice does not have to be installed and there are no new dependencies. If LibreOffice is installed, PDF is offered as well (Sunak runs `soffice --headless --convert-to pdf` in a temporary folder with its own profile, so an open LibreOffice is not disturbed).
