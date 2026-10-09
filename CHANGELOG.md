@@ -4,6 +4,12 @@ All changes to Sunak, newest version first. Sunak shows the entries between your
 
 Format: one section per version, `## [a.b.c] – YYYY-MM-DD`, followed by short points under **Added**, **Changed**, **Fixed** or **Removed**. Every change to Sunak gets a new version and an entry here.
 
+## [0.20.0] – 2026-10-09
+
+### Added
+- An introduction for new users: a short tour (six steps: welcome, chat, slash commands, files and notes, mail and calendar, making it yours) that opens once, the first time a profile is used. It can be skipped at any time (button, `Esc`), and every way of closing it counts as seen. Settings → Introduction → "Show the introduction" opens it again. It is a plain overlay in the interface language (English or German) and needs no external files.
+- The new per-profile setting `intro_seen` remembers that the tour was shown. Profiles that already exist see the tour once after this update, because it also introduces the slash commands.
+
 ## [0.19.0] – 2026-10-09
 
 ### Added

@@ -133,6 +133,8 @@ Your data then lives in the `data/` folder next to the Compose file (Ollama mode
 
 **Using a cloud model:** Settings → Providers → pick a preset (for example "Claude (Anthropic)", API key from [console.anthropic.com](https://console.anthropic.com)) → enter the key → Save settings. Keys stay on your computer and are never sent back to the browser. With the environment variable `ANTHROPIC_API_KEY`, Sunak sets up Claude by itself on the first start.
 
+**Introduction:** The first time a profile is used, a short tour opens (six steps, skippable with the button or `Esc`). It stays away afterwards; Settings → Introduction → "Show the introduction" opens it again. Profiles that already existed see it once after the update to 0.20.0.
+
 ### Automatic memory
 
 After an answer, the chat's model checks whether the last question and answer contain lasting facts about you (name, job, preferences for answers) and stores them as a note tagged "memory", at most three per answer. You see this as a notice with **Undo**, and under Notes & Memory, there with the chat it came from. The AI knows all memory notes in every chat. "Remember that …" is always saved; passwords, keys, PINs and card numbers never are. It does not run with tools switched on, after picture requests or when memory is switched off. To switch it off: Settings → Chat → "Remember things about me from chats by itself" (only the automatic half) or "Use memory notes in chats" (no memory at all).
