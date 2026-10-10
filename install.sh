@@ -114,7 +114,9 @@ case "\${1:-}" in
     export SUNAK_HOME="$HOME_DIR" SUNAK_REPO="$REPO" SUNAK_BRANCH="$BRANCH"  # reinstall into the same place
     old=\$(python3 -m sunak version)
     src=\$(cat "$HOME_DIR/source" 2>/dev/null)
-    if [ -d "\$APP_DIR/.git" ]; then git -C "\$APP_DIR" pull --ff-only -q || exit 1
+    if [ -d "\$APP_DIR/.git" ]; then
+      git -C "\$APP_DIR" pull --ff-only -q || exit 1
+      python3 -m sunak desktop update --auto || true  # the other routes reinstall, and the installer does this (a problem here never fails the update)
     elif [ -n "\$src" ] && [ -d "\$src/.git" ]; then
       echo "Updating from \$src"
       git -C "\$src" pull --ff-only -q && bash "\$src/install.sh" --yes --no-ollama --no-start --no-shortcut >/dev/null || exit 1
@@ -183,6 +185,8 @@ command -v ollama >/dev/null && say "Ollama ✓"
 if [ "$DESKTOP" = 1 ] || ask_no "Also install the desktop app (Sunak in its own window)?"; then
   (cd "$APP_DIR" && SUNAK_HOME="$HOME_DIR" SUNAK_REPO="$REPO" python3 -m sunak desktop install) \
     || warn "Desktop app not installed. Sunak itself is ready; try later: sunak desktop install"
+else  # an installed app is renewed when a newer desktop release exists (nothing happens if it is not installed)
+  (cd "$APP_DIR" && SUNAK_HOME="$HOME_DIR" SUNAK_REPO="$REPO" python3 -m sunak desktop update --auto) || true
 fi
 
 printf '\n  %sDone!%s Start Sunak any time with: %ssunak%s\n' "$B" "$R" "$P" "$R"

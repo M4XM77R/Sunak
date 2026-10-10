@@ -336,7 +336,8 @@ class App:
         behind = (self.update["behind"] or 0) if enabled else 0
         return {"enabled": enabled, "available": behind > 0, "behind": behind, "version": self.update["version"] if behind else "",
                 "current": __version__, "changelog": self.update["changelog"] if behind else [],
-                "can_update": updates.update_command() is not None, "result": updates.pop_result(self.data_dir)}
+                "can_update": updates.update_command() is not None, "result": updates.pop_result(self.data_dir),
+                "desktop_update": desktopapp.pending_update() if behind > 0 else ""}
 
     # settings ---------------------------------------------------------
     def settings(self):

@@ -165,6 +165,11 @@ if ($env:SUNAK_DESKTOP -eq "1" -or ($env:SUNAK_YES -ne "1" -and (Read-Host "Also
   & $cmd desktop install
   if ($LASTEXITCODE -ne 0) { Write-Warning "Desktop app not installed. Sunak itself is ready; try later: sunak desktop install" }
   Pop-Location
+} else {
+  # an installed app is renewed when a newer desktop release exists (nothing happens if it is not installed)
+  Push-Location $AppDir
+  try { & $cmd desktop update --auto } catch { }
+  Pop-Location
 }
 
 Write-Host "`n  Done! Start Sunak with the desktop icon or by typing: sunak`n" -ForegroundColor Magenta

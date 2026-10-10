@@ -52,12 +52,14 @@ COMMANDS = {
                           "again afterwards. In the app, the Update button does the same.\n"
                           "  --yes, -y  do not ask (for scripts; without a terminal Sunak never asks)\n"
                           "Part of the installed sunak command. Without installing: run git pull in the Sunak folder."},
-    "desktop": {"group": "Manage", "args": "[install|uninstall|status]", "summary": "Optional desktop app (own window)",
+    "desktop": {"group": "Manage", "args": "[install|update|uninstall|status]", "summary": "Optional desktop app (own window)",
                 "example": "sunak desktop install",
                 "details": "Sunak in its own window instead of the browser (a small Tauri app, see desktop/README.md).\n"
                            "  install    download the finished package from the newest desktop release and install it\n"
+                           "  update     renew an installed app if a newer desktop release exists (`sunak update` does this too)\n"
                            "  uninstall  remove it again\n"
                            "  status     is it installed, is a package available (default)\n"
+                           "Never installs on its own: update only touches an app that is already installed, and not while it is open.\n"
                            "No Rust needed. The app needs this Sunak installation; it starts and stops the server itself.\n"
                            "Packages exist for Windows, macOS (Apple silicon) and Linux (x86_64). They are not code-signed.\n"
                            "In the app: Settings → Desktop app."},
@@ -201,11 +203,23 @@ def gpu_report(info):
 
 def desktop_command(rest):
     """sunak desktop [install|uninstall|status]"""
+    auto = "--auto" in rest  # from `sunak update`: quiet when there is nothing to do, a failure is only a warning
+    rest = [a for a in rest if a != "--auto"]
     action = rest[0] if rest else "status"
-    if action not in ("install", "uninstall", "status") or len(rest) > 1:
-        return fail(f"Usage: sunak desktop [install|uninstall|status]{suggest(action, ('install', 'uninstall', 'status'))}")
+    if action not in ("install", "update", "uninstall", "status") or len(rest) > 1:
+        return fail(f"Usage: sunak desktop [install|update|uninstall|status]{suggest(action, ('install', 'update', 'uninstall', 'status'))}")
     try:
-        if action == "install":
+        if action == "update":
+            result = desktopapp.update(print)
+            if result == "updated":
+                print("Desktop app updated.")
+            elif result == "running":
+                print("The desktop app is open, so it was not replaced. Close it, then run: sunak desktop update")
+            elif result == "no_release" and not auto:
+                print("There is no desktop release yet.")
+            elif not auto:
+                print("The desktop app is not installed." if not desktopapp.installed() else "The desktop app is up to date.")
+        elif action == "install":
             print(f"Installed: {desktopapp.install(print)}")
         elif action == "uninstall":
             print("Desktop app removed." if desktopapp.uninstall() else "The desktop app is not installed.")
@@ -217,7 +231,12 @@ def desktop_command(rest):
                 pkg = desktopapp.find_package()
                 print(f"Available: {pkg['name']} ({pkg['tag']}). Install with: sunak desktop install" if pkg
                       else "No desktop app release yet (see desktop/README.md to build it).")
-    except desktopapp.DesktopError as e:
+    except Exception as e:  # noqa: BLE001 - DesktopError and anything unexpected; with --auto it is only a warning
+        if auto:
+            print(f"Desktop app not updated: {e}", file=sys.stderr)
+            return 0
+        if not isinstance(e, desktopapp.DesktopError):
+            raise
         return fail(str(e))
     return 0
 
@@ -304,6 +323,8 @@ def changelog_command(rest):
         print(f"Sunak {__version__} is up to date.")
     if behind or behind is None:
         print(changelog.to_text(r["changelog"]) if r["changelog"] else "No changelog available.")
+        if behind and (tag := desktopapp.pending_update()):
+            print(f"\nThe installed desktop app will be updated too ({tag}), if it is closed.")
     elif not confirm:
         try:
             entries = changelog.between(changelog.parse((desktop.PKG_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")), "0.0.0", __version__)[:1]

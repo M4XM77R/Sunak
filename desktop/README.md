@@ -14,6 +14,8 @@ The packages are not code-signed. Windows SmartScreen and macOS Gatekeeper warn 
 
 **Via the installer (opt-in):** `install.sh --desktop` / `$env:SUNAK_DESKTOP="1"` (or answer yes to the last question) downloads the package for your system from the newest `desktop-v*` release: AppImage on Linux x86_64 (app-menu entry, needs FUSE), `Sunak Desktop.app` in `~/Applications` on macOS (Apple silicon only), the setup `.exe` on Windows. No release yet or a failed download only prints a hint; the normal installation is not affected.
 
+**Updating:** `sunak update` renews an installed app too when a newer `desktop-v*` release exists (compared with the tag recorded in `desktop-version` in the Sunak folder, checked with SHA256SUMS). An open app is never replaced; close it and run `sunak desktop update`. The window only shows your installed Sunak, so the app itself rarely needs an update. Apps installed with 1.1.0 have no recorded tag and are renewed once. Nothing happens if the app is not installed.
+
 ## Build it yourself
 
 ```bash

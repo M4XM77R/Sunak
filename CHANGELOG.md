@@ -4,6 +4,14 @@ All changes to Sunak, newest version first. Sunak shows the entries between your
 
 Format: one section per version, `## [a.b.c] – YYYY-MM-DD`, followed by short points under **Added**, **Changed**, **Fixed** or **Removed**. Every change to Sunak gets a new version and an entry here.
 
+## [1.2.0] – 2026-10-10
+
+### Added
+- `sunak update` now renews an installed desktop app too, when a newer `desktop-v*` release exists (checked with the version recorded at installation, downloaded with the same SHA-256 check). It never installs the app on its own: without an installed app nothing happens. An open app is not replaced (that is not safe on any system); Sunak says so, and `sunak desktop update` does it after you close the app. A problem with the app never stops the normal update, it only prints a warning.
+- Installations from 1.1.0 have no recorded app version yet, so the first `sunak update` after 1.2.0 renews the app once even if it is current.
+- `sunak desktop update` (and `--auto`, which stays quiet when there is nothing to do).
+- The changelog before an update (terminal and Update dialog) mentions that the desktop app will be updated too, when that is the case.
+
 ## [1.1.0] – 2026-10-10
 
 ### Added

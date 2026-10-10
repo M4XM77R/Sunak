@@ -313,7 +313,7 @@ The setting survives a restart. If you start Sunak with `--host 0.0.0.0`, it is 
 | `sunak import FILE` | Add a backup or an exported chat to a profile (`--profile ID`, default the main profile; `--data-dir PATH` for another data folder), see "Restore a backup" above |
 | `sunak version` | Installed version (also `sunak --version`, and at the bottom of Settings) |
 | `sunak gpu` | Which graphics card Ollama can use |
-| `sunak desktop [install\|uninstall\|status]` | The optional [desktop app](#desktop-app-optional): download and install the finished package, remove it, or show the state |
+| `sunak desktop [install\|update\|uninstall\|status]` | The optional [desktop app](#desktop-app-optional): download and install the finished package, renew it, remove it, or show the state |
 | `sunak logs [LINES]` | Where the log file is, and its last lines (default 40; `--data-dir PATH` for another data folder) |
 | `sunak mail-selftest` | Test a real mail account from start to end, see [Mail](#mail) |
 | `sunak autostart on\|off\|status` | Start Sunak in the background when you log in |
@@ -364,7 +364,7 @@ When piping, append options with `bash -s --`: `curl -fsSL …/install.sh | bash
 
 ### Desktop app (optional)
 
-If you prefer Sunak in its own window instead of the browser, there is a small Tauri app in [`desktop/`](desktop/README.md). The installer can fetch it (opt-in: asks at the end, default no, or `--desktop` / `SUNAK_DESKTOP=1`); it takes the finished package from the newest `desktop-v*` release and prints a hint if there is none yet. Already installed Sunak? Run `sunak desktop install` or press *Install desktop app* in Settings → Desktop app (admin profiles); after the update to 1.1.0 Sunak shows a one-time hint, and never installs anything on its own. It needs an installed Sunak (it starts the server itself and stops it when the window closes), is built by the GitHub Actions workflow `desktop` for Windows, macOS and Linux, and is not code-signed. The normal installation does not change and needs no Rust.
+If you prefer Sunak in its own window instead of the browser, there is a small Tauri app in [`desktop/`](desktop/README.md). The installer can fetch it (opt-in: asks at the end, default no, or `--desktop` / `SUNAK_DESKTOP=1`); it takes the finished package from the newest `desktop-v*` release and prints a hint if there is none yet. Already installed Sunak? Run `sunak desktop install` or press *Install desktop app* in Settings → Desktop app (admin profiles); after the update to 1.1.0 Sunak shows a one-time hint, and never installs anything on its own. `sunak update` renews an installed app as well when a newer desktop release exists (not while the app is open; then close it and run `sunak desktop update`); it never installs the app by itself. It needs an installed Sunak (it starts the server itself and stops it when the window closes), is built by the GitHub Actions workflow `desktop` for Windows, macOS and Linux, and is not code-signed. The normal installation does not change and needs no Rust.
 
 ## Updating and uninstalling
 
