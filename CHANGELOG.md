@@ -4,6 +4,12 @@ All changes to Sunak, newest version first. Sunak shows the entries between your
 
 Format: one section per version, `## [a.b.c] – YYYY-MM-DD`, followed by short points under **Added**, **Changed**, **Fixed** or **Removed**. Every change to Sunak gets a new version and an entry here.
 
+## [0.23.1] – 2026-10-10
+
+### Fixed
+- Models showed up twice in the model picker. Causes: the same backend entered as two providers (same type, address and key) and a backend that lists a model twice (also across page boundaries of the Claude list). Each model now appears once. In "Compare models", a model name that exists at two providers is shown with the provider's name.
+- The server accepts a burst of simultaneous requests without dropping connections (listen queue raised from 5 to 128). This also made a login-limit test fail now and then on CI.
+
 ## [0.23.0] – 2026-10-09
 
 ### Added

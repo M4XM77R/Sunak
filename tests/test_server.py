@@ -2,6 +2,7 @@
 Run:  python -m unittest discover tests"""
 
 import base64
+import io
 import json
 import tempfile
 import threading
@@ -143,6 +144,18 @@ class SunakTest(unittest.TestCase):
         self.assertEqual(ids, ["ollama::think:1b", "ollama::tiny:1b", "cloud::gpt-fake",
                                "claude::claude-opus-5-5", "claude::claude-haiku-4-5"])
         self.assertEqual(r["errors"], [])
+
+    def test_models_are_listed_once(self):
+        provs = self.call("GET", "/api/settings")["providers"]
+        again = dict(provs[0], id="ollama2", name="Ollama again")  # same backend entered twice
+        try:
+            self.call("PUT", "/api/settings", {"providers": [dict(p, api_key="") for p in provs] + [again]})
+            ids = [m["id"] for m in self.call("GET", "/api/models")["models"]]
+            self.assertEqual(len(ids), len(set(ids)))
+            self.assertFalse([i for i in ids if i.startswith("ollama2::")])
+            self.assertEqual(ids.count("ollama::tiny:1b"), 1)
+        finally:
+            self.call("PUT", "/api/settings", {"providers": [dict(p, api_key="") for p in provs]})
 
     def test_chat_follows_the_interface_language(self):
         s = self.call("POST", "/api/sessions", {})
@@ -577,6 +590,30 @@ class UnitTest(unittest.TestCase):
     def test_stream_to_text(self):
         self.assertEqual(stream_to_text([("think", "a"), ("think", "b"), ("text", "c")]), "<think>ab</think>\n\nc")
         self.assertEqual(stream_to_text([("text", "x")]), "x")
+
+    @staticmethod
+    def _answers(*pages):
+        """A stand-in for providers._request that serves the given JSON pages one after another."""
+        it = iter(pages)
+
+        def fake(*args, **kwargs):
+            return io.BytesIO(json.dumps(next(it)).encode())
+        return fake
+
+    def test_backend_listing_a_model_twice(self):
+        for kind, page in (("ollama", {"models": [{"name": "a:1b"}, {"name": "a:1b"}, {"name": "b:1b"}]}),
+                           ("openai", {"data": [{"id": "gpt-x"}, {"id": "gpt-x"}, {"id": "gpt-y"}]})):
+            p = {"id": "p", "type": kind, "base_url": "http://x", "api_key": ""}
+            with unittest.mock.patch.object(providers, "_request", self._answers(page)):
+                names = providers.list_models(p)
+            self.assertEqual(len(names), 2, kind)
+
+    def test_claude_models_repeated_across_pages(self):
+        p = {"id": "c", "type": "anthropic", "base_url": "https://api.anthropic.com", "api_key": "k"}
+        pages = ({"data": [{"id": "m1"}, {"id": "m2"}], "has_more": True, "last_id": "m2"},
+                 {"data": [{"id": "m2"}, {"id": "m3"}], "has_more": False})  # m2 sits on the page boundary twice
+        with unittest.mock.patch.object(providers, "_request", self._answers(*pages)):
+            self.assertEqual(providers.list_models(p), ["m1", "m2", "m3"])
 
     def test_claude_payload(self):
         p = {"id": "c", "type": "anthropic", "base_url": "https://api.anthropic.com", "api_key": "k"}

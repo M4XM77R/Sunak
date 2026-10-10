@@ -221,6 +221,7 @@ class Server(ThreadingHTTPServer):
     """ThreadingHTTPServer without the reverse DNS lookup of the address when it starts (HTTPServer looks
     up a name for it, which can take many seconds for a network address, e.g. on macOS)."""
     daemon_threads = True
+    request_queue_size = 128  # the default of 5 drops connections when a burst of requests arrives at once
 
     def server_bind(self):
         socketserver.TCPServer.server_bind(self)
@@ -734,7 +735,12 @@ class App:
         and the backend needs longer than `MODELS_GRACE` seconds, that list is returned at once (`stale` in the error) while
         the request goes on in the background and refreshes it for the next call. Without a known list the call waits for it."""
         out, errors = [], []
-        provs = self.settings()["providers"]
+        provs, seen = [], set()
+        for p in self.settings()["providers"]:  # two entries for the same backend and key would list every model twice
+            same = (p["type"], p["base_url"].rstrip("/").lower(), p.get("api_key", ""))
+            if same not in seen:
+                seen.add(same)
+                provs.append(p)
         known = self.root._model_lists
 
         def fetch(p):
@@ -760,7 +766,7 @@ class App:
             for p, names, err, stale in ex.map(fetch, provs):
                 if err:
                     errors.append({"provider": p["id"], "name": p["name"], "error": err, "stale": stale})
-                for n in names:
+                for n in dict.fromkeys(names):
                     out.append({"id": f"{p['id']}::{n}", "name": n, "provider": p["id"], "provider_name": p["name"]})
         return {"models": out, "errors": errors}
 

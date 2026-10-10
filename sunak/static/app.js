@@ -2811,8 +2811,9 @@ function renderCompareModels() {
   const prev = new Set($$('input:checked', box).map((i) => i.value));
   box.innerHTML = '';
   if (state.models.length < 2) { box.append(el('p', { class: 'muted' }, 'You need at least two models. Download more in Settings.')); return; }
+  const shared = (m) => state.models.some((o) => o.id !== m.id && o.name === m.name);  // same name at two providers: say which
   state.models.forEach((m, i) => box.append(el('label', { class: 'chip check' },
-    el('input', { type: 'checkbox', value: m.id, checked: prev.size ? prev.has(m.id) : i < 2 }), m.name)));
+    el('input', { type: 'checkbox', value: m.id, checked: prev.size ? prev.has(m.id) : i < 2 }), shared(m) ? `${m.name} (${m.provider_name})` : m.name)));
 }
 $('#compareForm').onsubmit = async (e) => {
   e.preventDefault();
