@@ -20,6 +20,7 @@ import sys
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 from . import log
@@ -30,9 +31,18 @@ MAX_RECORD = 256 * 1024     # bytes remembered of one body while it passes
 LONG_STRING = 300           # a JSON string this long made of base64 characters is replaced by its size
 MAX_BYTES, BACKUPS = 10 * 1024 * 1024, 2
 
-SECRET_HEADERS = {"authorization", "proxy-authorization", "x-api-key", "api-key", "x-goog-api-key", "cookie",
-                  "set-cookie", "x-auth-token", "x-sunak-token"}
-SECRET_KEY = re.compile(r"(?i)pass(word|wd|phrase)?|^pins?$|_pin$|token(?!s)|secret|api[_-]?key|apikey|authorization|cookie|credential|private[_-]?key")
+# Deny by default: only headers on this list are shown; every other value is masked (vendor headers carry keys,
+# session ids and tokens under names nobody can list in advance).
+SAFE_HEADERS = {"content-type", "content-length", "content-encoding", "accept", "accept-encoding", "accept-language",
+                "user-agent", "host", "date", "server", "cache-control", "connection", "transfer-encoding",
+                "x-requested-with", "etag", "last-modified", "vary", "retry-after"}
+URL_HEADERS = {"location", "referer", "origin", "content-location"}
+# Names whose value is hidden, whatever it holds (a whole list or object included). Word-bounded short names plus
+# longer fragments; anything ending in "key" counts (anthropic_key, brave_key).
+SECRET_KEY = re.compile(
+    r"(?i)(?:^|[^a-z0-9])(?:pat|pins?|code|auth|jwt|key|sid|sig|otp|dsn)(?:$|[^a-z0-9])"
+    r"|pass(?:word|wd|phrase|code)?|secret|token(?!s)|api[_-]?key|apikey|authoriz|cookie|credential|bearer|signature|session|private|key$|_key")
+NAME_FIELDS = ("name", "key", "id", "header", "field", "label", "variable", "env")
 BASE64 = re.compile(r"^(data:[^,]{0,80},)?[A-Za-z0-9+/_=\s-]+$")
 
 _logger = logging.getLogger(NAME)
@@ -49,16 +59,44 @@ def enabled():
 
 # redaction ----------------------------------------------------------------
 
-def _clean(value):
-    """Walk parsed JSON: secrets by key name masked, base64 blobs replaced by their size."""
+def _secret_name(name):
+    return isinstance(name, str) and bool(SECRET_KEY.search(name))
+
+
+def _clean(value, depth=0):
+    """Walk parsed JSON: a secret-looking key hides its whole value (lists and objects too), {"name": "API_KEY",
+    "value": ...} pairs are hidden, JSON inside strings (tool call arguments) is cleaned, base64 blobs become sizes."""
+    if depth > 30:
+        return "<too deep>"
     if isinstance(value, dict):
-        return {k: "***" if isinstance(k, str) and SECRET_KEY.search(k) and not isinstance(v, (dict, list)) and v not in (None, "", False, True)
-                else _clean(v) for k, v in value.items()}
+        pair = any(_secret_name(value.get(f)) for f in NAME_FIELDS)
+        out = {}
+        for k, v in value.items():
+            if v is not None and (_secret_name(k) or (pair and k.lower() in ("value", "val", "data", "content", "secret"))):
+                out[k] = "***"
+            else:
+                out[k] = _clean(v, depth + 1)
+        return out
     if isinstance(value, list):
-        return [_clean(v) for v in value]
-    if isinstance(value, str) and len(value) >= LONG_STRING and BASE64.match(value):
-        return f"<{len(value)} characters of base64 data>"
+        return [_clean(v, depth + 1) for v in value]
+    if isinstance(value, str):
+        if value.lstrip()[:1] in ("{", "["):
+            try:
+                return json.dumps(_clean(json.loads(value), depth + 1), ensure_ascii=False)
+            except ValueError:
+                pass
+        if len(value) >= LONG_STRING and BASE64.match(value):
+            return f"<{len(value)} characters of base64 data>"
     return value
+
+
+def _params(text, sep="&"):
+    """`a=1&secret=2` with secret-named parameters hidden (the rest stays exactly as written)."""
+    out = []
+    for part in text.split(sep):
+        name, eq, val = part.partition("=")
+        out.append(f"{name}=***" if eq and _secret_name(urllib.parse.unquote_plus(name)) and val != "" else part)
+    return sep.join(out)
 
 
 def _cut(text):
@@ -81,6 +119,8 @@ def body_text(data, ctype=""):
     except UnicodeDecodeError:
         return f"<{len(data)} bytes of binary data>"
     stripped = text.strip()
+    if "x-www-form-urlencoded" in (ctype or "").lower():
+        return _cut(log.redact(_params(stripped)))
     if stripped[:1] in "{[":
         try:
             return _cut(log.redact(json.dumps(_clean(json.loads(stripped)), ensure_ascii=False, indent=2)))
@@ -102,11 +142,29 @@ def body_text(data, ctype=""):
 def header_lines(items):
     out = []
     for k, v in items:
-        out.append(f"    {k}: {'***' if k.lower() in SECRET_HEADERS else log.redact(v)}")
+        low = k.lower()
+        if low in SAFE_HEADERS:
+            shown = log.redact(v)
+        elif low in URL_HEADERS:
+            shown = url_text(v)
+        else:
+            shown = "***"
+        out.append(f"    {k}: {shown}")
     return "\n".join(out) or "    (none)"
 
 
 def url_text(url):
+    """A URL without user:password@, with secret query and fragment parameters hidden."""
+    try:
+        sp = urllib.parse.urlsplit(url)
+        netloc = sp.netloc
+        if "@" in netloc:
+            netloc = "***:***@" + netloc.rsplit("@", 1)[1]
+        query = _params(sp.query)
+        fragment = _params(sp.fragment) if "=" in sp.fragment else sp.fragment
+        url = urllib.parse.urlunsplit((sp.scheme, netloc, sp.path, query, fragment))
+    except ValueError:
+        pass
     return log.redact(url)
 
 

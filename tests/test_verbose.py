@@ -113,6 +113,62 @@ class VerboseTest(unittest.TestCase):
         self.assertNotIn("pw-12345678", text)
 
 
+class RedactionTripwireTest(unittest.TestCase):
+    """Deny by default: whatever the name, these must never show up (found by review of the first version)."""
+
+    def test_unknown_headers_are_hidden(self):
+        items = [("anthropic-api-key", "LEAK1"), ("PRIVATE-TOKEN", "LEAK2"), ("X-Api-Token", "LEAK3"),
+                 ("X-Amz-Security-Token", "LEAK4"), ("OpenAI-Organization", "LEAK5"), ("Mcp-Session-Id", "LEAK6"),
+                 ("X-Whatever-Custom", "LEAK7"), ("Content-Type", "application/json"), ("Location", "http://h/x?token=LEAK8")]
+        text = verbose.header_lines(items)
+        for n in range(1, 9):
+            self.assertNotIn(f"LEAK{n}", text)
+        self.assertIn("application/json", text)
+
+    def test_json_secrets_in_any_shape(self):
+        body = {"api_key": ["LEAK1"], "anthropic_key": "LEAK2", "openai_key": "LEAK3", "brave_key": "LEAK4", "key": "LEAK5",
+                "GITHUB_PAT": "LEAK6", "pin": 1, "pin2": {"pin": 0}, "auth": {"user": "LEAK7"}, "jwt": "LEAK8",
+                "env": [{"name": "API_KEY", "value": "LEAK9"}],
+                "tool_calls": [{"function": {"arguments": json.dumps({"password": "LEAK10"})}}],
+                "client_secret": {"a": ["LEAK11"]}, "max_tokens": 5, "model": "llama3"}
+        text = verbose.body_text(json.dumps(body).encode(), "application/json")
+        for n in range(1, 12):
+            self.assertNotIn(f"LEAK{n}", text)
+        self.assertIn('"pin": "***"', text)
+        self.assertIn('"max_tokens": 5', text)
+        self.assertIn("llama3", text)
+
+    def test_urls(self):
+        text = verbose.url_text("https://user:LEAK1@h.com/a?client_secret=LEAK2&refresh_token=LEAK3&signature=LEAK4&code=LEAK5"
+                                "&pin=LEAK6&sid=LEAK7&q=hello#access_token=LEAK8")
+        for n in range(1, 9):
+            self.assertNotIn(f"LEAK{n}", text)
+        self.assertIn("q=hello", text)
+
+    def test_form_bodies(self):
+        text = verbose.body_text(b"grant_type=refresh_token&refresh_token=LEAK1&client_secret=LEAK2&scope=a",
+                                 "application/x-www-form-urlencoded")
+        self.assertNotIn("LEAK", text)
+        self.assertIn("grant_type=refresh_token", text)
+
+    def test_log_redact_after_underscores(self):
+        out = log.redact("refresh_token=LEAK1 client_secret: LEAK2 secret_key=LEAK3 max_tokens: 5")
+        self.assertNotIn("LEAK", out)
+        self.assertIn("max_tokens: 5", out)
+
+    def test_log_file_is_private_from_the_start(self):
+        import os, stat
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            path = str(Path(tmp) / "v.log")
+            verbose.enable(path, stream=io.StringIO())
+            try:
+                verbose.emit("x")
+            finally:
+                verbose.disable()
+            if os.name != "nt":
+                self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
+
+
 class VerboseCliTest(unittest.TestCase):
     def test_options_are_known_and_documented(self):
         for opt in ("--verbose", "-v", "--log-file"):
