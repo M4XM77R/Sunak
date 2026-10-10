@@ -27,4 +27,4 @@ cargo tauri build                               # packages in target/release/bun
 
 ## How it works
 
-`src-tauri/src/main.rs`: picks a free port, starts Sunak, waits for `/api/status`, then points the window at `http://127.0.0.1:PORT/`. On exit it sends `POST /api/shutdown` and kills the process if it does not stop. A second start only focuses the open window. `ui/index.html` is the loading and error page. The Sunak interface gets no Tauri permissions.
+`src-tauri/src/main.rs`: if a Sunak already runs on 7000-7009 it uses that one and leaves it running when the window closes. Otherwise it starts Sunak (the installed launcher by absolute path, then `sunak`, then Python with `PYTHONPATH` set) on the fixed port 17000 (so the address and the window's saved settings stay the same; another free block only if that is taken), waits for `/api/status`, then points the window at it. On exit it sends `POST /api/shutdown` and kills the process only if that does not work. Closing the window ends the app on every system. A second start only focuses the open window. `ui/index.html` is the loading and error page. The Sunak interface gets no Tauri permissions.

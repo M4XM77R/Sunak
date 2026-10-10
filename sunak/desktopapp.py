@@ -4,6 +4,7 @@ The package comes from the newest GitHub release whose tag starts with `desktop-
 nothing needs Rust. Used by `sunak desktop`, by Settings → Desktop app and by the installers (`--desktop`).
 Every problem is reported as DesktopError (or "no package"), never as a crash."""
 
+import hashlib
 import json
 import os
 import platform
@@ -11,7 +12,9 @@ import shutil
 import subprocess
 import tempfile
 import threading
+import urllib.error
 import urllib.request
+from urllib.parse import urlparse
 from pathlib import Path
 
 REPO = os.environ.get("SUNAK_REPO") or "M4XM77R/sunak"
@@ -43,15 +46,33 @@ def pick_asset(releases, sysname, machine):
     for r in releases:
         if not isinstance(r, dict) or not str(r.get("tag_name", "")).startswith(TAG_PREFIX) or r.get("draft") or r.get("prerelease"):
             continue
-        for a in r.get("assets") or []:
-            name = str(a.get("name", ""))
-            if name.endswith(want) and a.get("browser_download_url"):
-                return {"tag": r["tag_name"], "name": name, "url": a["browser_download_url"]}
+        assets = [a for a in r.get("assets") or [] if isinstance(a, dict)]
+        sums = next((a.get("browser_download_url") for a in assets if a.get("name") == "SHA256SUMS"), None)
+        for a in assets:
+            name = Path(str(a.get("name", ""))).name
+            if name.endswith(want) and _trusted(a.get("browser_download_url")):
+                return {"tag": r["tag_name"], "name": name, "url": a["browser_download_url"],
+                        "sums": sums if _trusted(sums) else None}
     return None
 
 
+def _trusted(url):
+    """Downloads only come from GitHub over https."""
+    u = urlparse(str(url or ""))
+    return u.scheme == "https" and (u.hostname or "") in ("github.com", "api.github.com", "objects.githubusercontent.com",
+                                                          "release-assets.githubusercontent.com")
+
+
+class _OnlyGitHub(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if not _trusted(newurl):
+            raise urllib.error.URLError(f"redirect to {urlparse(newurl).hostname} refused")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
 def _get(url, timeout=30):
-    return urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "sunak"}), timeout=timeout)
+    opener = urllib.request.build_opener(_OnlyGitHub)
+    return opener.open(urllib.request.Request(url, headers={"User-Agent": "sunak"}), timeout=timeout)
 
 
 def find_package():
@@ -62,6 +83,10 @@ def find_package():
     try:
         with _get(f"https://api.github.com/repos/{REPO}/releases?per_page=30") as r:
             return pick_asset(json.load(r), s, m)
+    except urllib.error.HTTPError as e:
+        if e.code in (403, 429):
+            raise DesktopError("GitHub refused the request (rate limit?). Try again in a while.") from e
+        raise DesktopError(f"Could not reach GitHub: HTTP {e.code}") from e
     except (OSError, ValueError) as e:
         raise DesktopError(f"Could not reach GitHub: {e}") from e
 
@@ -105,6 +130,26 @@ def _download(url, dest, progress):
             done += len(chunk)
             if total:
                 progress(f"{done * 100 // total}%")
+        if total and done != total:
+            raise OSError(f"the download stopped at {done} of {total} bytes")
+
+
+def _verify(file, name, sums_url):
+    """Compare the SHA-256 of the download with the release's SHA256SUMS. Nothing is run without a match."""
+    if not sums_url:
+        raise DesktopError("The release has no SHA256SUMS, so the download cannot be checked. Nothing was installed.")
+    try:
+        with _get(sums_url) as r:
+            lines = r.read(1 << 20).decode("utf-8", "replace").splitlines()
+    except OSError as e:
+        raise DesktopError(f"Could not download SHA256SUMS: {e}") from e
+    want = next((ln.split()[0].lower() for ln in lines if len(ln.split()) == 2 and ln.split()[1].lstrip("*") == name), None)
+    h = hashlib.sha256()
+    with open(file, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    if want is None or h.hexdigest() != want:
+        raise DesktopError("The download does not match its checksum. Nothing was installed.")
 
 
 def install(progress=lambda msg: None):
@@ -122,6 +167,8 @@ def install(progress=lambda msg: None):
             _download(pkg["url"], f, progress)
         except OSError as e:
             raise DesktopError(f"Download failed: {e}") from e
+        progress("Checking …")
+        _verify(f, pkg["name"], pkg.get("sums"))
         progress("Installing …")
         try:
             if s == "linux":
@@ -132,7 +179,7 @@ def install(progress=lambda msg: None):
                 menu = Path.home() / ".local" / "share" / "applications"
                 menu.mkdir(parents=True, exist_ok=True)
                 (menu / "sunak-desktop.desktop").write_text(
-                    f"[Desktop Entry]\nType=Application\nName=Sunak Desktop\nExec={dest}\nTerminal=false\nCategories=Utility;\n", encoding="utf-8")
+                    f"[Desktop Entry]\nType=Application\nName=Sunak Desktop\nExec=\"{dest}\"\nIcon=web-browser\nTerminal=false\nCategories=Utility;\n", encoding="utf-8")
             elif s == "mac":
                 mnt = Path(tmp) / "mnt"
                 mnt.mkdir()
@@ -162,7 +209,9 @@ def uninstall():
             un = p / "uninstall.exe"
             if not un.exists():
                 raise DesktopError("The uninstaller was not found. Remove 'Sunak' in Windows Settings → Apps.")
-            subprocess.run([str(un), "/S"], check=True)
+            # without _?= the NSIS uninstaller copies itself away and returns at once, before anything is removed
+            subprocess.run([str(un), "/S", f"_?={p}"], check=True)
+            shutil.rmtree(p, ignore_errors=True)
         elif s == "mac":
             shutil.rmtree(p)
         else:
