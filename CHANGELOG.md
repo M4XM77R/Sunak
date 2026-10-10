@@ -4,6 +4,11 @@ All changes to Sunak, newest version first. Sunak shows the entries between your
 
 Format: one section per version, `## [a.b.c] – YYYY-MM-DD`, followed by short points under **Added**, **Changed**, **Fixed** or **Removed**. Every change to Sunak gets a new version and an entry here.
 
+## [0.23.0] – 2026-10-09
+
+### Added
+- The chat model now answers in the language of the interface. German interface: German answers, English interface: English answers, even when your message or an attached file is in another language. If you explicitly ask for another language ("answer in French"), that wins; translations, code and quotations stay in their own language. Switching the interface language (Settings → Look → Language) applies to the next message. The page sends its language as an optional `lang` field (`"de"` or `"en"`) with every request; an unknown or missing value changes nothing.
+- Other texts the model writes for you follow the interface as well: the web research report, the comparison of several models, tool runs (MCP), the facts Sunak remembers about you, and e-mail summaries and inbox overviews. Drafted e-mail replies and calendar events still follow the language of the e-mail or text they are based on.
 ## [0.22.0] – 2026-10-09
 
 ### Added
@@ -27,6 +32,7 @@ Format: one section per version, `## [a.b.c] – YYYY-MM-DD`, followed by short 
 - The login and PIN limits count an attempt before the slow password check, not after it, so a burst of parallel requests cannot get past the limit.
 
 Note: because the password and each PIN also lock after 20 wrong tries from all devices together, someone guessing from many addresses can lock the owner out for up to 15 minutes (restarting Sunak clears it). This is a deliberate trade-off.
+
 ## [0.20.1] – 2026-10-09
 
 ### Fixed

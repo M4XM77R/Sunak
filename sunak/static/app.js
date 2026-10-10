@@ -25,9 +25,12 @@ const state = { settings: null, models: [], modelErrors: [], sessions: [], sessi
   kb: { files: [], chars: 0 } };
 
 /* ---------------- API ---------------- */
+// the model answers in the interface language: every request carries it (the server ignores it where it has no use)
+const withLang = (body) => (body && typeof body === 'object' && !Array.isArray(body) ? { lang: sunakLang, ...body } : body);
+
 async function api(path, opts = {}) {
   const init = { method: opts.method || 'GET', headers: { 'X-Requested-With': 'sunak' } };
-  if (opts.body !== undefined) { init.headers['Content-Type'] = 'application/json'; init.body = JSON.stringify(opts.body); }
+  if (opts.body !== undefined) { init.headers['Content-Type'] = 'application/json'; init.body = JSON.stringify(withLang(opts.body)); }
   if (opts.signal) init.signal = opts.signal;
   const r = await fetch(path, init);
   if (r.status === 401) { location.reload(); throw new Error('Login required'); }
@@ -38,7 +41,7 @@ async function api(path, opts = {}) {
 }
 
 async function stream(path, body, onEvent, signal) {
-  const r = await fetch(path, { method: 'POST', signal, body: JSON.stringify(body),
+  const r = await fetch(path, { method: 'POST', signal, body: JSON.stringify(withLang(body)),
     headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'sunak' } });
   if (!r.ok) {
     const d = await r.json().catch(() => ({}));

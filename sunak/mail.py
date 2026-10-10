@@ -24,6 +24,7 @@ import time
 from email.headerregistry import Address
 from email.message import EmailMessage
 
+from . import lang as lang_mod
 from . import research
 
 TIMEOUT = 20
@@ -783,7 +784,7 @@ def mail_as_text(m, limit=12000):
     return "\n".join(head) + "\n\n" + text
 
 
-def ai_messages(task, acc, mail_text="", instruction="", memories=()):
+def ai_messages(task, acc, mail_text="", instruction="", memories=(), lang=""):
     """Chat messages for an AI task on mail: 'summarize' one mail, draft a 'reply', or an 'overview' of a list."""
     me = show_address(acc.get("name") or "", acc["email"]) if acc else "the user"
     if task == "summarize":
@@ -802,6 +803,8 @@ def ai_messages(task, acc, mail_text="", instruction="", memories=()):
     else:
         raise MailError("Unknown task")
     system += " " + SAFETY
+    if task != "reply" and lang_mod.clean(lang):  # summaries and overviews follow the interface; a reply the mail
+        system += " Write in " + lang_mod.NAMES[lang_mod.clean(lang)] + ", the language of the user's interface."
     if memories:
         system += "\n\nThings you know about the user:\n" + "\n".join(f"- {x}" for x in memories)
     user = f"<email>\n{mail_text}\n</email>" if task != "overview" else f"<emails>\n{mail_text}\n</emails>"
