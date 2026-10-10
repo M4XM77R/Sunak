@@ -461,6 +461,10 @@
         <div class="row"><button class="btn" id="checkNow" type="button"><i data-i="refresh"></i>Check for updates now</button><span class="muted small" id="checkResult" role="status"></span><button class="btn primary hidden" id="installNow" type="button">Install update</button></div>
         <div id="checkChangelog"></div>
 
+        <h2>Desktop app</h2>
+        <p class="muted small">Sunak in its own window instead of the browser. The finished app is downloaded from GitHub and needs this Sunak installation; it starts and stops the server itself. It is not code-signed, so Windows and macOS warn on the first start.</p>
+        <div class="row"><button class="btn" id="desktopBtn" type="button"><i data-i="download"></i>Install desktop app</button><span class="muted small" id="desktopMsg" role="status"></span></div>
+
         <h2>Error reports</h2>
         <p class="muted small">When Sunak hits an unexpected error, it can turn it into an issue on GitHub so it can be fixed. A report contains the Sunak version, system, Python version, the error with its stack trace and the last log lines. It never contains chats, prompts, mail or file contents, API keys or passwords; private paths, host names, IP addresses and long quoted texts are masked.</p>
         <p class="small"><b>These issues are public: everyone can read them on GitHub.</b></p>

@@ -158,28 +158,13 @@ if ($env:SUNAK_NO_OLLAMA -ne "1" -and -not (Get-Command ollama -ErrorAction Sile
   }
 }
 
-# 5. Desktop app (optional, opt-in): the finished package from the newest GitHub release "desktop-v*"
-# (no Rust, no local build). A failure here is only a hint; the normal installation is complete.
-function Install-Desktop {
-  try {
-    $rels = Invoke-RestMethod "https://api.github.com/repos/$Repo/releases?per_page=30" -UseBasicParsing
-    $url = $null
-    foreach ($r in $rels) {
-      if (-not "$($r.tag_name)".StartsWith("desktop-v") -or $r.draft -or $r.prerelease) { continue }
-      $a = $r.assets | Where-Object { $_.name -like "*-setup.exe" } | Select-Object -First 1
-      if ($a) { $url = $a.browser_download_url; break }
-    }
-    if (-not $url) { Write-Warning "No desktop app package found (no release yet?). Sunak itself is installed; see desktop/README.md to build the app."; return }
-    $exe = Join-Path $env:TEMP "sunak-desktop-setup.exe"
-    Say "Downloading the desktop app..."
-    Invoke-WebRequest -UseBasicParsing $url -OutFile $exe
-    Start-Process $exe -ArgumentList "/S" -Wait
-    Remove-Item -Force -ErrorAction SilentlyContinue $exe
-    Say "Desktop app: OK (Start Menu: Sunak; not signed, SmartScreen may warn)"
-  } catch { Write-Warning "Desktop app not installed: $($_.Exception.Message)" }
-}
+# 5. Desktop app (optional, opt-in): "sunak desktop install" downloads the finished package from the newest
+# GitHub release "desktop-v*" (no Rust). A failure is only a hint; the normal installation is complete.
 if ($env:SUNAK_DESKTOP -eq "1" -or ($env:SUNAK_YES -ne "1" -and (Read-Host "Also install the desktop app (Sunak in its own window)? [y/N]") -match '^[yY]')) {
-  Install-Desktop
+  Push-Location $AppDir
+  & $cmd desktop install
+  if ($LASTEXITCODE -ne 0) { Write-Warning "Desktop app not installed. Sunak itself is ready; try later: sunak desktop install" }
+  Pop-Location
 }
 
 Write-Host "`n  Done! Start Sunak with the desktop icon or by typing: sunak`n" -ForegroundColor Magenta

@@ -3446,7 +3446,7 @@ function renderSettings() {
   renderMailAccounts();
   renderCalSources();
   renderProfile();
-  if (isAdmin()) renderLan();
+  if (isAdmin()) { renderLan(); renderDesktop(); }
   $('#aboutLine').textContent = `Sunak ${state.status?.version || ''} · ${state.status?.ram_gb ? state.status.ram_gb + ' GB RAM' : ''}`;
   filterSettings();
 }
@@ -3698,6 +3698,33 @@ $('#stopBtn').onclick = async () => {
   await api('/api/shutdown', { method: 'POST' });
   document.body.innerHTML = '<div class="welcome"><h2>Sunak stopped</h2><p class="muted">Start it again with the Sunak icon or the <code>sunak</code> command.</p></div>';
 };
+
+/* ---------------- Desktop app (optional, Tauri) ---------------- */
+async function renderDesktop(poll) {
+  if (!isAdmin()) return;
+  let d;
+  try { d = await api('/api/desktop'); } catch (e) { return; }
+  const btn = $('#desktopBtn');
+  btn.disabled = d.busy;
+  btn.classList.toggle('hidden', !d.supported);
+  btn.lastChild.textContent = d.installed ? tr('Remove desktop app') : tr('Install desktop app');
+  $('#desktopMsg').textContent = d.busy ? (d.msg || '…') : d.error ? d.error : !d.supported ? tr('There is no desktop app package for this system.') : d.done && poll ? tr('Done ✓') : d.installed ? tr('Installed ✓') : '';
+  if (d.busy) setTimeout(() => renderDesktop(true), 1000);
+}
+$('#desktopBtn').onclick = async () => {
+  const remove = $('#desktopBtn').lastChild.textContent === tr('Remove desktop app');
+  try { await api(`/api/desktop/${remove ? 'uninstall' : 'install'}`, { method: 'POST' }); } catch (e) { toast(e.message); return; }
+  renderDesktop(true);
+};
+// once after the update to 1.1.0: a hint that the desktop app exists (never installs anything by itself)
+async function desktopHint() {
+  if (!isAdmin()) return;
+  let d;
+  try { d = await api('/api/desktop'); } catch (e) { return; }
+  if (!d.notice) return;
+  api('/api/desktop/dismiss', { method: 'POST' }).catch(() => {});
+  toast(tr('New: Sunak as a desktop app.'), { label: tr('Settings'), fn: () => { show('settings'); renderDesktop(); $('#desktopBtn').scrollIntoView(); } });
+}
 
 /* ---------------- Updates ---------------- */
 async function checkUpdate() {
@@ -4052,6 +4079,7 @@ async function refreshAll(poll = false) {
   loadUsage();
   checkUpdate();
   setTimeout(checkUpdate, 20000);
+  setTimeout(desktopHint, 4000);
   setInterval(checkUpdate, 3600000);
   setTimeout(checkNewMail, 5000);
   setInterval(checkNewMail, MAIL_POLL);
