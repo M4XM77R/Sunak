@@ -1,4 +1,4 @@
-"""The sunak command: start Sunak (`python -m sunak [--port 7000] [--host 127.0.0.1] [--no-browser]`) or run
+"""The sunak command: start Sunak (`python -m sunak [--port 7000] [--host 127.0.0.1] [--no-browser] [--verbose]`) or run
 one of the commands in COMMANDS. `sunak -h` shows them all, `sunak <command> -h` the details of one."""
 
 import argparse
@@ -12,7 +12,7 @@ import threading
 import webbrowser
 from pathlib import Path
 
-from . import __version__, backup, changelog, desktop, desktopapp, gpu, log, updates
+from . import __version__, backup, changelog, desktop, desktopapp, gpu, log, updates, verbose
 from .server import App, make_server
 
 
@@ -113,12 +113,14 @@ OPTIONS = (  # options for starting Sunak
     ("--host ADDRESS", "Address to listen on (default 127.0.0.1)", "sunak --host 0.0.0.0"),
     ("--data-dir PATH", "Folder for your data (default ~/.sunak)", "sunak --data-dir ~/ai"),
     ("--no-browser", "Do not open the browser", "sunak --no-browser"),
+    ("-v, --verbose", "Log every request in full (secrets masked)", "sunak --verbose"),
+    ("--log-file PATH", "Also write the verbose log to this file", "sunak -v --log-file verbose.log"),
     ("-h, --help", "Show this help", "sunak -h"),
     ("--version", "Print the version", "sunak --version"),
 )
-ENV_VARS = ("SUNAK_PORT", "SUNAK_HOST", "SUNAK_DATA", "SUNAK_PASSWORD", "SUNAK_NO_BROWSER", "SUNAK_DEBUG",
+ENV_VARS = ("SUNAK_PORT", "SUNAK_HOST", "SUNAK_DATA", "SUNAK_PASSWORD", "SUNAK_NO_BROWSER", "SUNAK_DEBUG", "SUNAK_VERBOSE", "SUNAK_LOG_FILE",
             "SUNAK_ALLOWED_HOSTS", "SUNAK_ALLOW_PRIVATE_FETCH", "SUNAK_MODEL_SLOTS", "SUNAK_REPORT_REPO", "OLLAMA_BASE_URL", "ANTHROPIC_API_KEY", "SEARXNG_URL", "NO_COLOR")
-START_OPTIONS = ("--port", "--host", "--data-dir", "--no-browser", "--version", "--help", "-h")
+START_OPTIONS = ("--port", "--host", "--data-dir", "--no-browser", "--verbose", "-v", "--log-file", "--version", "--help", "-h")
 
 
 def help_text(width=None):
@@ -427,6 +429,8 @@ def main(argv=None):
     ap.add_argument("--port", type=int, default=port)
     ap.add_argument("--data-dir", default=os.environ.get("SUNAK_DATA", str(Path.home() / ".sunak")))
     ap.add_argument("--no-browser", action="store_true", default=bool(os.environ.get("SUNAK_NO_BROWSER")))
+    ap.add_argument("-v", "--verbose", action="store_true", default=bool(os.environ.get("SUNAK_VERBOSE")))
+    ap.add_argument("--log-file", default=os.environ.get("SUNAK_LOG_FILE") or None)
     ap.add_argument("--version", action="version", version=__version__)
     args = ap.parse_args(argv)
 
@@ -439,6 +443,10 @@ def main(argv=None):
         return 0
 
     log_file = log.setup(args.data_dir)
+    if args.verbose or args.log_file:  # --log-file implies --verbose
+        verbose_file = verbose.enable(args.log_file)
+        if sys.stderr is not None:
+            print(verbose.banner(verbose_file), file=sys.stderr)
 
     def thread_crashed(info):  # a background thread died: log it (with its traceback) instead of printing it alone
         if info.exc_type is not SystemExit and not issubclass(info.exc_type, (BrokenPipeError, ConnectionError)):

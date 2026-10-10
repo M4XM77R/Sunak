@@ -31,6 +31,7 @@ from urllib.parse import parse_qs, quote, urlparse
 from . import (__version__, backup, cal, desktopapp, extract, gpu, imagegen, images, intent, jobqueue, knowledge, log, mail, mcp, memory, modelsearch, netguard, office,
                ollama, providers, qr, reminders, reports, research, sdcpp, speech, toolrun, updates, usage)
 from . import lang as sunak_lang
+from . import verbose
 from .db import DB, new_id
 
 log_http = log.get("http")
@@ -1152,9 +1153,19 @@ class Handler(BaseHTTPRequestHandler):
         """Handle one request and log it: method, path (no query), status, duration. Never the contents."""
         started = time.monotonic()
         self._status, self._stream_error = 0, ""
+        taps = None
+        if verbose.enabled():  # remember what comes in and goes out, for `sunak --verbose`
+            taps = (verbose.Tap(self.rfile), verbose.Tap(self.wfile))
+            self.rfile, self.wfile = taps
         try:
             self.dispatch(method)
         finally:
+            if taps:
+                self.rfile, self.wfile = taps[0]._s, taps[1]._s
+                try:
+                    verbose.log_incoming(self, method, urlparse(self.path).path, started, taps[0], taps[1], self._status or 0)
+                except Exception:  # noqa: BLE001 - never let logging break a request
+                    pass
             took = time.monotonic() - started
             path = urlparse(self.path).path
             status = self._status or 0

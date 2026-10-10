@@ -4,6 +4,14 @@ All changes to Sunak, newest version first. Sunak shows the entries between your
 
 Format: one section per version, `## [a.b.c] – YYYY-MM-DD`, followed by short points under **Added**, **Changed**, **Fixed** or **Removed**. Every change to Sunak gets a new version and an entry here.
 
+## [1.3.0] – 2026-10-10
+
+### Added
+- `sunak --verbose` (also `-v`, or `SUNAK_VERBOSE=1`) logs everything in full to the terminal: each request Sunak sends to a model backend (Ollama, Claude, OpenAI-compatible), web search, calendar, GitHub and other services with method, URL, headers and body, the answer (status, headers, body; a streamed answer as the assembled text when it ends), and each request the Sunak server receives with its answer and duration. `--log-file PATH` (or `SUNAK_LOG_FILE`) also writes it to a file and switches verbose mode on. Without these options nothing changes.
+- API keys, passwords, PINs, tokens, cookies and the Authorization header stay masked even in verbose mode. Pictures and other binary data are replaced by their size, long bodies are cut with the number of missing characters. Mail (IMAP/SMTP) is not logged.
+- The verbose log is separate from `sunak.log` and from error reports: it contains your chats and prompts, so it is never sent anywhere.
+- The environment variables work with autostart and the desktop app, too.
+
 ## [1.1.0] – 2026-10-10
 
 ### Added
