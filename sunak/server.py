@@ -28,7 +28,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlparse
 
-from . import (__version__, backup, cal, extract, gpu, imagegen, images, intent, jobqueue, knowledge, log, mail, mcp, memory, modelsearch, office,
+from . import (__version__, backup, cal, extract, gpu, imagegen, images, intent, jobqueue, knowledge, log, mail, mcp, memory, modelsearch, netguard, office,
                ollama, providers, qr, reminders, reports, research, sdcpp, speech, toolrun, updates, usage)
 from .db import DB, new_id
 
@@ -65,6 +65,7 @@ DEFAULT_SETTINGS = {
     "reminders": False,      # 🔔 calendar reminders (reminders.py): pages show them, ntfy sends them as push messages
     "ntfy_url": "",          # ntfy server for the push messages ("" = https://ntfy.sh); of the installation, only admins set it
     "ntfy_topic": "",        # the topic the phone subscribes to ("" = no push messages); it is the only secret of a public topic
+    "intro_seen": False,     # the introduction (first start of a profile, Settings → Introduction) was shown or skipped
     "reminder_lang": "en",   # language of the push messages: the interface language the settings were last saved in
 }
 INT_PREFS = {"image_gen_size": (512, 1024),
@@ -249,6 +250,8 @@ class App:
         self.db = self.main = DB(str(self.data_dir / "sunak.db"))
         self.root, self.profile, self.user_dir = self, "default", self.data_dir
         self._profile_dbs, self._profiles_lock = {}, threading.Lock()
+        # wrong passwords and PINs: per client address (strict) and per account (loose, against many addresses)
+        self.ip_limit, self.account_limit = netguard.LoginLimiter(free=5), netguard.LoginLimiter(free=20, base=15)
         self._model_lists = {}  # (provider id, address) -> model names of the last success, for every profile
         if not self.main.get_setting("secret"):
             self.main.set_setting("secret", secrets.token_hex(32))
@@ -1235,9 +1238,19 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError:
             return False
 
+    FORWARD_HEADERS = ("X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Proto", "Forwarded", "X-Real-IP", "Via",
+                       "CF-Connecting-IP", "True-Client-IP")
+
     def is_direct_local(self):
-        """From this computer and not forwarded by a reverse proxy (then anyone could be behind it)."""
-        return self.is_loopback() and not (self.headers.get("X-Forwarded-For") or self.headers.get("Forwarded"))
+        """From this computer and not forwarded by a reverse proxy (then anyone could be behind it): from
+        loopback, addressed as localhost or an IP address of this computer, and without any of the headers
+        proxies add. A proxy on this computer that adds none of them and passes the Host header of its upstream
+        cannot be told apart; it has to set X-Forwarded-For (see the README)."""
+        if not self.is_loopback() or any(self.headers.get(h) for h in self.FORWARD_HEADERS):
+            return False
+        host = (self.headers.get("Host") or "").strip().lower()
+        host = host[1:].split("]")[0] if host.startswith("[") else host.rsplit(":", 1)[0] if host.count(":") == 1 else host
+        return not host or host == "localhost" or host.endswith(".localhost") or host in ("127.0.0.1", "::1")
 
     def is_loopback(self):
         """True when the request comes from this computer."""
@@ -1348,13 +1361,48 @@ class Handler(BaseHTTPRequestHandler):
             "instance": self.app.instance,
         })
 
+    def client_key(self):
+        """Who a failed password or PIN is counted for: the client address (behind a reverse proxy on this
+        computer the address it passed on in X-Forwarded-For)."""
+        fwd = (self.headers.get("X-Forwarded-For") or "").split(",")[-1].strip()
+        return "ip:" + (fwd if fwd and self.is_loopback() else self.client_address[0])
+
+    def too_many_attempts(self, *keys):
+        """Reserve an attempt for a password or PIN check (the first key is the client, the rest the account):
+        False when it may go ahead (it is already counted as wrong, `attempt` takes that back after a right
+        answer, so parallel requests cannot all pass before the first check ends), True after answering 429
+        with Retry-After while one of the keys is locked."""
+        wait = self.app.ip_limit.acquire(keys[0]) or self.app.account_limit.acquire(*keys[1:])
+        if not wait:
+            return False
+        body = json.dumps({"error": "Too many wrong attempts. Try again later.", "retry_after": wait}).encode()
+        self.send_response(429)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Retry-After", str(wait))
+        self.end_headers()
+        self.wfile.write(body)
+        return True
+
+    def attempt(self, good, *keys):
+        """After a password or PIN check: a right answer clears the counters reserved by too_many_attempts."""
+        if good:
+            self.app.ip_limit.ok(keys[0])
+            self.app.account_limit.ok(*keys[1:])
+
     def login(self):
-        """POST /api/login: check the password and set the login cookie."""
+        """POST /api/login: check the password and set the login cookie (wrong ones are counted, see too_many_attempts)."""
         data = self.body()
         stored = self.app.main.get_setting("password_hash")
-        if stored and not check_password(self.text(data, "password"), stored):
-            time.sleep(1)
-            return self.error("Wrong password", 401)
+        if stored:
+            keys = (self.client_key(), "login")
+            if self.too_many_attempts(*keys):
+                return
+            good = check_password(self.text(data, "password"), stored)
+            self.attempt(good, *keys)
+            if not good:
+                time.sleep(1)
+                return self.error("Wrong password", 401)
         body = b'{"ok": true}'
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -1402,6 +1450,10 @@ class Handler(BaseHTTPRequestHandler):
         return {"id": p["id"], "name": p.get("name", ""), "emoji": p.get("emoji", ""), "admin": bool(p.get("admin")),
                 "has_pin": bool(p.get("pin_hash"))}
 
+    def profile_public_for(self, p):
+        """profile_public, plus `locked`: this admin profile cannot be chosen from here without a PIN."""
+        return dict(self.profile_public(p), locked=self.admin_needs_pin(p))
+
     def chosen_profile(self):
         """The profile of this request: from the profile cookie, or the only profile when there is one
         without a PIN. None when the user has to choose."""
@@ -1418,7 +1470,7 @@ class Handler(BaseHTTPRequestHandler):
     def profiles_list(self):
         """GET /api/profiles: all profiles (no PINs), the current one, and whether the user must choose."""
         cur = self.chosen_profile()
-        self.send_json({"profiles": [self.profile_public(p) for p in self.app.profiles()],
+        self.send_json({"profiles": [self.profile_public_for(p) for p in self.app.profiles()],
                         "current": cur["id"] if cur else None, "need_choice": cur is None})
 
     def set_profile_cookie(self, value, max_age=31536000):
@@ -1430,15 +1482,29 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def admin_needs_pin(self, p):
+        """True when `p` is an admin profile without a PIN that may not be chosen from here: with other profiles
+        around, only this computer itself (not through the network or a proxy) may open it, so a guest on the
+        phone or network cannot become admin by tapping the tile. A device that already is in it stays in."""
+        return bool(p.get("admin") and not p.get("pin_hash") and len(self.app.profiles()) > 1 and not self.is_direct_local())
+
     def profile_select(self):
         """POST /api/profiles/select {id, pin}: switch to a profile (its PIN, if it has one)."""
         d = self.body()
         p = self.app.profile_info(self.text(d, "id"))
         if not p:
             return self.error("Unknown profile", 404)
-        if p.get("pin_hash") and not check_password(self.text(d, "pin"), p["pin_hash"]):
-            time.sleep(1)
-            return self.error("Wrong PIN", 403)
+        if self.admin_needs_pin(p):
+            return self.error("This admin profile needs a PIN first. Set one on the computer Sunak runs on (Settings → Profile).", 403)
+        if p.get("pin_hash"):
+            keys = (self.client_key(), "pin:" + p["id"])
+            if self.too_many_attempts(*keys):
+                return
+            good = check_password(self.text(d, "pin"), p["pin_hash"])
+            self.attempt(good, *keys)
+            if not good:
+                time.sleep(1)
+                return self.error("Wrong PIN", 403)
         self.set_profile_cookie(self.app.profile_cookie(p))
 
     def profile_leave(self):

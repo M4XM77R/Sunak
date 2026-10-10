@@ -73,7 +73,7 @@ class ProfilesTest(unittest.TestCase):
 
     def test_one_profile_needs_no_choice(self):
         res = self.req("GET", "/api/profiles")
-        self.assertEqual(res, {"profiles": [{"id": "default", "name": "", "emoji": "", "admin": True, "has_pin": False}],
+        self.assertEqual(res, {"profiles": [{"id": "default", "name": "", "emoji": "", "admin": True, "has_pin": False, "locked": False}],
                                "current": "default", "need_choice": False})
         self.assertEqual(self.req("GET", "/api/settings")["profile"]["id"], "default")
 

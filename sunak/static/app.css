@@ -646,3 +646,19 @@ input.emoji { width: 52px; min-width: 0; flex: none; text-align: center; }
 @media (min-width: 700px) { .slash-desc { flex-basis: auto; margin-left: auto; text-align: right; } }
 .slash-event { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; padding: 6px 10px; border-left: 3px solid var(--c, var(--accent)); margin: 2px 8px; }
 .slash-event .when { color: var(--muted); min-width: 5.5em; font-size: 13px; }
+
+/* introduction (first start of a profile) */
+.intro { position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; padding: 16px; background: #000000a6; overflow: auto; }
+.intro-card { width: min(520px, 100%); max-height: 100%; overflow: auto; padding: 28px 28px 22px; background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 18px; box-shadow: 0 20px 60px #00000080; }
+.intro-icon { width: 52px; height: 52px; display: grid; place-items: center; margin-bottom: 14px; border-radius: 14px; background: var(--accent-soft); color: var(--accent); }
+.intro-icon .ic { width: 28px; height: 28px; }
+.intro-card h2 { margin: 0 0 10px; font-size: 22px; }
+.intro-card p { margin: 0 0 10px; line-height: 1.55; }
+.intro-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 8px; }
+.intro-chips code { padding: 3px 9px; border-radius: 999px; background: var(--panel-2); border: 1px solid var(--border); color: var(--accent); }
+.intro-dots { display: flex; justify-content: center; gap: 6px; margin: 18px 0 14px; }
+.intro-dots span { width: 8px; height: 8px; border-radius: 50%; background: var(--border); }
+.intro-dots span.on { background: var(--accent); }
+.intro-nav { display: flex; align-items: center; gap: 8px; }
+.intro-nav .spacer { flex: 1; }
+@media print { .intro { display: none !important; } }

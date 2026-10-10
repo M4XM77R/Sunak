@@ -724,6 +724,7 @@ async function runSlash(sl) {
     case 'hilfe':
       clear();
       slashShow(tr('Slash commands'), [el('p', { class: 'muted small' }, 'Type / in the message box. German and English names both work.'),
+        el('p', { class: 'muted small' }, 'To send a message that starts with a slash (like /tmp), type two slashes: //tmp'),
         ...SLASH.map((x) => el('button', { class: 'slash-item', type: 'button', onclick: () => slashFill(x) },
           el('b', { 'data-no-i18n': '' }, `/${x.name}`), x.alias.length ? el('span', { class: 'muted', 'data-no-i18n': '' }, x.alias.map((a) => `/${a}`).join(' ')) : null,
           x.arg ? el('span', { class: 'muted small slash-arg' }, `<${tr(x.arg)}>`) : null, el('span', { class: 'muted small slash-desc' }, tr(x.desc))))]);
@@ -802,8 +803,11 @@ async function sendNow(skipAssist) {
   let text = promptEl.value.trim();
   if (!text && !state.attachments.length) return;
   if (!state.attachments.length && !sendOverride) {
-    const sl = slashParse(text);
-    if (sl && (sl.cmd || !sl.arg)) { await runSlash(sl); return; }
+    if (text.startsWith('//')) text = text.slice(1);  // "//tmp" sends "/tmp" as an ordinary message
+    else {
+      const sl = slashParse(text);
+      if (sl && (sl.cmd || !sl.arg)) { await runSlash(sl); return; }
+    }
   }
   if (!state.attachments.length && !sendOverride) {
     const act = skipAssist ? null : await assistantIntent(text);
@@ -3832,7 +3836,7 @@ async function showProfilePicker(res) {
     el('h1', {}, 'Who is using Sunak?'),
     el('div', { class: 'profile-tiles' }, res.profiles.map((p) => el('button', { class: 'profile-tile', type: 'button', onclick: () => pick(p) },
       profileFace(p),
-      el('span', p.name ? { 'data-no-i18n': '' } : {}, profileName(p)), p.has_pin ? el('span', { class: 'muted small', title: 'PIN' }, icon('lock', 'solo')) : null))),
+      el('span', p.name ? { 'data-no-i18n': '' } : {}, profileName(p)), p.has_pin || p.locked ? el('span', { class: 'muted small', title: p.locked ? tr('Needs a PIN') : 'PIN' }, icon('lock', 'solo')) : null))),
     pinBox);
   async function select(p, pin) {
     try { await api('/api/profiles/select', { method: 'POST', body: { id: p.id, pin } }); location.reload(); }
@@ -3874,6 +3878,7 @@ function profileForm(p, onSave, isNew) {
     el('div', { class: 'row' }, pin,
       p.has_pin ? el('button', { class: 'btn', type: 'button', onclick: () => onSave({ pin: '' }) }, 'Remove PIN') : null),
     isAdmin() ? el('label', { class: 'check' }, admin, 'Admin: may change providers, tools, password and profiles') : null,
+    !p.has_pin && p.admin ? el('p', { class: 'muted small' }, 'Admin profiles need a PIN. Without one, only this computer can open the profile as long as there are other profiles.') : null,
     el('div', { class: 'row' }, save, isNew ? el('button', { class: 'btn', type: 'button', onclick: () => renderProfile() }, 'Cancel') : null));
   form.onsubmit = (e) => {
     e.preventDefault();
@@ -3934,6 +3939,71 @@ async function renderProfile() {
   box.append(el('h3', {}, 'Other profiles'), list, add);
 }
 
+/* ---------------- Introduction ----------------
+   A short tour that opens once, the first time a profile is used (the setting intro_seen of the profile), and again from
+   Settings → Introduction. Skipping, Escape and finishing all count as seen. Plain overlay, no external files. */
+// BEGIN introSteps (tests/test_intro_js.py runs this part with node)
+// icon: a name from icons.js; text: paragraphs; chips: example inputs shown as chips
+const INTRO = [
+  { icon: 'sail', title: 'Welcome to Sunak', text: ['Your private AI workspace. Chats, documents, notes, mail and calendar all stay on this computer.', 'This tour takes about a minute. You can skip it now and open it again later under Settings → Introduction.'] },
+  { icon: 'chat', title: 'Chat with your models', text: ['Pick a model and a persona at the top, then just write. The + next to the message box switches the knowledge base, web search and tools on or off, and the paperclip attaches files and pictures. You can also paste a screenshot.', 'Sunak runs models on your own computer through Ollama. Prefer a cloud model? Add one under Settings → Providers.'] },
+  { icon: 'terminal', title: 'Slash commands', text: ['Type / at the start of the message box to see all commands. German and English names both work.'], chips: ['/termin', '/mail', '/bild', '/web', '/heute', '/woche', '/wissen', '/modell', '/hilfe'] },
+  { icon: 'book', title: 'Your files and your notes', text: ['Knowledge: add your files, then switch on Knowledge base in the chat to ask about them. Documents: write with an AI helper at your side. Notes & Memory: Sunak remembers lasting facts about you, and you can always see and delete them.', 'Research reads the web for you and writes a report with sources. Compare sends one question to several models.'] },
+  { icon: 'calendar', title: 'Mail and calendar', text: ['Connect your e-mail and calendar accounts under Settings. Then ask in the chat, for example “add dentist tomorrow at 10” or “write Anna that I will be late”: Sunak shows a card, and nothing is saved or sent before you click.'] },
+  { icon: 'palette', title: 'Make it yours', text: ['The palette button at the top changes the theme. Under Settings you find the language, profiles with PINs, reminders, backups and the token counter.', 'That is all. Type / in the chat to get going.'] },
+];
+// END introSteps
+const intro = { el: null, i: 0, back: null };
+function introClose() {
+  if (!intro.el) return;
+  intro.el.remove(); intro.el = null;
+  document.removeEventListener('keydown', introKey, true);
+  intro.back?.focus?.(); intro.back = null;
+  if (!state.settings?.intro_seen) {
+    state.settings.intro_seen = true;  // not shown again in this session, whatever happens below
+    api('/api/settings', { method: 'PUT', body: { intro_seen: true } }).catch((e) => toast(tr('Could not save that the introduction was shown, so it may open again: {error}', { error: e.message })));
+  }
+}
+function introKey(e) {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); e.stopPropagation(); }  // no new chat behind the tour
+  else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); introClose(); }
+  else if (e.key === 'Tab') {  // keep the focus inside the dialog
+    const f = [...intro.el.querySelectorAll('button')];
+    if (!f.length) return;
+    const first = f[0], last = f.at(-1);
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    else if (!intro.el.contains(document.activeElement)) { e.preventDefault(); first.focus(); }
+  }
+}
+function introRender() {
+  const step = INTRO[intro.i], last = intro.i === INTRO.length - 1;
+  const card = el('div', { class: 'intro-card' },
+    el('div', { class: 'intro-icon' }, icon(step.icon)),
+    el('h2', { id: 'introTitle' }, tr(step.title)),
+    step.text.map((t) => el('p', {}, tr(t))),
+    step.chips ? el('div', { class: 'intro-chips', 'data-no-i18n': '' }, step.chips.map((c) => el('code', {}, c))) : null,
+    el('div', { class: 'intro-dots', 'aria-hidden': 'true' }, INTRO.map((_, i) => el('span', { class: i === intro.i ? 'on' : '' }))),
+    el('div', { class: 'intro-nav' },
+      last ? null : el('button', { class: 'btn', type: 'button', onclick: introClose }, tr('Skip')),
+      el('span', { class: 'spacer' }),
+      intro.i ? el('button', { class: 'btn', type: 'button', onclick: () => { intro.i--; introRender(); } }, tr('Back')) : null,
+      el('button', { class: 'btn primary', type: 'button', onclick: () => { if (last) introClose(); else { intro.i++; introRender(); } } }, tr(last ? 'Get started' : 'Next'))));
+  card.setAttribute('role', 'document');
+  intro.el.replaceChildren(card);
+  card.querySelector('.btn.primary').focus();
+}
+function showIntro() {
+  if (intro.el) return;
+  intro.i = 0;
+  intro.back = document.activeElement;
+  intro.el = el('div', { class: 'intro', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'introTitle' });
+  document.body.append(intro.el);
+  document.addEventListener('keydown', introKey, true);
+  introRender();
+}
+$('#introAgain').onclick = showIntro;
+
 /* ---------------- Boot ---------------- */
 document.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); newChat(); }
@@ -3971,6 +4041,7 @@ async function refreshAll(poll = false) {
   await Promise.all([refreshAll(), loadSessions()]);
   renderMessages();
   promptEl.focus();
+  if (!state.settings.intro_seen) showIntro();
   // pick up a newly started Ollama without reloading
   setInterval(() => { if (!state.models.length && !state.busy && !state.ollamaBusy) refreshAll(true); }, 8000);
   // the update check runs in the background after the start: look again a little later, then hourly
