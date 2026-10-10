@@ -4,6 +4,21 @@ All changes to Sunak, newest version first. Sunak shows the entries between your
 
 Format: one section per version, `## [a.b.c] – YYYY-MM-DD`, followed by short points under **Added**, **Changed**, **Fixed** or **Removed**. Every change to Sunak gets a new version and an entry here.
 
+## [0.21.0] – 2026-10-09
+
+### Added
+- Security package. Wrong passwords and PINs are now counted: after 5 wrong tries from the same device the login and the PIN prompt lock for 30 seconds, and every further wrong try doubles the wait (up to 15 minutes). The installation's password and each profile's PIN also lock after 20 wrong tries from all devices together, so guessing from many addresses does not help. While locked, even the right password has to wait; the page says "Too many wrong attempts. Try again later." (HTTP 429 with `Retry-After`). A right answer starts counting again.
+- Web search and Research read pages only from public internet addresses. Addresses of your own computer or network (`localhost`, `127.0.0.0/8`, `10/8`, `172.16/12`, `192.168/16`, `169.254/16` including cloud metadata services, `::1`, `fc00::/7`, `fe80::/10`, IPv6 forms of these) are refused, also when a public-looking name points there and also after a redirect; such a page is simply skipped. The connection goes to the very address that was checked (the name is looked up once and the check applies to that answer, with the name kept for the Host header and TLS), so a name that answers differently the second time (DNS rebinding) gains nothing. Behind a system proxy the proxy looks the name up itself, so there only the check before the request applies. Your own SearXNG and Ollama on `localhost` keep working. `SUNAK_ALLOW_PRIVATE_FETCH=1` switches the protection off for research on an intranet.
+
+### Changed
+- An admin profile without a PIN can only be opened on the computer Sunak runs on as soon as there are other profiles. From a phone, the network or behind a reverse proxy its tile shows a lock and Sunak asks for a PIN to be set first (Settings → Profile). Devices that are already in the profile, single-profile setups and admin profiles with a PIN are unchanged. Settings → Profile explains this.
+- `GET /api/profiles` has a new field `locked` per profile.
+- "On the computer itself" is checked more strictly (also for `sunak stop` through the page): besides loopback and no `X-Forwarded-For`/`Forwarded`, the request must be addressed as `localhost` or an IP address and carry none of `X-Forwarded-Host`, `X-Forwarded-Proto`, `X-Real-IP`, `Via`, `CF-Connecting-IP`, `True-Client-IP`. A reverse proxy on the same computer that adds no such header cannot be told from a local visit, so it has to set `X-Forwarded-For` (nginx: `proxy_set_header X-Forwarded-For $remote_addr;`); the README says so.
+
+### Fixed
+- The login and PIN limits count an attempt before the slow password check, not after it, so a burst of parallel requests cannot get past the limit.
+
+Note: because the password and each PIN also lock after 20 wrong tries from all devices together, someone guessing from many addresses can lock the owner out for up to 15 minutes (restarting Sunak clears it). This is a deliberate trade-off.
 ## [0.20.1] – 2026-10-09
 
 ### Fixed

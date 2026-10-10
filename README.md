@@ -143,6 +143,7 @@ After an answer, the chat's model checks whether the last question and answer co
 
 Sunak does not compute anything itself; the models run in Ollama. Ollama uses a suitable GPU automatically: NVIDIA via CUDA, AMD via ROCm, Apple Silicon via Metal. The Ollama installer sets everything up; an NVIDIA card only needs the normal driver. Without a suitable GPU (NVIDIA or AMD with at least 3 GB of graphics memory, or Apple Silicon) the models run on the processor, and then small models are the better choice.
 
+- **Web search stays on the internet:** Pages that a search finds are only read from public internet addresses, also after redirects. Addresses on your own computer or network (`localhost`, `192.168.…`, `10.…`, `169.254.…`, IPv6 equivalents) are refused, so a web page cannot make Sunak read from your home network. Your own SearXNG (`SEARXNG_URL`) and Ollama on `localhost` keep working. `SUNAK_ALLOW_PRIVATE_FETCH=1` switches this off, for research on an intranet.
 - `sunak gpu` shows which GPU Sunak found; the installers report it as well.
 - The **Models** page (admin profiles only) shows the GPU and graphics memory, marks models that fit completely with "fits GPU", and shows for each loaded model whether it runs on the GPU or the processor. If Ollama runs on the processor despite a GPU, a warning with a hint appears.
 - Ollama can be started from within Sunak, and on Windows (winget) and macOS (Homebrew) also installed; on Linux Sunak shows the command of the official installer.
@@ -241,6 +242,8 @@ Several people on one Sunak: each profile has its own chats, documents, notes, k
 - **Creating:** Settings → Profile → "Add profile": name, optionally an own emoji, optionally a PIN (at least 4 characters) and whether the profile should be admin. The next time you open Sunak it asks "Who is using Sunak?"; you switch via the name at the top left.
 - The first profile is the main profile with all earlier data; it always stays admin and cannot be deleted.
 - **Rights:** Only admin profiles change providers, models, tools, image generation, voice input, updates, error reports, phone access, the password and profiles.
+- **Admin profiles need a PIN:** As soon as there is more than one profile, an admin profile without a PIN can be chosen only on the computer Sunak runs on (not through the network, a phone or a reverse proxy). Anyone else sees a lock on its tile and has to ask you to set a PIN there (Settings → Profile). A device that is already in the profile stays in. "On the computer itself" means: the request comes from this computer, is addressed as `localhost` or an IP address, and carries none of the headers a proxy adds (`X-Forwarded-For`, `X-Real-IP`, `Forwarded`, `Via`, …). **Behind a reverse proxy on the same computer the proxy must add `X-Forwarded-For`**, otherwise Sunak cannot tell it from a local visit and treats the visitors as local. For nginx: `proxy_set_header X-Forwarded-For $remote_addr;` (or `$proxy_add_x_forwarded_for`) in the `location` block. Safest of all: give admin profiles a PIN.
+- **Wrong PINs and passwords:** After 5 wrong tries from the same device the login and the PIN prompt lock for 30 seconds; every further wrong try doubles the wait, up to 15 minutes. A profile or the password as a whole locks the same way after 20 wrong tries from all devices together. The count is made before the password is checked, so many parallel tries cannot slip through. A right answer starts counting again; restarting Sunak clears the locks. **Trade-off:** because the whole installation locks after 20 wrong tries from any devices, someone who keeps guessing from many addresses can lock you out for up to 15 minutes too (restarting Sunak clears it). That is deliberate: a locked door is better than a guessed password.
 - A PIN separates the profiles inside the app, but does not protect against someone who can open the files under `~/.sunak` on the computer. The password (Security) applies to the whole installation.
 
 ### Token counter
@@ -325,6 +328,7 @@ You set everything important in the interface (Settings). Optionally via environ
 | `SUNAK_GPU` | – | Docker only: `nvidia` or `amd`, so that the CPU warning works there too (the GPU Compose files set it themselves) |
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama address on the first start |
 | `ANTHROPIC_API_KEY` | – | Sets up Claude as a provider automatically on the first start |
+| `SUNAK_ALLOW_PRIVATE_FETCH` | – | `1` lets web search and Research also read pages from the local network (normally refused, see Models, GPU and search) |
 | `SEARXNG_URL` | – | Your own SearXNG instance for web search and Research instead of DuckDuckGo |
 | `NO_COLOR` | – | No colors in the terminal output |
 
