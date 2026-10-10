@@ -3748,7 +3748,7 @@ function changelogView(entries) {
 $('#updateBtn').onclick = () => {
   const u = state.update || {};
   $('#changelogTitle').textContent = u.version ? tr('Update to Sunak {version}', { version: u.version }) : tr('Update Sunak');
-  $('#changelogBody').replaceChildren(changelogView(u.changelog));
+  $('#changelogBody').replaceChildren(changelogView(u.changelog), ...(u.desktop_update ? [el('p', { class: 'muted small' }, tr('The installed desktop app will be updated too, if it is closed.'))] : []));
   $('#changelogDlg').showModal();
 };
 $('#changelogCancel').onclick = () => $('#changelogDlg').close();

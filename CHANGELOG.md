@@ -8,9 +8,17 @@ Format: one section per version, `## [a.b.c] – YYYY-MM-DD`, followed by short 
 
 ### Added
 - `sunak --verbose` (also `-v`, or `SUNAK_VERBOSE=1`) logs everything in full to the terminal: each request Sunak sends to a model backend (Ollama, Claude, OpenAI-compatible), web search, calendar, GitHub and other services with method, URL, headers and body, the answer (status, headers, body; a streamed answer as the assembled text when it ends), and each request the Sunak server receives with its answer and duration. `--log-file PATH` (or `SUNAK_LOG_FILE`) also writes it to a file and switches verbose mode on. Without these options nothing changes.
-- API keys, passwords, PINs, tokens, cookies and the Authorization header stay masked even in verbose mode. Pictures and other binary data are replaced by their size, long bodies are cut with the number of missing characters. Mail (IMAP/SMTP) is not logged.
+- Secrets stay masked even in verbose mode, deny by default: only a short list of harmless headers is shown (all others are hidden), any JSON field whose name looks like a key, token, password, PIN, session, auth or code is hidden with everything inside it, and secret parameters in URLs and form bodies are hidden. Pictures and other binary data are replaced by their size, long bodies are cut with the number of missing characters. Mail (IMAP/SMTP) is not logged.
 - The verbose log is separate from `sunak.log` and from error reports: it contains your chats and prompts, so it is never sent anywhere.
 - The environment variables work with autostart and the desktop app, too.
+
+## [1.2.0] – 2026-10-10
+
+### Added
+- `sunak update` now renews an installed desktop app too, when a newer `desktop-v*` release exists (checked with the version recorded at installation, downloaded with the same SHA-256 check). It never installs the app on its own: without an installed app nothing happens. An open app is not replaced (that is not safe on any system); Sunak says so, and `sunak desktop update` does it after you close the app. A problem with the app never stops the normal update, it only prints a warning.
+- Installations from 1.1.0 have no recorded app version yet, so the first `sunak update` after 1.2.0 renews the app once even if it is current.
+- `sunak desktop update` (and `--auto`, which stays quiet when there is nothing to do).
+- The changelog before an update (terminal and Update dialog) mentions that the desktop app will be updated too, when that is the case.
 
 ## [1.1.0] – 2026-10-10
 
