@@ -8,6 +8,7 @@ Format: one section per version, `## [a.b.c] – YYYY-MM-DD`, followed by short 
 
 ### Added
 - Optional desktop app (Tauri) in `desktop/`: Sunak in its own window instead of the browser. It starts the normal Sunak server on a free local port, shows the unchanged interface and stops the server when the window closes. Sunak must be installed; Python is not bundled, and the window says so if Sunak is missing. A second start only focuses the open window.
+- Installers: opt-in question at the end (default no), or `--desktop` / `SUNAK_DESKTOP=1`, installs the desktop app from the newest `desktop-v*` GitHub release. Without a release or on a failed download only a hint is shown and the normal installation completes. Without the opt-in nothing changes.
 - GitHub Actions workflow `desktop` builds the packages for Windows, macOS and Linux (manually or on a tag `desktop-v*`). It does not run on normal pushes, so the test CI is not slower.
 
 ### Changed

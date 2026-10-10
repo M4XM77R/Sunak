@@ -9,6 +9,7 @@
 #   --no-start     do not start Sunak after installing
 #   --no-shortcut  do not create a desktop icon
 #   --autostart    start Sunak in the background at every login (otherwise you are asked)
+#   --desktop      also install the optional desktop app (also SUNAK_DESKTOP=1; otherwise you are asked, default no)
 set -euo pipefail
 
 REPO="${SUNAK_REPO:-M4XM77R/sunak}"
@@ -16,7 +17,7 @@ BRANCH="${SUNAK_BRANCH:-main}"
 HOME_DIR="${SUNAK_HOME:-$HOME/.sunak}"
 APP_DIR="$HOME_DIR/app"
 BIN_DIR="$HOME/.local/bin"
-YES=0; NO_OLLAMA=0; NO_START=0; AUTOSTART=""; NO_SHORTCUT=0
+YES=0; NO_OLLAMA=0; NO_START=0; AUTOSTART=""; NO_SHORTCUT=0; DESKTOP=""; [ "${SUNAK_DESKTOP:-}" = 1 ] && DESKTOP=1
 for a in "$@"; do
   case "$a" in
     --yes|-y) YES=1 ;;
@@ -24,6 +25,7 @@ for a in "$@"; do
     --no-start) NO_START=1 ;;
     --autostart) AUTOSTART=1 ;;
     --no-shortcut) NO_SHORTCUT=1 ;;
+    --desktop) DESKTOP=1 ;;
     *) echo "Unknown option: $a" >&2; exit 2 ;;
   esac
 done
@@ -174,6 +176,55 @@ if [ "$NO_OLLAMA" = 0 ] && ! command -v ollama >/dev/null; then
   fi
 fi
 command -v ollama >/dev/null && say "Ollama ✓"
+
+# 5. Desktop app (optional, opt-in) --------------------------------------
+# Downloads the finished package from the newest GitHub release "desktop-v*"; no Rust, no local build.
+# Any failure is only a hint: the normal installation is already complete.
+install_desktop() {
+  command -v curl >/dev/null || { warn "Desktop app: curl is needed."; return 1; }
+  local os arch url name tmp
+  os="$(uname)"; arch="$(uname -m)"
+  url="$(curl -fsSL "https://api.github.com/repos/$REPO/releases?per_page=30" 2>/dev/null | OS="$os" ARCH="$arch" python3 -c '
+import json, os, sys
+try: rels = json.load(sys.stdin)
+except ValueError: sys.exit(1)
+mac = os.environ["OS"] == "Darwin"
+want = ".dmg" if mac else ".AppImage"
+arm = os.environ["ARCH"] in ("arm64", "aarch64")
+if (not mac and arm) or (not mac and os.environ["ARCH"] != "x86_64"): sys.exit(1)
+for r in rels:
+    if not str(r.get("tag_name", "")).startswith("desktop-v") or r.get("draft") or r.get("prerelease"): continue
+    for a in r.get("assets", []):
+        n = a["name"]
+        if n.endswith(want) and (not mac or ("aarch64" in n) == arm):
+            print(a["browser_download_url"]); sys.exit(0)
+sys.exit(1)' 2>/dev/null)" || url=""
+  if [ -z "$url" ]; then
+    warn "No desktop app package for this system found (no release yet?). Sunak itself is installed; see desktop/README.md to build the app."
+    return 1
+  fi
+  name="${url##*/}"; tmp="$(mktemp -d)"
+  say "Downloading the desktop app ($name)…"
+  curl -fsSL "$url" -o "$tmp/$name" || { warn "Desktop app download failed."; rm -rf "$tmp"; return 1; }
+  if [ "$(uname)" = Darwin ]; then
+    local mnt="$tmp/mnt"; mkdir -p "$mnt" "$HOME/Applications"
+    hdiutil attach -nobrowse -quiet -mountpoint "$mnt" "$tmp/$name" || { warn "Could not open the disk image."; rm -rf "$tmp"; return 1; }
+    rm -rf "$HOME/Applications/Sunak Desktop.app"
+    cp -R "$mnt/Sunak.app" "$HOME/Applications/Sunak Desktop.app" || warn "Could not copy the app."
+    hdiutil detach -quiet "$mnt" || true
+    say "Desktop app ✓ (~/Applications/Sunak Desktop.app; not signed: first start via right-click → Open)"
+  else
+    mv "$tmp/$name" "$HOME_DIR/Sunak.AppImage" && chmod +x "$HOME_DIR/Sunak.AppImage"
+    mkdir -p "$HOME/.local/share/applications"
+    printf '[Desktop Entry]\nType=Application\nName=Sunak Desktop\nExec=%s\nTerminal=false\nCategories=Utility;\n' "$HOME_DIR/Sunak.AppImage" \
+      > "$HOME/.local/share/applications/sunak-desktop.desktop"
+    say "Desktop app ✓ (app menu: Sunak Desktop; needs FUSE for AppImages)"
+  fi
+  rm -rf "$tmp"
+}
+if [ "$DESKTOP" = 1 ] || ask_no "Also install the desktop app (Sunak in its own window)?"; then
+  install_desktop || true
+fi
 
 printf '\n  %sDone!%s Start Sunak any time with: %ssunak%s\n' "$B" "$R" "$P" "$R"
 printf '  On first start it suggests a model that fits your computer.\n\n'

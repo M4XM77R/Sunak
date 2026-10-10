@@ -3,7 +3,8 @@
 #   irm https://raw.githubusercontent.com/M4XM77R/sunak/main/install.ps1 | iex
 #
 # Set $env:SUNAK_YES = "1" before running for an unattended install,
-# $env:SUNAK_AUTOSTART = "1" to start Sunak at every login, $env:SUNAK_NO_SHORTCUT = "1" for no icons.
+# $env:SUNAK_AUTOSTART = "1" to start Sunak at every login, $env:SUNAK_NO_SHORTCUT = "1" for no icons,
+# $env:SUNAK_DESKTOP = "1" to also install the optional desktop app (otherwise you are asked, default no).
 $ErrorActionPreference = "Stop"
 $Repo = if ($env:SUNAK_REPO) { $env:SUNAK_REPO } else { "M4XM77R/sunak" }
 $Branch = if ($env:SUNAK_BRANCH) { $env:SUNAK_BRANCH } else { "main" }
@@ -155,6 +156,30 @@ if ($env:SUNAK_NO_OLLAMA -ne "1" -and -not (Get-Command ollama -ErrorAction Sile
     try { winget install -e --id Ollama.Ollama --accept-package-agreements --accept-source-agreements }
     catch { Write-Warning "Ollama install failed - get it from https://ollama.com/download" }
   }
+}
+
+# 5. Desktop app (optional, opt-in): the finished package from the newest GitHub release "desktop-v*"
+# (no Rust, no local build). A failure here is only a hint; the normal installation is complete.
+function Install-Desktop {
+  try {
+    $rels = Invoke-RestMethod "https://api.github.com/repos/$Repo/releases?per_page=30" -UseBasicParsing
+    $url = $null
+    foreach ($r in $rels) {
+      if (-not "$($r.tag_name)".StartsWith("desktop-v") -or $r.draft -or $r.prerelease) { continue }
+      $a = $r.assets | Where-Object { $_.name -like "*-setup.exe" } | Select-Object -First 1
+      if ($a) { $url = $a.browser_download_url; break }
+    }
+    if (-not $url) { Write-Warning "No desktop app package found (no release yet?). Sunak itself is installed; see desktop/README.md to build the app."; return }
+    $exe = Join-Path $env:TEMP "sunak-desktop-setup.exe"
+    Say "Downloading the desktop app..."
+    Invoke-WebRequest -UseBasicParsing $url -OutFile $exe
+    Start-Process $exe -ArgumentList "/S" -Wait
+    Remove-Item -Force -ErrorAction SilentlyContinue $exe
+    Say "Desktop app: OK (Start Menu: Sunak; not signed, SmartScreen may warn)"
+  } catch { Write-Warning "Desktop app not installed: $($_.Exception.Message)" }
+}
+if ($env:SUNAK_DESKTOP -eq "1" -or ($env:SUNAK_YES -ne "1" -and (Read-Host "Also install the desktop app (Sunak in its own window)? [y/N]") -match '^[yY]')) {
+  Install-Desktop
 }
 
 Write-Host "`n  Done! Start Sunak with the desktop icon or by typing: sunak`n" -ForegroundColor Magenta

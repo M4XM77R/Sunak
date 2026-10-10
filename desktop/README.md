@@ -12,6 +12,8 @@ Packages for Windows (`.msi`/`.exe`), macOS (`.dmg`) and Linux (`.deb`/`.AppImag
 
 The packages are not code-signed. Windows SmartScreen and macOS Gatekeeper warn on the first start (macOS: right-click → Open). Linux needs WebKitGTK (`libwebkit2gtk-4.1`).
 
+**Via the installer (opt-in):** `install.sh --desktop` / `$env:SUNAK_DESKTOP="1"` (or answer yes to the last question) downloads the package for your system from the newest `desktop-v*` release: AppImage on Linux x86_64 (app-menu entry, needs FUSE), `Sunak Desktop.app` in `~/Applications` on macOS (Apple silicon only), the setup `.exe` on Windows. No release yet or a failed download only prints a hint; the normal installation is not affected.
+
 ## Build it yourself
 
 ```bash

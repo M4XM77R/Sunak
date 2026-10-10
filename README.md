@@ -38,7 +38,8 @@ The installer
 3. asks whether to put a Sunak icon on the desktop (on Linux also in the app menu, on macOS as `Sunak.app` in `~/Applications`, on Windows also in the Start menu). The icon starts Sunak without a terminal window, or just opens it if it is already running,
 4. asks whether Sunak should start automatically in the background when you log in (default: no),
 5. shows which graphics card Ollama can use and offers to install [Ollama](https://ollama.com) for local models,
-6. starts Sunak and opens the browser at `http://localhost:7000`.
+6. asks whether to also install the optional [desktop app](#desktop-app-optional) (default: no),
+7. starts Sunak and opens the browser at `http://localhost:7000`.
 
 Without a terminal (for example in a pipe with no input) the defaults apply to yes/no questions. For an installation with no questions at all there are options, see [Installer options](#installer-options).
 
@@ -356,12 +357,13 @@ You set everything important in the interface (Settings). Optionally via environ
 | Do not start Sunak after installing | `--no-start` | `$env:SUNAK_NO_START = "1"` |
 | No desktop icon | `--no-shortcut` | `$env:SUNAK_NO_SHORTCUT = "1"` |
 | Switch autostart on without asking | `--autostart` | `$env:SUNAK_AUTOSTART = "1"` |
+| Also install the [desktop app](#desktop-app-optional) (default: no) | `--desktop` or `SUNAK_DESKTOP=1` | `$env:SUNAK_DESKTOP = "1"` |
 
 When piping, append options with `bash -s --`: `curl -fsSL …/install.sh | bash -s -- --yes --no-ollama`. With `SUNAK_HOME` (the installer's folder), `SUNAK_REPO` and `SUNAK_BRANCH` you can change the installation location or the source.
 
 ### Desktop app (optional)
 
-If you prefer Sunak in its own window instead of the browser, there is a small Tauri app in [`desktop/`](desktop/README.md). It needs an installed Sunak (it starts the server itself and stops it when the window closes), is built by the GitHub Actions workflow `desktop` for Windows, macOS and Linux, and is not code-signed. The normal installation does not change and needs no Rust.
+If you prefer Sunak in its own window instead of the browser, there is a small Tauri app in [`desktop/`](desktop/README.md). The installer can fetch it (opt-in: asks at the end, default no, or `--desktop` / `SUNAK_DESKTOP=1`); it takes the finished package from the newest `desktop-v*` release and prints a hint if there is none yet. It needs an installed Sunak (it starts the server itself and stops it when the window closes), is built by the GitHub Actions workflow `desktop` for Windows, macOS and Linux, and is not code-signed. The normal installation does not change and needs no Rust.
 
 ## Updating and uninstalling
 
