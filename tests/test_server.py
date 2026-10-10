@@ -144,6 +144,18 @@ class SunakTest(unittest.TestCase):
                                "claude::claude-opus-5-5", "claude::claude-haiku-4-5"])
         self.assertEqual(r["errors"], [])
 
+    def test_models_are_listed_once(self):
+        provs = self.call("GET", "/api/settings")["providers"]
+        again = dict(provs[0], id="ollama2", name="Ollama again")  # same backend entered twice
+        try:
+            self.call("PUT", "/api/settings", {"providers": [dict(p, api_key="") for p in provs] + [again]})
+            ids = [m["id"] for m in self.call("GET", "/api/models")["models"]]
+            self.assertEqual(len(ids), len(set(ids)))
+            self.assertFalse([i for i in ids if i.startswith("ollama2::")])
+            self.assertEqual(ids.count("ollama::tiny:1b"), 1)
+        finally:
+            self.call("PUT", "/api/settings", {"providers": [dict(p, api_key="") for p in provs]})
+
     def test_chat_follows_the_interface_language(self):
         s = self.call("POST", "/api/sessions", {})
         ask = {"session_id": s["id"], "model": "ollama::tiny:1b", "content": "Hi"}

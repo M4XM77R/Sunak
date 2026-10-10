@@ -112,12 +112,12 @@ def list_models(p, timeout=MODELS_TIMEOUT):
     if p["type"] == "ollama":
         with _request(_base(p) + "/api/tags", api_key=p.get("api_key", ""), timeout=timeout) as r:
             data = json.load(r)
-        return sorted(m["name"] for m in data.get("models", []))
+        return sorted({m["name"] for m in data.get("models", [])})
     if p["type"] == "anthropic":
         return anthropic_models(p, timeout)
     with _request(_base(p) + "/models", api_key=p.get("api_key", ""), timeout=timeout) as r:
         data = json.load(r)
-    return sorted(m["id"] for m in data.get("data", []))
+    return sorted({m["id"] for m in data.get("data", [])})
 
 
 def queue_key(p):
@@ -346,6 +346,7 @@ def anthropic_models(p, timeout=6):
             if not data.get("has_more"):
                 break
             after = data.get("last_id")
+        ids = list(dict.fromkeys(ids))  # a page boundary must not list a model twice
     except ProviderError as e:
         if "HTTP 401" in str(e) or "HTTP 403" in str(e):
             raise ProviderError("Claude rejected the API key. Check it in Settings → Providers.") from None
