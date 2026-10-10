@@ -4,6 +4,15 @@ All changes to Sunak, newest version first. Sunak shows the entries between your
 
 Format: one section per version, `## [a.b.c] – YYYY-MM-DD`, followed by short points under **Added**, **Changed**, **Fixed** or **Removed**. Every change to Sunak gets a new version and an entry here.
 
+## [1.1.0] – 2026-10-10
+
+### Added
+- Optional desktop app (Tauri) in `desktop/`: Sunak in its own window instead of the browser. It starts the normal Sunak server on a free local port, shows the unchanged interface and stops the server when the window closes. Sunak must be installed; Python is not bundled, and the window says so if Sunak is missing. A second start only focuses the open window.
+- GitHub Actions workflow `desktop` builds the packages for Windows, macOS and Linux (manually or on a tag `desktop-v*`). It does not run on normal pushes, so the test CI is not slower.
+
+### Changed
+- Nothing for the normal installation: Python-only Sunak, the one-line installers and Docker work exactly as before and need no Rust.
+
 ## [1.0.0] – 2026-10-10
 
 First stable release of Sunak. It brings together everything from the 0.x line: chat with Ollama, Claude and OpenAI-compatible APIs, model comparison, web research, knowledge base with documents, notes and memory, Office files, mail and calendar, image generation, the security package and the chat language that follows the interface. The entries of each version below describe the details.

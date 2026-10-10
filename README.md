@@ -359,6 +359,10 @@ You set everything important in the interface (Settings). Optionally via environ
 
 When piping, append options with `bash -s --`: `curl -fsSL …/install.sh | bash -s -- --yes --no-ollama`. With `SUNAK_HOME` (the installer's folder), `SUNAK_REPO` and `SUNAK_BRANCH` you can change the installation location or the source.
 
+### Desktop app (optional)
+
+If you prefer Sunak in its own window instead of the browser, there is a small Tauri app in [`desktop/`](desktop/README.md). It needs an installed Sunak (it starts the server itself and stops it when the window closes), is built by the GitHub Actions workflow `desktop` for Windows, macOS and Linux, and is not code-signed. The normal installation does not change and needs no Rust.
+
 ## Updating and uninstalling
 
 ### Updating
@@ -441,6 +445,7 @@ Changes to `sunak/static/` become visible after a reload in the browser. Changes
 | `sunak/speech.py`, `qr.py` | Whisper connection, QR code for phone access |
 | `sunak/desktop.py`, `updates.py`, `changelog.py`, `uninstall.py` | Autostart and icons, update check and button, reading the changelog, uninstallation |
 | `sunak/db.py` | SQLite storage |
+| `desktop/` | Optional Tauri desktop app (Rust shell around the server), see `desktop/README.md` |
 | `sunak/static/` | Interface (HTML, CSS, one JavaScript file, language files) |
 
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) describes the structure, data flow, all API endpoints, backends and extension points.
