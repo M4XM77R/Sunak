@@ -11,6 +11,7 @@ import urllib.parse
 import urllib.request
 from html.parser import HTMLParser
 
+from . import netguard
 from . import lang as sunak_lang
 
 UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36"
@@ -62,10 +63,16 @@ def html_to_text(raw):
     return p.title.strip(), p.text()
 
 
-def _get(url, data=None, timeout=10):
-    """GET (or POST when `data` is given) a URL with a browser user agent. Returns (content type, text)."""
-    req = urllib.request.Request(url, data=data, headers={"User-Agent": UA, "Accept-Language": "en,de;q=0.8"})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
+def _get(url, data=None, timeout=10, public=False):
+    """GET (or POST when `data` is given) a URL with a browser user agent. Returns (content type, text).
+    With `public` only public internet addresses are contacted, also after redirects (see netguard); the search
+    engines themselves are fixed addresses (or your own SearXNG), so only pages found on the web need it."""
+    headers = {"User-Agent": UA, "Accept-Language": "en,de;q=0.8"}
+    if public:
+        r = netguard.fetch_public(url, headers, timeout)
+    else:
+        r = urllib.request.urlopen(urllib.request.Request(url, data=data, headers=headers), timeout=timeout)
+    with r:
         ctype = r.headers.get("Content-Type", "")
         raw = r.read(MAX_PAGE_BYTES)
         charset = r.headers.get_content_charset() or "utf-8"
@@ -239,8 +246,9 @@ def search(query, limit=6, engines=None):
 
 
 def read_page(url):
-    """Download a page and return (title, text) truncated to MAX_PAGE_CHARS; empty for non-text files."""
-    ctype, raw = _get(url)
+    """Download a page and return (title, text) truncated to MAX_PAGE_CHARS; empty for non-text files.
+    Pages in the local network are refused (netguard.BlockedAddress)."""
+    ctype, raw = _get(url, public=True)
     if "html" not in ctype and "text" not in ctype:
         return "", ""
     title, text = html_to_text(raw) if "html" in ctype else ("", raw)

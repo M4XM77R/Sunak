@@ -23,7 +23,8 @@ document.getElementById('login').addEventListener('submit', async (e) => {
   e.preventDefault();
   const r = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'sunak' },
     body: JSON.stringify({ password: document.getElementById('pw').value }) });
-  if (r.ok) location.href = '/'; else document.getElementById('err').textContent = 'Wrong password';
+  if (r.ok) location.href = '/';
+  else document.getElementById('err').textContent = r.status === 429 ? 'Too many wrong attempts. Try again later.' : 'Wrong password';
 });
 </script>
 </body>
