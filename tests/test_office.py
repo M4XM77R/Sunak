@@ -12,6 +12,7 @@ import time
 import unittest
 import urllib.error
 import urllib.request
+from unittest import mock
 import xml.etree.ElementTree as ET
 import zipfile
 from unittest import mock
@@ -104,7 +105,8 @@ class ParseTest(unittest.TestCase):
 
 
 class FilesTest(unittest.TestCase):
-    def test_docx(self):
+    @mock.patch.object(office, "_now", return_value="2026-01-01T00:00:00Z")  # a second boundary between two renders made this flaky
+    def test_docx(self, _now):
         data, ctype = office.render("docx", MD)
         self.assertEqual(ctype, office.FORMATS["docx"])
         z = unzip(data)

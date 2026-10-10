@@ -118,6 +118,14 @@ fn running_sunak() -> Option<u16> {
     (7000u16..7010).find(|p| is_sunak(*p))
 }
 
+/// True while the child process still runs.
+fn alive(child: &mut Option<Child>) -> bool {
+    match child {
+        Some(c) => matches!(c.try_wait(), Ok(None)),
+        None => false,
+    }
+}
+
 enum Wait {
     Ready(u16),
     Exited,
@@ -128,12 +136,8 @@ enum Wait {
 fn wait_ready(state: &Server, first: u16, limit: Duration) -> Wait {
     let t0 = Instant::now();
     while t0.elapsed() < limit {
-        {
-            let mut guard = state.child.lock().unwrap();
-            match guard.as_mut() {
-                Some(c) if matches!(c.try_wait(), Ok(None)) => {}
-                _ => return Wait::Exited,
-            }
+        if !alive(&mut state.child.lock().unwrap()) {
+            return Wait::Exited;
         }
         if let Some(p) = (first..first + 10).find(|p| is_sunak(*p)) {
             return Wait::Ready(p);
@@ -161,15 +165,13 @@ fn stop_server(state: &Server) {
     }
     let t0 = Instant::now();
     while t0.elapsed() < Duration::from_secs(5) {
-        let mut guard = state.child.lock().unwrap();
-        match guard.as_mut() {
-            Some(c) if matches!(c.try_wait(), Ok(None)) => {}
-            _ => {
+        {
+            let mut guard = state.child.lock().unwrap();
+            if !alive(&mut guard) {
                 guard.take();
                 return;
             }
         }
-        drop(guard);
         std::thread::sleep(Duration::from_millis(100));
     }
     kill_child(state);
