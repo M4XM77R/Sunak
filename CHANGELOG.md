@@ -4,6 +4,14 @@ All changes to Sunak, newest version first. Sunak shows the entries between your
 
 Format: one section per version, `## [a.b.c] – YYYY-MM-DD`, followed by short points under **Added**, **Changed**, **Fixed** or **Removed**. Every change to Sunak gets a new version and an entry here.
 
+## [1.0.0] – 2026-10-10
+
+First stable release of Sunak. It brings together everything from the 0.x line: chat with Ollama, Claude and OpenAI-compatible APIs, model comparison, web research, knowledge base with documents, notes and memory, Office files, mail and calendar, image generation, the security package and the chat language that follows the interface. The entries of each version below describe the details.
+
+### Changed
+- Versioning: the major number is now 1 and changes only by the maintainer's decision. Minor and patch numbers keep their meaning (new features and fixes).
+- Documentation: the README and the architecture guide no longer describe Sunak as a pre-1.0 project.
+
 ## [0.23.1] – 2026-10-10
 
 ### Fixed
