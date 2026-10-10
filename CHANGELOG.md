@@ -19,6 +19,19 @@ Format: one section per version, `## [a.b.c] – YYYY-MM-DD`, followed by short 
 - The login and PIN limits count an attempt before the slow password check, not after it, so a burst of parallel requests cannot get past the limit.
 
 Note: because the password and each PIN also lock after 20 wrong tries from all devices together, someone guessing from many addresses can lock the owner out for up to 15 minutes (restarting Sunak clears it). This is a deliberate trade-off.
+## [0.20.1] – 2026-10-09
+
+### Fixed
+- A message that is only a slash word, such as `/tmp` or `/home`, could not be sent because it was taken for an unknown command. Type two slashes (`//tmp`) to send it as ordinary text (one slash is removed); `/hilfe` and the README say so.
+- If saving "the introduction was shown" fails, Sunak now says so (the tour may open again after a reload) instead of staying silent.
+- `Ctrl+K` (new chat) no longer works behind the introduction while it is open.
+- docs/ARCHITECTURE.md: the `POST /api/chat` row names the `once` field.
+
+## [0.20.0] – 2026-10-09
+
+### Added
+- An introduction for new users: a short tour (six steps: welcome, chat, slash commands, files and notes, mail and calendar, making it yours) that opens once, the first time a profile is used. It can be skipped at any time (button, `Esc`), and every way of closing it counts as seen. Settings → Introduction → "Show the introduction" opens it again. It is a plain overlay in the interface language (English or German) and needs no external files.
+- The new per-profile setting `intro_seen` remembers that the tour was shown. Profiles that already exist see the tour once after this update, because it also introduces the slash commands.
 
 ## [0.19.0] – 2026-10-09
 

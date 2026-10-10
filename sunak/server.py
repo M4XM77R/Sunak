@@ -65,6 +65,7 @@ DEFAULT_SETTINGS = {
     "reminders": False,      # 🔔 calendar reminders (reminders.py): pages show them, ntfy sends them as push messages
     "ntfy_url": "",          # ntfy server for the push messages ("" = https://ntfy.sh); of the installation, only admins set it
     "ntfy_topic": "",        # the topic the phone subscribes to ("" = no push messages); it is the only secret of a public topic
+    "intro_seen": False,     # the introduction (first start of a profile, Settings → Introduction) was shown or skipped
     "reminder_lang": "en",   # language of the push messages: the interface language the settings were last saved in
 }
 INT_PREFS = {"image_gen_size": (512, 1024),
