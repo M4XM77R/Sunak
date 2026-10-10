@@ -135,7 +135,7 @@ def installed_tag():
     """Release tag of the installed app as recorded by install(); '' when unknown."""
     try:
         return _version_file().read_text(encoding="utf-8").strip()
-    except OSError:
+    except (OSError, ValueError):  # missing, unreadable or not text
         return ""
 
 
@@ -167,18 +167,20 @@ def pending_update():
         try:
             pkg = find_package()
             _pending.update(at=time.time(), tag=pkg["tag"] if pkg and is_newer(pkg["tag"], installed_tag()) else "")
-        except DesktopError:
-            return ""
+        except Exception:  # noqa: BLE001 - a hint must never break the update check; a failure is remembered too (no retry per request)
+            _pending.update(at=time.time(), tag="")
     return _pending["tag"]
 
 
 def update(progress=lambda msg: None):
     """Renew an installed app when a newer release exists. Returns 'none' (not installed, or up to date), 'running'
-    (the app is open: nothing was touched) or 'updated'. Raises DesktopError on a failure."""
+    (the app is open: nothing was touched), 'no_release' (nothing published yet) or 'updated'. Raises DesktopError on a failure."""
     if not installed():
         return "none"
     pkg = find_package()
-    if pkg is None or not is_newer(pkg["tag"], installed_tag()):
+    if pkg is None:
+        return "no_release"
+    if not is_newer(pkg["tag"], installed_tag()):
         return "none"
     if running():
         return "running"

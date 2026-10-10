@@ -215,6 +215,8 @@ def desktop_command(rest):
                 print("Desktop app updated.")
             elif result == "running":
                 print("The desktop app is open, so it was not replaced. Close it, then run: sunak desktop update")
+            elif result == "no_release" and not auto:
+                print("There is no desktop release yet.")
             elif not auto:
                 print("The desktop app is not installed." if not desktopapp.installed() else "The desktop app is up to date.")
         elif action == "install":
@@ -229,10 +231,12 @@ def desktop_command(rest):
                 pkg = desktopapp.find_package()
                 print(f"Available: {pkg['name']} ({pkg['tag']}). Install with: sunak desktop install" if pkg
                       else "No desktop app release yet (see desktop/README.md to build it).")
-    except desktopapp.DesktopError as e:
+    except Exception as e:  # noqa: BLE001 - DesktopError and anything unexpected; with --auto it is only a warning
         if auto:
             print(f"Desktop app not updated: {e}", file=sys.stderr)
             return 0
+        if not isinstance(e, desktopapp.DesktopError):
+            raise
         return fail(str(e))
     return 0
 

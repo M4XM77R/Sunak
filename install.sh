@@ -114,7 +114,9 @@ case "\${1:-}" in
     export SUNAK_HOME="$HOME_DIR" SUNAK_REPO="$REPO" SUNAK_BRANCH="$BRANCH"  # reinstall into the same place
     old=\$(python3 -m sunak version)
     src=\$(cat "$HOME_DIR/source" 2>/dev/null)
-    if [ -d "\$APP_DIR/.git" ]; then git -C "\$APP_DIR" pull --ff-only -q || exit 1
+    if [ -d "\$APP_DIR/.git" ]; then
+      git -C "\$APP_DIR" pull --ff-only -q || exit 1
+      python3 -m sunak desktop update --auto || true  # the other routes reinstall, and the installer does this (a problem here never fails the update)
     elif [ -n "\$src" ] && [ -d "\$src/.git" ]; then
       echo "Updating from \$src"
       git -C "\$src" pull --ff-only -q && bash "\$src/install.sh" --yes --no-ollama --no-start --no-shortcut >/dev/null || exit 1
@@ -125,7 +127,6 @@ case "\${1:-}" in
     fi
     new=\$(python3 -m sunak version)
     if [ "\$old" = "\$new" ]; then echo "Sunak \$new: latest code installed ✓"; else echo "Updated Sunak \$old → \$new ✓"; fi
-    python3 -m sunak desktop update --auto || true  # renews an installed desktop app (a problem here never fails the update)
     if python3 -m sunak status | grep -q "is running"; then
       python3 -m sunak stop >/dev/null && echo "Sunak was running and has been stopped. Start it again with: sunak"
     fi

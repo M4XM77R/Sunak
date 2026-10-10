@@ -86,6 +86,22 @@ class PickAssetTest(unittest.TestCase):
                 self.assertEqual(d.update(), "updated")
                 inst.assert_called_once()
 
+    def test_corrupt_version_file_and_failed_lookup_do_not_break_anything(self):
+        with tempfile.TemporaryDirectory() as t, mock.patch.dict("os.environ", {"SUNAK_HOME": t}):
+            (Path(t) / "desktop-version").write_bytes(b"\xff\xfe\x00\x80")
+            self.assertEqual(d.installed_tag(), "")
+        calls = []
+        with mock.patch.object(d, "installed", return_value=True), \
+                mock.patch.object(d, "find_package", side_effect=lambda: calls.append(1) or (_ for _ in ()).throw(d.DesktopError("offline"))):
+            d._pending.update(at=0.0, tag="")
+            self.assertEqual(d.pending_update(), "")
+            self.assertEqual(d.pending_update(), "")  # the failure is remembered: no second request
+        self.assertEqual(len(calls), 1)
+
+    def test_no_release_is_reported(self):
+        with mock.patch.object(d, "installed", return_value=True), mock.patch.object(d, "find_package", return_value=None):
+            self.assertEqual(d.update(), "no_release")
+
     def test_auto_update_never_fails_the_update(self):
         import io
         from contextlib import redirect_stderr, redirect_stdout

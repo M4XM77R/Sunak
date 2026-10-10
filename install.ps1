@@ -102,7 +102,6 @@ if /I "%~1"=="update" (
   if errorlevel 3 exit /b 0
   $pyCmd -m sunak stop >nul 2>&1
   powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0update.ps1"
-  $pyCmd -m sunak desktop update --auto
   echo Updated. Start Sunak again with the desktop icon or: sunak
   exit /b
 )
