@@ -428,6 +428,7 @@
 "Save settings": "Einstellungen speichern",
 "Stop the Sunak server on this computer": "Den Sunak-Server auf diesem Computer beenden",
 "Desktop app": "Desktop-App",
+"The installed desktop app will be updated too, if it is closed.": "Die installierte Desktop-App wird mit aktualisiert, sofern sie geschlossen ist.",
 "Sunak in its own window instead of the browser. The finished app is downloaded from GitHub and needs this Sunak installation; it starts and stops the server itself. It is not code-signed, so Windows and macOS warn on the first start.": "Sunak in einem eigenen Fenster statt im Browser. Die fertige App wird von GitHub geladen und braucht diese Sunak-Installation; sie startet und beendet den Server selbst. Sie ist nicht signiert, daher warnen Windows und macOS beim ersten Start.",
 "Install desktop app": "Desktop-App installieren",
 "Remove desktop app": "Desktop-App entfernen",

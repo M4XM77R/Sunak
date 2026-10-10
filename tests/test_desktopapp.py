@@ -57,6 +57,44 @@ class PickAssetTest(unittest.TestCase):
             with mock.patch.object(d, "_get", return_value=R(f"{good}  p.AppImage\n")):
                 d._verify(f, "p.AppImage", "https://github.com/s")
 
+    def test_version_comparison(self):
+        self.assertEqual(d.tag_version("desktop-v1.10.0"), (1, 10, 0))
+        self.assertTrue(d.is_newer("desktop-v1.10.0", "desktop-v1.9.3"))  # numbers, not text
+        self.assertFalse(d.is_newer("desktop-v1.1.0", "desktop-v1.1.0"))
+        self.assertFalse(d.is_newer("desktop-v1.1.0", "desktop-v2.0.0"))
+        self.assertTrue(d.is_newer("desktop-v1.1.0", ""))  # no record: renew once
+
+    def test_update_does_nothing_without_an_installed_app(self):
+        with mock.patch.object(d, "installed", return_value=False), mock.patch.object(d, "find_package") as find, \
+                mock.patch.object(d, "install") as inst:
+            self.assertEqual(d.update(), "none")
+            self.assertEqual(d.pending_update(), "")
+            find.assert_not_called()
+            inst.assert_not_called()
+
+    def test_update_only_when_newer_and_closed(self):
+        pkg = {"tag": "desktop-v1.2.0", "name": "x.AppImage", "url": "https://github.com/x", "sums": None}
+        with mock.patch.object(d, "installed", return_value=True), mock.patch.object(d, "find_package", return_value=pkg), \
+                mock.patch.object(d, "install") as inst, mock.patch.object(d, "running", return_value=False):
+            with mock.patch.object(d, "installed_tag", return_value="desktop-v1.2.0"):
+                self.assertEqual(d.update(), "none")
+            inst.assert_not_called()
+            with mock.patch.object(d, "installed_tag", return_value="desktop-v1.1.0"):
+                with mock.patch.object(d, "running", return_value=True):
+                    self.assertEqual(d.update(), "running")
+                inst.assert_not_called()
+                self.assertEqual(d.update(), "updated")
+                inst.assert_called_once()
+
+    def test_auto_update_never_fails_the_update(self):
+        import io
+        from contextlib import redirect_stderr, redirect_stdout
+        from sunak import __main__ as cli
+        with mock.patch.object(d, "update", side_effect=d.DesktopError("boom")), redirect_stdout(io.StringIO()), \
+                redirect_stderr(io.StringIO()) as err:
+            self.assertEqual(cli.desktop_command(["update", "--auto"]), 0)
+        self.assertIn("boom", err.getvalue())
+
     def test_install_without_release_says_so(self):
         with mock.patch.object(d, "supported", return_value=True), mock.patch.object(d, "find_package", return_value=None):
             with self.assertRaises(d.DesktopError):

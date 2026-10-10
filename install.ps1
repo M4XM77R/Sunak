@@ -102,6 +102,7 @@ if /I "%~1"=="update" (
   if errorlevel 3 exit /b 0
   $pyCmd -m sunak stop >nul 2>&1
   powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0update.ps1"
+  $pyCmd -m sunak desktop update --auto
   echo Updated. Start Sunak again with the desktop icon or: sunak
   exit /b
 )
@@ -164,6 +165,11 @@ if ($env:SUNAK_DESKTOP -eq "1" -or ($env:SUNAK_YES -ne "1" -and (Read-Host "Also
   Push-Location $AppDir
   & $cmd desktop install
   if ($LASTEXITCODE -ne 0) { Write-Warning "Desktop app not installed. Sunak itself is ready; try later: sunak desktop install" }
+  Pop-Location
+} else {
+  # an installed app is renewed when a newer desktop release exists (nothing happens if it is not installed)
+  Push-Location $AppDir
+  try { & $cmd desktop update --auto } catch { }
   Pop-Location
 }
 

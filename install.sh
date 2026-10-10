@@ -125,6 +125,7 @@ case "\${1:-}" in
     fi
     new=\$(python3 -m sunak version)
     if [ "\$old" = "\$new" ]; then echo "Sunak \$new: latest code installed ✓"; else echo "Updated Sunak \$old → \$new ✓"; fi
+    python3 -m sunak desktop update --auto || true  # renews an installed desktop app (a problem here never fails the update)
     if python3 -m sunak status | grep -q "is running"; then
       python3 -m sunak stop >/dev/null && echo "Sunak was running and has been stopped. Start it again with: sunak"
     fi
@@ -183,6 +184,8 @@ command -v ollama >/dev/null && say "Ollama ✓"
 if [ "$DESKTOP" = 1 ] || ask_no "Also install the desktop app (Sunak in its own window)?"; then
   (cd "$APP_DIR" && SUNAK_HOME="$HOME_DIR" SUNAK_REPO="$REPO" python3 -m sunak desktop install) \
     || warn "Desktop app not installed. Sunak itself is ready; try later: sunak desktop install"
+else  # an installed app is renewed when a newer desktop release exists (nothing happens if it is not installed)
+  (cd "$APP_DIR" && SUNAK_HOME="$HOME_DIR" SUNAK_REPO="$REPO" python3 -m sunak desktop update --auto) || true
 fi
 
 printf '\n  %sDone!%s Start Sunak any time with: %ssunak%s\n' "$B" "$R" "$P" "$R"
