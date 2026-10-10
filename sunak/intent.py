@@ -185,10 +185,10 @@ def action(text):
 
 def abilities(now, mail=True):
     """The note for the chat model's system prompt: Sunak can prepare calendar events and e-mails. The model answers with a short
-    sentence and a fenced ```sunak-event``` / ```sunak-mail``` block with JSON; the browser turns the block into a card
+    sentence and a fenced ```sunak-event``` / ```sunak-mail``` block with JSON (or a ```sunak-doc``` block with the document as Markdown); the browser turns the block into a card
     (app.js `actionCards`) and the user saves or sends it with a click. `now` is the local time with offset; without `mail`
     (no mail account linked) the model is told to point to the settings instead of writing the block."""
-    out = ("Sunak can prepare calendar events and e-mails for the user. Never say that you cannot add calendar entries. Nothing is "
+    out = ("Sunak can prepare calendar events, e-mails and document files for the user. Never say that you cannot add calendar entries. Nothing is "
            "saved or sent automatically: the user checks a card and clicks. When the user asks you to add an appointment, event or "
            "reminder to the calendar, answer with one short sentence and then exactly one block:\n"
            "```sunak-event\n"
@@ -202,9 +202,14 @@ def abilities(now, mail=True):
                 "```\n")
     else:
         out += "No mail account is linked yet: if the user wants an e-mail, say that they first add one in Settings → Mail accounts.\n"
+    out += ("When the user asks you to make a document, letter, report, list or spreadsheet as a file (Word, LibreOffice, Excel, PDF), answer with "
+            "one short sentence and then exactly one block that holds the document itself as Markdown (# title, ## headings, paragraphs, - lists, "
+            "1. numbered lists, **bold**, tables with | columns and a header row; a spreadsheet is a table; no code fences inside the block):\n"
+            "```sunak-doc\n# Title\n\nThe text of the document.\n```\n"
+            "The card then offers the file types; do not describe how to save it. Do not use this block for an ordinary answer.\n")
     z = now.strftime("%z")
     return out + (f"The current local date and time is {now.strftime('%A, %Y-%m-%d %H:%M')} (UTC{z[:3]}:{z[3:]}); resolve \"tomorrow\" or "
-                  '"next Tuesday" against it. Only use these blocks when the user wants an event or an e-mail, never otherwise.')
+                  '"next Tuesday" against it. Only use these blocks when the user wants an event, an e-mail or a document file, never otherwise.')
 
 
 # ---- the user's calendar as chat context ("Was steht morgen an?", "Am I free on Friday?") ----

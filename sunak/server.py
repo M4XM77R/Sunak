@@ -28,7 +28,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlparse
 
-from . import (__version__, backup, cal, extract, gpu, imagegen, images, intent, jobqueue, knowledge, log, mail, mcp, memory, modelsearch, netguard,
+from . import (__version__, backup, cal, extract, gpu, imagegen, images, intent, jobqueue, knowledge, log, mail, mcp, memory, modelsearch, netguard, office,
                ollama, providers, qr, reminders, reports, research, sdcpp, speech, toolrun, updates, usage)
 from .db import DB, new_id
 
@@ -992,15 +992,15 @@ def session_markdown(session):
     return "\n".join(out)
 
 
-def file_name(title, ext):
+def file_name(title, ext, fallback="chat"):
     """Safe download name from a chat title."""
-    base = re.sub(r"[^\w\- ]+", "", title, flags=re.U).strip()[:60] or "chat"
+    base = re.sub(r"[^\w\- ]+", "", title, flags=re.U).strip()[:60] or fallback
     return f"{base}.{ext}"
 
 
 # What a model request is counted as (usage.py), by the path of the request that made it.
 USAGE_KINDS = ((r"/api/chat", "chat"), (r"/api/tools", "tools"), (r"/api/research", "research"), (r"/api/compare", "compare"),
-               (r"/api/documents/ai", "document"), (r"/api/mail/ai", "mail"), (r"/api/assistant/mail", "mail"), (r"/api/calendar/parse", "calendar"),
+               (r"/api/documents/ai", "document"), (r"/api/mail/ai", "mail"), (r"/api/assistant/mail", "mail"), (r"/api/assistant/doc", "document"), (r"/api/calendar/parse", "calendar"),
                (r"/api/imagine/intent", "image_check"), (r"/api/imagine", "image_prompt"),
                (rf"/api/sessions/[^/]+/remember", "memory"))
 
@@ -2372,12 +2372,14 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json({"action": kind})
 
     def assistant_check(self):
-        """POST /api/assistant/check {kind: event|mail, json, now}: the chat model answered with a ```sunak-event``` or
+        """POST /api/assistant/check {kind: event|mail|doc, json, now}: the chat model answered with a ```sunak-event``` or
         ```sunak-mail``` block (intent.abilities); check its JSON the way the other endpoints do and return the draft for the
-        card ({summary, start, end, all_day, location, description} or {to, to_name, subject, body, account}). No model call;
-        nothing is saved or sent."""
+        card ({summary, start, end, all_day, location, description} or {to, to_name, subject, body, account}). `kind` doc is a
+        ```sunak-doc``` block: {title, markdown, formats}. No model call; nothing is saved or sent."""
         d = self.body()
-        kind, raw = self.text(d, "kind"), self.text(d, "json")[:20000]
+        kind, raw = self.text(d, "kind"), self.text(d, "json")
+        if kind != "doc":
+            raw = raw[:20000]  # a whole answer may become a document (office.MAX_CHARS says when it is too long), a block is short
         if kind == "event":
             try:
                 now = datetime.datetime.fromisoformat(str(d.get("now") or "").replace("Z", "+00:00"))
@@ -2394,10 +2396,37 @@ class Handler(BaseHTTPRequestHandler):
                 out = {**mail.parse_draft(raw), "account": accounts[0]["id"]}
             except mail.MailError as e:
                 raise ValueError(str(e)) from None
+        elif kind == "doc":
+            out = office.parse_block(raw)
         else:
-            raise ValueError("kind must be event or mail")
+            raise ValueError("kind must be event, mail or doc")
         log_assist.info("Card from the chat model's answer: %s", kind)
         self.send_json(out)
+
+    def assistant_doc(self):
+        """POST /api/assistant/doc {text, model}: the model writes a document (or a table) from a chat request as Markdown.
+        Answer: {title, markdown, formats}; `formats` are the file types that fit (docx, odt; xlsx, ods when there is a table; pdf
+        when LibreOffice is installed). Nothing is stored: the card downloads the file through POST /api/office."""
+        d = self.body()
+        text = self.text(d, "text").strip()
+        if not text:
+            raise ValueError("Say what the document should contain")
+        memories = self.app.db.memories() if self.app.settings()["use_memory"] else []
+        prov, model = self.app.resolve(d.get("model"))
+        answer = providers.chat_once(prov, model, office.draft_messages(text[:4000], memories), {"temperature": 0.3})
+        out = office.draft(office.parse_answer(answer))
+        log_assist.info("Document draft from a chat request: %d characters", len(out["markdown"]))
+        self.send_json(out)
+
+    def office_file(self):
+        """POST /api/office {markdown, title, format: docx|odt|xlsx|ods|pdf}: the file as a download. The text is Markdown (sunak/office.py);
+        spreadsheets take the tables, PDF needs LibreOffice. Nothing is stored on the server."""
+        d = self.body()
+        fmt = self.text(d, "format")
+        data, ctype = office.render(fmt, self.text(d, "markdown"), self.text(d, "title")[:200])
+        title = " ".join(self.text(d, "title").split()) or office.title_of(office.parse(self.text(d, "markdown")))
+        log_assist.info("Office file made: %s, %d bytes", fmt, len(data))
+        self.send_download(data, file_name(title, fmt, "document"), ctype)
 
     def assistant_mail(self):
         """POST /api/assistant/mail {text, account, model}: write a new e-mail from a chat request ("write Anna that I am late").
@@ -3010,6 +3039,8 @@ ROUTES = [
     (r"/api/assistant/intent", "POST", Handler.assistant_intent),
     (r"/api/assistant/mail", "POST", Handler.assistant_mail),
     (r"/api/assistant/check", "POST", Handler.assistant_check),
+    (r"/api/assistant/doc", "POST", Handler.assistant_doc),
+    (r"/api/office", "POST", Handler.office_file),
     (r"/api/imagine/intent", "POST", Handler.imagine_intent),
     (r"/api/imagine", "POST", Handler.imagine),
     (r"/api/imagegen/test", "POST", Handler.imagegen_test),

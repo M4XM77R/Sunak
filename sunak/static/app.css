@@ -628,6 +628,7 @@ input.emoji { width: 52px; min-width: 0; flex: none; text-align: center; }
 .assist-card { display: flex; flex-direction: column; gap: 6px; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; max-width: 560px; }
 .assist-head { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: .85em; }
 .assist-title { font-weight: 600; font-size: 1.05em; }
+.assist-preview { max-height: 260px; overflow: auto; background: color-mix(in srgb, var(--border) 25%, transparent); border-radius: 8px; padding: 4px 12px; font-size: .92em; }
 .assist-body { margin: 0; white-space: pre-wrap; word-break: break-word; font: inherit; max-height: 260px; overflow: auto; background: color-mix(in srgb, var(--border) 25%, transparent); border-radius: 8px; padding: 8px 10px; }
 .assist-card .row { margin: 4px 0 0; flex-wrap: wrap; }
 
