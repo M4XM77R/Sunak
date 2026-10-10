@@ -83,6 +83,7 @@ Your data then lives in the `data/` folder next to the Compose file (Ollama mode
 | 🔎 **Research** | Thorough report with sources from several searches, can be saved as a document |
 | 📝 **Documents** | Markdown editor with autosave, preview, export and AI editing |
 | 🧠 **Notes & Memory** | Notes and a memory that Sunak builds from your chats by itself |
+| 📄 **Office files** | Documents and tables as real files: Word (.docx), LibreOffice (.odt, .ods), Excel (.xlsx) and, with LibreOffice installed, PDF; ask in the chat or use `/dokument` |
 | ✉️ **Mail** | Several accounts via IMAP/SMTP; the AI summarizes, drafts replies and sorts the inbox; new mails can be prepared from the chat |
 | 📅 **Calendar** | Own calendar, CalDAV and subscribed calendars; events from one sentence or from a mail, or straight from the chat |
 | 🔢 **Token counter** | Counts the tokens of every model request per profile (input, output, cache) with tokens per second and a running total |
@@ -111,7 +112,7 @@ Your data then lives in the `data/` folder next to the Compose file (Ollama mode
 |---|---|
 | Send / new line | `Enter` / `Shift+Enter` |
 | New chat | `Ctrl+K` (Mac: `⌘K`) |
-| Slash commands | Type `/` at the start of the message box for the list (German or English names): `/termin` (`/event`), `/mail`, `/bild` (`/image`), `/web`, `/heute` (`/today`), `/woche` (`/week`), `/wissen` (`/knowledge`), `/modell` (`/model`), `/persona`, `/neu` (`/new`), `/export`, `/suche` (`/search`), `/zusammenfassen` (`/summarize`), `/hilfe` (`/help`). Details below |
+| Slash commands | Type `/` at the start of the message box for the list (German or English names): `/termin` (`/event`), `/mail`, `/dokument` (`/doc`), `/bild` (`/image`), `/web`, `/heute` (`/today`), `/woche` (`/week`), `/wissen` (`/knowledge`), `/modell` (`/model`), `/persona`, `/neu` (`/new`), `/export`, `/suche` (`/search`), `/zusammenfassen` (`/summarize`), `/hilfe` (`/help`). Details below |
 | Switch model | Selector at the top right |
 | Switch persona | Selector at the top next to the model, applies to the current chat. Your own personas: Settings → Personas |
 | Find old chats | Search box above the chat list: searches titles and all messages, a click jumps to the spot |
@@ -121,7 +122,7 @@ Your data then lives in the `data/` folder next to the Compose file (Ollama mode
 
 **The input box:** Next to it on the left are the paperclip (attach files and images), the **+** and, on the right, Send. The **+** menu opens upwards and contains Knowledge base, Web search, Tools (MCP) and Speak, each with an on/off switch. Tools (MCP) appears only when a server is switched on, and only for admin profiles; Speak appears as long as voice input is not switched off. This leaves room for typing on a phone.
 
-**Slash commands:** `/` at the start of the message box opens a list of commands; arrow keys and `Tab`/`Enter` pick one, `Esc` closes it. `/termin morgen 10 Uhr Zahnarzt` and `/mail an Anna: komme später` show the usual event or e-mail card (nothing is saved or sent before your click), `/bild a cat in a hat` paints a picture, `/web <question>` answers with a web search and `/wissen <question>` from your knowledge base only, each for this one message and without changing the switches in the **+** menu. `/heute` and `/woche` list your calendar entries for today or the next 7 days, `/modell <name>` and `/persona <name>` switch by (part of) the name (without a name you get a list to click), `/neu [message]` starts a new chat, `/export [md|json|print]` exports the open chat, `/suche <words>` searches all chats, `/zusammenfassen [focus]` asks the model for a short summary of the chat, and `/hilfe` shows this list. `/web`, `/wissen` and `/zusammenfassen` are sent as a normal message; they do not work with Tools (MCP) switched on. A path like `/etc/hosts` is not a command; a message that is only a single word with a slash (`/tmp`) is taken for one, so type two slashes (`//tmp`) to send it as text.
+**Slash commands:** `/` at the start of the message box opens a list of commands; arrow keys and `Tab`/`Enter` pick one, `Esc` closes it. `/termin morgen 10 Uhr Zahnarzt` and `/mail an Anna: komme später` show the usual event or e-mail card (nothing is saved or sent before your click), `/dokument a letter to my landlord` writes a document or table as a file card (see Office files), `/bild a cat in a hat` paints a picture, `/web <question>` answers with a web search and `/wissen <question>` from your knowledge base only, each for this one message and without changing the switches in the **+** menu. `/heute` and `/woche` list your calendar entries for today or the next 7 days, `/modell <name>` and `/persona <name>` switch by (part of) the name (without a name you get a list to click), `/neu [message]` starts a new chat, `/export [md|json|print]` exports the open chat, `/suche <words>` searches all chats, `/zusammenfassen [focus]` asks the model for a short summary of the chat, and `/hilfe` shows this list. `/web`, `/wissen` and `/zusammenfassen` are sent as a normal message; they do not work with Tools (MCP) switched on. A path like `/etc/hosts` is not a command; a message that is only a single word with a slash (`/tmp`) is taken for one, so type two slashes (`//tmp`) to send it as text.
 
 **Attaching files:** Paperclip or drag and drop. Text, PDF, Word and PowerPoint are read and added to the message. For many files that should stay available, the knowledge base is better.
 
@@ -189,6 +190,16 @@ With a graphics card a picture takes seconds, with only the processor one to sev
 - **Without Whisper** Sunak uses the offline recognition of Google Chrome (version 139 and later). The normal online recognition (Chrome sends the audio to Google) is used only if it is allowed under Settings → Voice; there the microphone can also be switched off entirely.
 - The microphone only works on the computer itself (`localhost`) or over https, not through phone access; on a phone the keyboard's dictation helps.
 - **Reading aloud:** Speaker button under an answer, click again to stop. It uses the voices of the device; choose a voice under Settings → Voice (per device, with a ▶ test).
+
+### Office files
+
+Sunak writes real files from what the model writes: **Word** (`.docx`), **LibreOffice** (`.odt` and, for tables, `.ods`) and **Excel** (`.xlsx`). They are made by Sunak itself (ZIP + XML from the Python standard library), so LibreOffice does not have to be installed. If LibreOffice is installed (`soffice` on the path, or in its usual folder on macOS and Windows), **PDF** is offered too.
+
+- **Ask in the chat:** "make me a one-page letter to my landlord as a Word file", "a table of the planets with mass and distance". The model answers with a **document card** that shows the text; one click downloads the file type you want. Nothing is stored on the server.
+- **`/dokument <what>`** (`/doc`) does the same without relying on the model to notice the request.
+- **Under any answer:** the **As document** button turns that answer into a card.
+- Headings, paragraphs, bullet and numbered lists, **bold**, *italic*, `code` and tables are carried over. For a spreadsheet, every table becomes a sheet named after the heading above it; plain numbers become numbers (a text like `007` stays text), and text starting with `=` is never turned into a formula.
+- Limits: 400,000 characters of text, 200,000 table cells. PDF is made by LibreOffice and can take a few seconds.
 
 ### Mail
 

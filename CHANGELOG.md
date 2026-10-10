@@ -9,6 +9,13 @@ Format: one section per version, `## [a.b.c] – YYYY-MM-DD`, followed by short 
 ### Added
 - The chat model now answers in the language of the interface. German interface: German answers, English interface: English answers, even when your message or an attached file is in another language. If you explicitly ask for another language ("answer in French"), that wins; translations, code and quotations stay in their own language. Switching the interface language (Settings → Look → Language) applies to the next message. The page sends its language as an optional `lang` field (`"de"` or `"en"`) with every request; an unknown or missing value changes nothing.
 - Other texts the model writes for you follow the interface as well: the web research report, the comparison of several models, tool runs (MCP), the facts Sunak remembers about you, and e-mail summaries and inbox overviews. Drafted e-mail replies and calendar events still follow the language of the e-mail or text they are based on.
+## [0.22.0] – 2026-10-09
+
+### Added
+- Office files. Sunak now writes real documents and tables as files: Word (`.docx`), LibreOffice (`.odt`, and `.ods` for tables) and Excel (`.xlsx`). They are made by Sunak itself from the Python standard library (ZIP + XML), so LibreOffice does not have to be installed and there are no new dependencies. If LibreOffice is installed, PDF is offered as well (Sunak runs `soffice --headless --convert-to pdf` in a temporary folder with its own profile, so an open LibreOffice is not disturbed).
+- Three ways to get a file: ask in the chat ("make me a letter to my landlord as a Word file", "a table of …"; the chat model answers with a document card), the new slash command `/dokument` (`/doc`), and the new **As document** button under every answer. The card shows the text and one button per file type that fits (tables also give `.xlsx` and `.ods`); the file is downloaded on the click and nothing is stored on the server.
+- Headings, paragraphs, bullet and numbered lists, bold, italic, code and tables are carried over. In a spreadsheet every table becomes a sheet named after the heading above it; plain numbers become numbers (`007` and `1e5` stay text) and text starting with `=` is never turned into a formula.
+- New endpoints `POST /api/office` (the file as a download) and `POST /api/assistant/doc` (the model writes the document); `POST /api/assistant/check` also takes `kind: "doc"` for the new ```` ```sunak-doc ```` block.
 
 ## [0.21.0] – 2026-10-09
 
