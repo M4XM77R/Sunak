@@ -1,6 +1,8 @@
 name: desktop
 # Builds the optional Tauri app. Does not run on normal pushes, so the test CI stays fast.
 on:
+  pull_request:
+    paths: ["desktop/**", ".github/workflows/desktop.yml"]  # build only, nothing is published
   workflow_dispatch:
   push:
     tags: ["desktop-v*"]
