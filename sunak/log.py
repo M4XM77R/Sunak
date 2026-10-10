@@ -28,8 +28,8 @@ _SECRETS = set()
 _lock = threading.Lock()
 _PATTERNS = (
     (re.compile(r"(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}"), r"\1 ***"),
-    (re.compile(r"(?i)\b(api[_-]?key|apikey|token|password|passwd|secret|authorization|cookie)(\"?\s*[=:]\s*\"?)[^\s\"',;&]+"), r"\1\2***"),
-    (re.compile(r"(?i)([?&](?:key|api_key|apikey|token|access_token|password|auth)=)[^&\s\"']+"), r"\1***"),
+    (re.compile(r"(?i)(?<![A-Za-z0-9])((?:[A-Za-z0-9]+[_-])*(?:api[_-]?key|apikey|token|password|passwd|secret|authorization|cookie|signature|key))(\"?\s*[=:]\s*\"?)[^\s\"',;&#]+"), r"\1\2***"),
+    (re.compile(r"(?i)([?&#](?:[A-Za-z0-9]+[_-])*(?:key|apikey|token|password|auth|secret|signature|code|sid|pin)=)[^&#\s\"']+"), r"\1***"),
     (re.compile(r"\bsk-[A-Za-z0-9_-]{8,}"), "sk-***"),
     (re.compile(r"\b[A-Fa-f0-9]{32,}\b"), "***"),
 )
@@ -83,12 +83,12 @@ class _SafeFileHandler(logging.handlers.RotatingFileHandler):
     """Rotating file that only its owner can read."""
 
     def _open(self):
-        stream = super()._open()
+        fd = os.open(self.baseFilename, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)  # private from the first byte
         try:
-            os.chmod(self.baseFilename, 0o600)
+            os.chmod(self.baseFilename, 0o600)  # an older, wider file too (no-op on Windows)
         except OSError:
             pass
-        return stream
+        return os.fdopen(fd, self.mode, encoding=self.encoding, errors=self.errors)
 
 
 class _Ring(logging.Handler):

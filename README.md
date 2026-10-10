@@ -321,7 +321,7 @@ The setting survives a restart. If you start Sunak with `--host 0.0.0.0`, it is 
 | `sunak uninstall` | Remove Sunak, asks before deleting data |
 | `sunak help <command>` | Details of a command |
 
-**Start options:** `--port N` (first port Sunak tries; default 7000, if it is busy Sunak counts up through nine more ports), `--host ADDRESS` (default `127.0.0.1`; `0.0.0.0` for access from the network, then be sure to set a password), `--data-dir PATH` (data folder, default `~/.sunak`), `--no-browser`, `--version`. `status` and `stop` look on the port and the nine after it (`--port N` chooses another starting point).
+**Start options:** `--port N` (first port Sunak tries; default 7000, if it is busy Sunak counts up through nine more ports), `--host ADDRESS` (default `127.0.0.1`; `0.0.0.0` for access from the network, then be sure to set a password), `--data-dir PATH` (data folder, default `~/.sunak`), `--no-browser`, `-v` / `--verbose` (full request log, see below), `--log-file PATH`, `--version`. `status` and `stop` look on the port and the nine after it (`--port N` chooses another starting point).
 
 ## Configuration
 
@@ -334,6 +334,8 @@ You set everything important in the interface (Settings). Optionally via environ
 | `SUNAK_DATA` | `~/.sunak` | Folder for the database (Windows: `C:\Users\<name>\.sunak`) |
 | `SUNAK_PASSWORD` | – | Set a password at startup |
 | `SUNAK_NO_BROWSER` | – | Set to any value: do not open the browser |
+| `SUNAK_VERBOSE` | – | Set to any value: same as `--verbose`, see below |
+| `SUNAK_LOG_FILE` | – | Same as `--log-file PATH` (turns verbose mode on) |
 | `SUNAK_DEBUG` | – | Set to any value: more detailed log (level DEBUG: also every read request, background pages and queries). Never contents of chats, prompts or keys |
 | `SUNAK_REPORT_REPO` | `M4XM77R/Sunak` | GitHub repository (`owner/name`) where error reports land as issues, for example for your own fork |
 | `SUNAK_MODEL_SLOTS` | `1` | How many requests a local model (Ollama on this computer or on the LAN) handles at the same time; further ones wait in the queue. Models on the internet (Claude, OpenAI) take four at a time |
@@ -344,6 +346,8 @@ You set everything important in the interface (Settings). Optionally via environ
 | `SUNAK_ALLOW_PRIVATE_FETCH` | – | `1` lets web search and Research also read pages from the local network (normally refused, see Models, GPU and search) |
 | `SEARXNG_URL` | – | Your own SearXNG instance for web search and Research instead of DuckDuckGo |
 | `NO_COLOR` | – | No colors in the terminal output |
+
+**Verbose mode:** `sunak --verbose` (or `-v`, or `SUNAK_VERBOSE=1`, which also works for autostart and the desktop app) shows every request in full on the terminal: what Sunak sends to model backends and other services (method, URL, headers, body) and what comes back (status, headers, body; streams as the assembled text), plus every request the Sunak server itself receives, with duration. `--log-file PATH` also writes it to a file (and switches verbose mode on). Secrets are hidden by default (only harmless headers are shown, fields and URL parameters that look like keys, tokens, passwords, PINs or sessions are masked), pictures and binary data are replaced by their size, long bodies are cut. **Chats and prompts are in it**, so look it over before you post it in an issue. It is separate from `sunak.log` and never goes into error reports. Mail (IMAP/SMTP) is not logged.
 
 **Log:** Sunak writes what it does to the terminal it was started from and to the file `~/.sunak/logs/sunak.log` (in the data folder, readable only by you). Every line has a time, a level and an area, for example `13:11:54 INFO    http     POST /api/chat 200 3.4s`. Logged are start and stop, requests that change something (method, path, status, duration; errors as WARNING or ERROR), the queue ("busy, the request waits"), image jobs, update checks and errors with their cause. **Never** in it: chats, prompts, answers, mails, file contents, passwords, API keys or query texts (not even with `SUNAK_DEBUG`). The file is limited to **50 MB**: five files (`sunak.log`, `sunak.log.1` to `.4`) of at most 10 MB each, the oldest is overwritten. `sunak logs` shows the location and the end of the file.
 
