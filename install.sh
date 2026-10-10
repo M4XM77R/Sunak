@@ -9,6 +9,7 @@
 #   --no-start     do not start Sunak after installing
 #   --no-shortcut  do not create a desktop icon
 #   --autostart    start Sunak in the background at every login (otherwise you are asked)
+#   --desktop      also install the optional desktop app (also SUNAK_DESKTOP=1; otherwise you are asked, default no)
 set -euo pipefail
 
 REPO="${SUNAK_REPO:-M4XM77R/sunak}"
@@ -16,7 +17,7 @@ BRANCH="${SUNAK_BRANCH:-main}"
 HOME_DIR="${SUNAK_HOME:-$HOME/.sunak}"
 APP_DIR="$HOME_DIR/app"
 BIN_DIR="$HOME/.local/bin"
-YES=0; NO_OLLAMA=0; NO_START=0; AUTOSTART=""; NO_SHORTCUT=0
+YES=0; NO_OLLAMA=0; NO_START=0; AUTOSTART=""; NO_SHORTCUT=0; DESKTOP=""; [ "${SUNAK_DESKTOP:-}" = 1 ] && DESKTOP=1
 for a in "$@"; do
   case "$a" in
     --yes|-y) YES=1 ;;
@@ -24,6 +25,7 @@ for a in "$@"; do
     --no-start) NO_START=1 ;;
     --autostart) AUTOSTART=1 ;;
     --no-shortcut) NO_SHORTCUT=1 ;;
+    --desktop) DESKTOP=1 ;;
     *) echo "Unknown option: $a" >&2; exit 2 ;;
   esac
 done
@@ -174,6 +176,14 @@ if [ "$NO_OLLAMA" = 0 ] && ! command -v ollama >/dev/null; then
   fi
 fi
 command -v ollama >/dev/null && say "Ollama ✓"
+
+# 5. Desktop app (optional, opt-in) --------------------------------------
+# `sunak desktop install` downloads the finished package from the newest GitHub release "desktop-v*" (no Rust).
+# A failure is only a hint: the normal installation is already complete.
+if [ "$DESKTOP" = 1 ] || ask_no "Also install the desktop app (Sunak in its own window)?"; then
+  (cd "$APP_DIR" && SUNAK_HOME="$HOME_DIR" SUNAK_REPO="$REPO" python3 -m sunak desktop install) \
+    || warn "Desktop app not installed. Sunak itself is ready; try later: sunak desktop install"
+fi
 
 printf '\n  %sDone!%s Start Sunak any time with: %ssunak%s\n' "$B" "$R" "$P" "$R"
 printf '  On first start it suggests a model that fits your computer.\n\n'

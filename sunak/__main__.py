@@ -12,7 +12,7 @@ import threading
 import webbrowser
 from pathlib import Path
 
-from . import __version__, backup, changelog, desktop, gpu, log, updates
+from . import __version__, backup, changelog, desktop, desktopapp, gpu, log, updates
 from .server import App, make_server
 
 
@@ -52,6 +52,15 @@ COMMANDS = {
                           "again afterwards. In the app, the Update button does the same.\n"
                           "  --yes, -y  do not ask (for scripts; without a terminal Sunak never asks)\n"
                           "Part of the installed sunak command. Without installing: run git pull in the Sunak folder."},
+    "desktop": {"group": "Manage", "args": "[install|uninstall|status]", "summary": "Optional desktop app (own window)",
+                "example": "sunak desktop install",
+                "details": "Sunak in its own window instead of the browser (a small Tauri app, see desktop/README.md).\n"
+                           "  install    download the finished package from the newest desktop release and install it\n"
+                           "  uninstall  remove it again\n"
+                           "  status     is it installed, is a package available (default)\n"
+                           "No Rust needed. The app needs this Sunak installation; it starts and stops the server itself.\n"
+                           "Packages exist for Windows, macOS (Apple silicon) and Linux (x86_64). They are not code-signed.\n"
+                           "In the app: Settings → Desktop app."},
     "changelog": {"group": "Manage", "args": "[--confirm] [--yes]", "summary": "What the next update changes", "example": "sunak changelog",
                   "details": "Looks for a newer version and shows its changes from CHANGELOG.md, without installing anything.\n"
                              "When Sunak is up to date, it shows the changes of the installed version.\n"
@@ -188,6 +197,29 @@ def gpu_report(info):
            "apple": "Ollama uses the GPU automatically (Metal)."}[info["vendor"]]
     mem = "shares the main memory" if info["unified"] else f"{info['vram_gb']} GB VRAM"
     return [f"GPU: {info['name']} ({mem}). {how}"]
+
+
+def desktop_command(rest):
+    """sunak desktop [install|uninstall|status]"""
+    action = rest[0] if rest else "status"
+    if action not in ("install", "uninstall", "status") or len(rest) > 1:
+        return fail(f"Usage: sunak desktop [install|uninstall|status]{suggest(action, ('install', 'uninstall', 'status'))}")
+    try:
+        if action == "install":
+            print(f"Installed: {desktopapp.install(print)}")
+        elif action == "uninstall":
+            print("Desktop app removed." if desktopapp.uninstall() else "The desktop app is not installed.")
+        else:
+            print("Desktop app: " + ("installed" if desktopapp.installed() else "not installed"))
+            if not desktopapp.supported():
+                print("There is no package for this system.")
+            elif not desktopapp.installed():
+                pkg = desktopapp.find_package()
+                print(f"Available: {pkg['name']} ({pkg['tag']}). Install with: sunak desktop install" if pkg
+                      else "No desktop app release yet (see desktop/README.md to build it).")
+    except desktopapp.DesktopError as e:
+        return fail(str(e))
+    return 0
 
 
 def logs_command(rest):
@@ -356,6 +388,8 @@ def main(argv=None):
         return 0
     if argv and argv[0] == "update":
         sys.exit("'update' is part of the installed sunak command. Without installing: git pull in this folder.")
+    if argv and argv[0] == "desktop":
+        return desktop_command(argv[1:])
     if argv and argv[0] == "logs":
         return logs_command(argv[1:])
     if argv and argv[0] == "changelog":
@@ -428,6 +462,9 @@ def main(argv=None):
         print(f"  Log:  {log_file} (sunak logs shows the end)")
     if args.host == "0.0.0.0":
         print("  Reachable from other devices on your network. Set a password in Settings!")
+    if desktopapp.notice_pending(args.data_dir, "cli"):  # once
+        print("  New: Sunak as a desktop app. Install it with: sunak desktop install\n")
+        desktopapp.mark_notice(args.data_dir, "cli")
     print("  Press Ctrl+C to stop.\n")
     log.get("main").info("Sunak %s started on %s (Python %s, %s, data folder %s)", __version__, url,
                          platform.python_version(), platform.system(), args.data_dir)

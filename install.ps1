@@ -3,7 +3,8 @@
 #   irm https://raw.githubusercontent.com/M4XM77R/sunak/main/install.ps1 | iex
 #
 # Set $env:SUNAK_YES = "1" before running for an unattended install,
-# $env:SUNAK_AUTOSTART = "1" to start Sunak at every login, $env:SUNAK_NO_SHORTCUT = "1" for no icons.
+# $env:SUNAK_AUTOSTART = "1" to start Sunak at every login, $env:SUNAK_NO_SHORTCUT = "1" for no icons,
+# $env:SUNAK_DESKTOP = "1" to also install the optional desktop app (otherwise you are asked, default no).
 $ErrorActionPreference = "Stop"
 $Repo = if ($env:SUNAK_REPO) { $env:SUNAK_REPO } else { "M4XM77R/sunak" }
 $Branch = if ($env:SUNAK_BRANCH) { $env:SUNAK_BRANCH } else { "main" }
@@ -155,6 +156,15 @@ if ($env:SUNAK_NO_OLLAMA -ne "1" -and -not (Get-Command ollama -ErrorAction Sile
     try { winget install -e --id Ollama.Ollama --accept-package-agreements --accept-source-agreements }
     catch { Write-Warning "Ollama install failed - get it from https://ollama.com/download" }
   }
+}
+
+# 5. Desktop app (optional, opt-in): "sunak desktop install" downloads the finished package from the newest
+# GitHub release "desktop-v*" (no Rust). A failure is only a hint; the normal installation is complete.
+if ($env:SUNAK_DESKTOP -eq "1" -or ($env:SUNAK_YES -ne "1" -and (Read-Host "Also install the desktop app (Sunak in its own window)? [y/N]") -match '^[yY]')) {
+  Push-Location $AppDir
+  & $cmd desktop install
+  if ($LASTEXITCODE -ne 0) { Write-Warning "Desktop app not installed. Sunak itself is ready; try later: sunak desktop install" }
+  Pop-Location
 }
 
 Write-Host "`n  Done! Start Sunak with the desktop icon or by typing: sunak`n" -ForegroundColor Magenta

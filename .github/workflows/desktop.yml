@@ -1,0 +1,62 @@
+name: desktop
+# Builds the optional Tauri app. Does not run on normal pushes, so the test CI stays fast.
+on:
+  pull_request:
+    paths: ["desktop/**", ".github/workflows/desktop.yml"]  # build only, nothing is published
+  workflow_dispatch:
+  push:
+    tags: ["desktop-v*"]
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+          - os: macos-latest
+          - os: windows-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri
+      - if: startsWith(matrix.os, 'ubuntu')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libgtk-3-dev
+      - run: cargo install tauri-cli --version "^2" --locked
+      - name: Icons
+        working-directory: desktop/src-tauri
+        run: cargo tauri icon ../../sunak/static/icon.svg
+      - name: Build
+        working-directory: desktop/src-tauri
+        run: cargo tauri build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sunak-desktop-${{ matrix.os }}
+          path: desktop/src-tauri/target/release/bundle/**/*
+  release:
+    # only for a tag desktop-v*: collects the packages of all systems, adds SHA256SUMS (checked by `sunak desktop install`)
+    if: startsWith(github.ref, 'refs/tags/desktop-v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Collect packages and checksums
+        run: |
+          mkdir release
+          find artifacts -type f \( -name '*.msi' -o -name '*-setup.exe' -o -name '*.dmg' -o -name '*.deb' -o -name '*.AppImage' \) -exec cp {} release/ \;
+          cd release
+          test "$(ls | wc -l)" -ge 3
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          fail_on_unmatched_files: true

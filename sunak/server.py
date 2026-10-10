@@ -28,7 +28,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlparse
 
-from . import (__version__, backup, cal, extract, gpu, imagegen, images, intent, jobqueue, knowledge, log, mail, mcp, memory, modelsearch, netguard, office,
+from . import (__version__, backup, cal, desktopapp, extract, gpu, imagegen, images, intent, jobqueue, knowledge, log, mail, mcp, memory, modelsearch, netguard, office,
                ollama, providers, qr, reminders, reports, research, sdcpp, speech, toolrun, updates, usage)
 from . import lang as sunak_lang
 from .db import DB, new_id
@@ -1271,6 +1271,34 @@ class Handler(BaseHTTPRequestHandler):
         Allowed from this computer, or from elsewhere when logged in."""
         self.send_json({"ok": True})
         threading.Thread(target=self.server.shutdown, daemon=True).start()
+
+    def desktop_get(self):
+        """GET /api/desktop: {supported, installed, busy, msg, error, done, notice}. `notice` is true once (the hint
+        after the update to 1.1.0: "Sunak is available as a desktop app")."""
+        out = dict(desktopapp.job_state(), supported=desktopapp.supported(), installed=desktopapp.installed(), notice=False)
+        if self.profile.get("admin") and desktopapp.notice_pending(self.app.data_dir, "gui"):
+            out["notice"] = True
+        self.send_json(out)
+
+    def desktop_dismiss(self):
+        """POST /api/desktop/dismiss: the one-time hint was shown."""
+        desktopapp.mark_notice(self.app.data_dir, "gui")
+        self.send_json({"ok": True})
+
+    def desktop_action(self, action):
+        if not desktopapp.supported():
+            return self.error("There is no desktop app package for this system.")
+        if not desktopapp.start_job(action):
+            return self.error("The desktop app is busy.", 409)
+        self.send_json({"ok": True})
+
+    def desktop_install(self):
+        """POST /api/desktop/install (admin): download and install the desktop app in the background; poll GET."""
+        self.desktop_action("install")
+
+    def desktop_uninstall(self):
+        """POST /api/desktop/uninstall (admin): remove the desktop app."""
+        self.desktop_action("uninstall")
 
     def update_get(self):
         """GET /api/update: is a newer version available? (checked with git in the background)"""
@@ -2999,6 +3027,10 @@ ROUTES = [
     (r"/api/profiles/([a-z0-9]{1,16})", "DELETE", Handler.profile_delete),
     (r"/api/settings", "GET", Handler.get_settings),
     (r"/api/settings", "PUT", Handler.put_settings),
+    (r"/api/desktop", "GET", Handler.desktop_get),
+    (r"/api/desktop/dismiss", "POST", Handler.desktop_dismiss),
+    (r"/api/desktop/install", "POST", Handler.desktop_install),
+    (r"/api/desktop/uninstall", "POST", Handler.desktop_uninstall),
     (r"/api/update", "GET", Handler.update_get),
     (r"/api/update", "POST", Handler.update_apply),
     (r"/api/update/check", "POST", Handler.update_check),
@@ -3099,6 +3131,7 @@ ROUTES = [
 # what only admin profiles may do: things that change the installation or reach beyond one profile's data
 ADMIN_ONLY = {(m, p) for p, m, _ in ROUTES if (m, p) in {
     ("POST", r"/api/profiles"), ("DELETE", r"/api/profiles/([a-z0-9]{1,16})"), ("POST", r"/api/update"), ("POST", r"/api/update/check"),
+    ("POST", r"/api/desktop/install"), ("POST", r"/api/desktop/uninstall"),
     ("GET", r"/api/reports"), ("POST", r"/api/reports/token"), ("POST", r"/api/reports/check"), ("POST", r"/api/reports/send"),
     ("POST", r"/api/reports/dismiss"), ("POST", r"/api/reports/sample"),
     ("POST", r"/api/models/pull"), ("POST", r"/api/models/delete"), ("POST", r"/api/ollama/start"),

@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Sunak</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+:root{color-scheme:dark light}
+body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;font:16px system-ui,sans-serif;background:#16161a;color:#eee;text-align:center}
+main{max-width:34rem;padding:2rem}h1{color:#ff4fa3;margin:0 0 1rem}code{background:#2a2a30;padding:.15rem .4rem;border-radius:4px;user-select:all}
+.spin{width:2rem;height:2rem;margin:1.5rem auto;border:3px solid #444;border-top-color:#ff4fa3;border-radius:50%;animation:s 1s linear infinite}
+@keyframes s{to{transform:rotate(360deg)}}[hidden]{display:none}
+</style></head><body><main>
+<h1>Sunak</h1>
+<div id="wait"><div class="spin"></div><p id="wt">Starting Sunak …</p></div>
+<div id="err" hidden>
+  <p id="et"></p>
+  <p id="ei"></p>
+</div>
+<script>
+var de=(navigator.language||"").slice(0,2)==="de";
+if(de)document.getElementById("wt").textContent="Sunak startet …";
+// Called by the desktop app (Rust) when the server cannot be started.
+function showError(kind,detail){
+  document.getElementById("wait").hidden=true;document.getElementById("err").hidden=false;
+  var t={missing:[ "Sunak is not installed (or Python is missing).","Install it with the one-line installer from the README, then start this app again.",
+                   "Sunak ist nicht installiert (oder Python fehlt).","Installiere es mit der Ein-Zeilen-Installation aus der README und starte diese App danach neu."],
+         timeout:["Sunak did not answer in time.","Try again. If it keeps failing, run <code>python -m sunak</code> in a terminal and look at the message.",
+                  "Sunak hat nicht rechtzeitig geantwortet.","Versuche es noch einmal. Hilft das nicht, starte <code>python -m sunak</code> im Terminal und lies die Meldung."]}[kind]||["Error","",
+                  "Fehler",""];
+  document.getElementById("et").textContent=de?t[2]:t[0];
+  document.getElementById("ei").innerHTML=de?t[3]:t[1];
+}
+</script></main></body></html>
