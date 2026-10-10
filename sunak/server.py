@@ -221,6 +221,7 @@ class Server(ThreadingHTTPServer):
     """ThreadingHTTPServer without the reverse DNS lookup of the address when it starts (HTTPServer looks
     up a name for it, which can take many seconds for a network address, e.g. on macOS)."""
     daemon_threads = True
+    request_queue_size = 128  # the default of 5 drops connections when a burst of requests arrives at once
 
     def server_bind(self):
         socketserver.TCPServer.server_bind(self)
