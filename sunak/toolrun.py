@@ -179,8 +179,8 @@ class OllamaTurns:
     @_metered
     def turn(self, meter):
         payload = {"model": self.model, "messages": self.msgs, "stream": True, "tools": _openai_tools(self.tools)}
-        if "temperature" in self.options:
-            payload["options"] = {"temperature": self.options["temperature"]}
+        if providers.ollama_options(self.p, self.model, self.options):
+            payload["options"] = providers.ollama_options(self.p, self.model, self.options)
         try:
             resp = providers._request(providers._base(self.p) + "/api/chat", payload, self.p.get("api_key", ""))
         except ProviderError as e:
@@ -236,6 +236,7 @@ class OpenAITurns:
         payload = {"model": self.model, "messages": self.msgs, "stream": True, "tools": _openai_tools(self.tools)}
         if "temperature" in self.options:
             payload["temperature"] = self.options["temperature"]
+        providers.set_output_limit(payload, self.options)
         try:
             resp = providers.open_openai_stream(self.p, "/chat/completions", payload)
         except ProviderError as e:

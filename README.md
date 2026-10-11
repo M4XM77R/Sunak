@@ -137,6 +137,8 @@ Your data then lives in the `data/` folder next to the Compose file (Ollama mode
 
 **Introduction:** The first time a profile is used, a short tour opens (six steps, skippable with the button or `Esc`). It stays away afterwards; Settings → Introduction → "Show the introduction" opens it again. Profiles that already existed see it once after the update to 0.20.0.
 
+**Answer length:** Settings → Chat → "Longest answer (tokens)" (default 32768) sets how long one answer may get. With Ollama, Sunak also enlarges the context window to fit (at most what the model supports; a larger window needs more memory). Claude always uses the maximum of its model.
+
 ### Automatic memory
 
 After an answer, the chat's model checks whether the last question and answer contain lasting facts about you (name, job, preferences for answers) and stores them as a note tagged "memory", at most three per answer. You see this as a notice with **Undo**, and under Notes & Memory, there with the chat it came from. The AI knows all memory notes in every chat. "Remember that …" is always saved; passwords, keys, PINs and card numbers never are. It does not run with tools switched on, after picture requests or when memory is switched off. To switch it off: Settings → Chat → "Remember things about me from chats by itself" (only the automatic half) or "Use memory notes in chats" (no memory at all).

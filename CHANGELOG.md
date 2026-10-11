@@ -4,6 +4,18 @@ All changes to Sunak, newest version first. Sunak shows the entries between your
 
 Format: one section per version, `## [a.b.c] – YYYY-MM-DD`, followed by short points under **Added**, **Changed**, **Fixed** or **Removed**. Every change to Sunak gets a new version and an entry here.
 
+## [1.4.0] – 2026-10-11
+
+### Added
+- Setting **Longest answer (tokens)** (Settings → Chat, default 32768): how long one answer may get before it is cut off.
+
+### Changed
+- Ollama: Sunak now sends `num_predict` (the answer limit) and a matching `num_ctx` (answer limit plus 16384 tokens of room for the chat, at most the context length the model reports). Applies to chats, research reports, mail drafts and tool runs.
+- OpenAI-compatible servers: Sunak now sends `max_tokens`. A server that wants `max_completion_tokens`, names a smaller maximum or does not accept the option is asked again with that (or without it), and Sunak remembers it for that model.
+
+### Fixed
+- Answers ended after about 4000 tokens with Ollama: Sunak sent no context size, so Ollama's default window (often 4096 tokens, prompt included) was full after a few lines.
+
 ## [1.3.0] – 2026-10-10
 
 ### Added

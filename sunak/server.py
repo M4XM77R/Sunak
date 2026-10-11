@@ -47,6 +47,7 @@ DEFAULT_SETTINGS = {
     "default_model": "",
     "system_prompt": "You are Sunak, a helpful, honest and concise assistant. Use Markdown when it helps.",
     "temperature": 0.7,
+    "max_output_tokens": providers.DEFAULT_MAX_OUTPUT,  # longest answer (tokens) a model may write; Ollama gets a context window to fit
     "use_memory": True,
     "auto_memory": True,     # Sunak picks up lasting facts about the user from chats by itself (memory.py)
     "accent": "",       # "" = the theme's own accent color
@@ -70,7 +71,8 @@ DEFAULT_SETTINGS = {
     "intro_seen": False,     # the introduction (first start of a profile, Settings → Introduction) was shown or skipped
     "reminder_lang": "en",   # language of the push messages: the interface language the settings were last saved in
 }
-INT_PREFS = {"image_gen_size": (512, 1024),
+INT_PREFS = {"max_output_tokens": (256, 1000000),
+             "image_gen_size": (512, 1024),
              "image_gen_steps": (1, imagegen.MAX_STEPS)}  # allowed ranges
 # Settings of the whole installation (only admin profiles change them); all other prefs are per profile.
 GLOBAL_PREFS = {"check_updates", "speech_input", "whisper_url", "whisper_model",
@@ -943,11 +945,15 @@ class App:
         return msgs
 
     def options(self):
-        """Generation options (temperature) from the settings."""
+        """Generation options (temperature, answer limit) from the settings."""
+        s, out = self.settings(), {}
         try:
-            return {"temperature": float(self.settings()["temperature"])}
+            out["temperature"] = float(s["temperature"])
         except (TypeError, ValueError):
-            return {}
+            pass
+        if isinstance(s.get("max_output_tokens"), int):
+            out["max_tokens"] = s["max_output_tokens"]
+        return out
 
 
 class ProfileView(App):
@@ -2124,7 +2130,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.emit({"type": "error", "error": "Could not read any of the found pages."})
             self.emit({"type": "sources", "sources": [{"title": s["title"], "url": s["url"]} for s in sources]})
             self.emit({"type": "status", "t": f"Writing report from {len(sources)} sources…"})
-            for kind, c in providers.chat_stream(prov, model, research.report_prompt(question, sources, d.get("lang")), {"temperature": 0.3}):
+            for kind, c in providers.chat_stream(prov, model, research.report_prompt(question, sources, d.get("lang")), {**self.app.options(), "temperature": 0.3}):
                 self.emit({"type": kind, "t": c})
             self.emit({"type": "done"})
         except providers.ProviderError as e:
@@ -2953,7 +2959,7 @@ class Handler(BaseHTTPRequestHandler):
         prov, model = self.app.resolve(d.get("model"))
         self.start_stream()
         try:
-            for kind, c in providers.chat_stream(prov, model, messages, {"temperature": 0.3}):
+            for kind, c in providers.chat_stream(prov, model, messages, {**self.app.options(), "temperature": 0.3}):
                 self.emit({"type": kind, "t": c})
             self.emit({"type": "done"})
         except providers.ProviderError as e:

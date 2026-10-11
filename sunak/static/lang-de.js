@@ -381,6 +381,8 @@
 "Last used model": "Zuletzt genutztes Modell",
 "System prompt": "Systemprompt",
 "Creativity (temperature):": "Kreativität (Temperatur):",
+"Longest answer (tokens)": "Längste Antwort (Tokens)",
+"How long one answer may get before it is cut off. With Ollama, Sunak also sets the context window so that the answer fits (at most what the model supports); a longer window needs more memory. Claude uses the maximum of its model.": "Wie lang eine Antwort werden darf, bevor sie abgeschnitten wird. Bei Ollama stellt Sunak außerdem das Kontextfenster so ein, dass die Antwort hineinpasst (höchstens, was das Modell kann); ein längeres Fenster braucht mehr Arbeitsspeicher. Claude nutzt das Maximum seines Modells.",
 "Use memory notes in chats": "Gedächtnis-Notizen in Chats nutzen",
 "Personas": "Personas",
 "Pick a persona above the chat to change how Sunak answers, e.g. as a coder or translator. Edit them or add your own.": "Wähle über dem Chat eine Persona, um zu ändern, wie Sunak antwortet, z. B. als Programmierer oder Übersetzer. Bearbeite sie oder füg eigene hinzu.",

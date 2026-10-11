@@ -171,13 +171,14 @@ Errors always come as `{"error": "…"}` with an HTTP status of 4xx. Errors that
 A provider is an entry `{id, name, type, base_url, api_key}`, stored in the setting `providers`.
 
 - **`ollama`** uses `/api/tags`, `/api/chat` (streaming, thought process in the field `thinking`), `/api/pull` and `/api/delete`.
+  - **Answer limit:** the setting `max_output_tokens` (default `DEFAULT_MAX_OUTPUT` = 32768) arrives in the generation options as `max_tokens`. `ollama_options` turns it into `num_predict` and `num_ctx` (limit + `PROMPT_HEADROOM` = 16384, at most the model's context length from `/api/show` → `model_info`, cached in `_CONTEXT_LENGTH`). Without `num_ctx` Ollama uses its own default window (often 4096 tokens including the prompt) and cuts the answer off there. Short internal calls (intent, search query, memory) pass no limit and leave the window alone.
 - **`anthropic`** (Claude) uses the Anthropic API directly over HTTP, without an SDK, so that Sunak stays free of dependencies. `GET /v1/models` (paged) delivers the models; if the endpoint is unreachable, Sunak takes a built-in list (`CLAUDE_FALLBACK_MODELS`), while a rejected key is shown as an error. Chats run through `POST /v1/messages` with `stream: true`, and the server-sent events are split into text (`text_delta`) and thought process (`thinking_delta`). In this:
   - The system prompt is a field of its own, `system`; consecutive messages of the same role are merged.
   - Models with adaptive thinking (Opus/Sonnet from 4.6, Fable) get `thinking: {type: "adaptive", display: "summarized"}` so that the summarized thought process is visible. Haiku and older models get no `thinking`.
-  - `temperature` is not sent, because current Claude models reject it. `max_tokens` depends on the model (`claude_max_tokens`).
+  - `temperature` is not sent, because current Claude models reject it. `max_tokens` depends on the model (`claude_max_tokens`, 64000 for current models) and ignores the setting `max_output_tokens`; streaming keeps long answers within the read timeout.
   - For Claude Opus 5.5, Opus 5, Sonnet 5.5 and Fable 5.1 on `api.anthropic.com`, Sunak sets `fallbacks: "default"` (beta header `server-side-fallback-2026-07-01`). If a safety filter rejects a request, the API then answers it with a replacement model. A final refusal (`stop_reason: "refusal"`) appears as an error message.
   - The key goes to the API as `x-api-key` with `anthropic-version: 2023-06-01`.
-- **`openai`** uses `/models` and `/chat/completions` with server-sent events. Thought processes come from `reasoning_content` or `reasoning`. This works with OpenAI, OpenRouter, Groq, LM Studio, llama.cpp and vLLM.
+- **`openai`** uses `/models` and `/chat/completions` with server-sent events. The answer limit goes out as `max_tokens` (`set_output_limit`). If the server refuses it (400/422 naming the option), `open_openai_stream` asks again with `max_completion_tokens`, a smaller maximum taken from the message, or finally without a limit, and remembers the result per server and model (`_OUTPUT_FIX`). Thought processes come from `reasoning_content` or `reasoning`. This works with OpenAI, OpenRouter, Groq, LM Studio, llama.cpp and vLLM.
 
 Local addresses (localhost, private IPs, `*.local`, `host.docker.internal`) are always contacted directly, never through a system proxy.
 

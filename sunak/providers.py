@@ -179,6 +179,52 @@ def ollama_capabilities(p, model, timeout=5):
     return caps if isinstance(caps, list) else None
 
 
+DEFAULT_MAX_OUTPUT = 32768   # answer length (tokens) when the settings do not say otherwise
+PROMPT_HEADROOM = 16384      # Ollama: context window = answer limit + this much room for the chat so far
+_CONTEXT_LENGTH = {}         # (backend, model) -> the context length the model supports, as Ollama reports it
+
+
+def ollama_context_length(p, model, timeout=5):
+    """The longest context a model supports, as Ollama reports it, or None when it does not say."""
+    key = (_base(p), model)
+    if key in _CONTEXT_LENGTH:
+        return _CONTEXT_LENGTH[key]
+    try:
+        with _request(_base(p) + "/api/show", {"model": model}, p.get("api_key", ""), timeout=timeout) as r:
+            info = json.load(r).get("model_info")
+    except (ProviderError, OSError, ValueError, AttributeError):
+        return None
+    for k, v in (info.items() if isinstance(info, dict) else ()):
+        if k.endswith(".context_length") and isinstance(v, int) and v > 0:
+            _CONTEXT_LENGTH[key] = v
+            return v
+    return None
+
+
+def ollama_options(p, model, options):
+    """The "options" of an Ollama request. Ollama cuts an answer off where its context window (often only 4096
+    tokens by default, prompt included) is full, so a requested answer limit also needs a window that fits it:
+    `num_predict` = the limit, `num_ctx` = limit + room for the chat, at most what the model supports."""
+    out = {}
+    if "temperature" in options:
+        out["temperature"] = options["temperature"]
+    limit = options.get("max_tokens")
+    if isinstance(limit, int) and limit > 0:
+        ctx = limit + PROMPT_HEADROOM
+        known = ollama_context_length(p, model)
+        if known:
+            ctx = min(ctx, known)
+        out["num_ctx"], out["num_predict"] = ctx, min(limit, ctx)
+    return out
+
+
+def set_output_limit(payload, options):
+    """Answer limit for an OpenAI-compatible request (`max_tokens`), when the options ask for one."""
+    limit = options.get("max_tokens")
+    if isinstance(limit, int) and limit > 0:
+        payload["max_tokens"] = limit
+
+
 def _chat_stream(p, model, messages, options=None, meter=usage.NONE):
     options = options or {}
     if p["type"] == "anthropic":
@@ -188,8 +234,8 @@ def _chat_stream(p, model, messages, options=None, meter=usage.NONE):
         messages = _with_images(messages, p["type"])
     if p["type"] == "ollama":
         payload = {"model": model, "messages": messages, "stream": True}
-        if "temperature" in options:
-            payload["options"] = {"temperature": options["temperature"]}
+        if ollama_options(p, model, options):
+            payload["options"] = ollama_options(p, model, options)
         resp = _request(_base(p) + "/api/chat", payload, p.get("api_key", ""))
         with resp:
             for line in resp:
@@ -212,6 +258,7 @@ def _chat_stream(p, model, messages, options=None, meter=usage.NONE):
     payload = {"model": model, "messages": messages, "stream": True}
     if "temperature" in options:
         payload["temperature"] = options["temperature"]
+    set_output_limit(payload, options)
     resp = open_openai_stream(p, "/chat/completions", payload)
     with resp:
         for raw in resp:
@@ -238,9 +285,55 @@ def _chat_stream(p, model, messages, options=None, meter=usage.NONE):
 _NO_STREAM_USAGE = set()  # OpenAI-compatible servers that refused `stream_options` (asked without it from then on)
 
 
+_OUTPUT_FIX = {}  # (backend, model) -> (name, value) of the answer limit that server accepted (value None = none sent)
+
+
+def _limit_fix(e, payload):
+    """A payload with an answer limit the server accepts after its refusal `e`, or None when `e` is not about the limit.
+    The server may want `max_completion_tokens`, name a smaller maximum, or not know the option at all."""
+    msg = str(e).lower()
+    name = next((k for k in ("max_tokens", "max_completion_tokens") if k in payload), None)
+    if not name or not msg.startswith(("http 400", "http 422")) or not any(k in msg for k in ("max_tokens", "max_completion_tokens", "max_output")):
+        return None
+    out = dict(payload)
+    del out[name]
+    if name == "max_tokens" and "max_completion_tokens" in msg and "instead" in msg:
+        out["max_completion_tokens"] = payload[name]
+        return out
+    smaller = [n for n in map(int, re.findall(r"\d+", re.sub(r"^http \d+", "", msg))) if 256 <= n < payload[name]]
+    if smaller:
+        out[name] = max(smaller)
+    return out
+
+
 def open_openai_stream(p, path, payload):
     """POST a streaming request to an OpenAI-compatible server and return the response. It asks for the token counts
-    (`stream_options.include_usage`); a server whose error names the option is asked again without it, and remembered; any other error is passed on."""
+    (`stream_options.include_usage`); a server whose error names the option is asked again without it, and remembered; any other error is passed on.
+    The same goes for the answer limit: a server that wants another name, names a smaller maximum or does not know the limit
+    is asked again with that (or without), and remembered."""
+    key = (_base(p), payload.get("model"))
+    if key in _OUTPUT_FIX:
+        payload = dict(payload)
+        name, value = _OUTPUT_FIX[key]
+        payload.pop("max_tokens", None)
+        if value is not None:
+            payload[name] = value
+    for attempt in range(3):
+        try:
+            return _open_openai_stream(p, path, payload)
+        except ProviderError as e:
+            fixed = _limit_fix(e, payload)
+            if fixed is None:
+                raise
+            if attempt == 1:  # two corrections did not help: ask without a limit
+                fixed = {k: v for k, v in fixed.items() if k not in ("max_tokens", "max_completion_tokens")}
+            name = next((k for k in ("max_tokens", "max_completion_tokens") if k in fixed), "max_tokens")
+            _OUTPUT_FIX[key] = (name, fixed.get(name))
+            payload = fixed
+    return _open_openai_stream(p, path, payload)
+
+
+def _open_openai_stream(p, path, payload):
     base = _base(p)
     if base in _NO_STREAM_USAGE:
         return _request(base + path, payload, p.get("api_key", ""))
