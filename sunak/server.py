@@ -111,6 +111,12 @@ RECOMMENDATIONS = [
 ]
 
 
+def _shown_channel():
+    """The update channel when it is not the normal one ("dev", another branch), else "": the page names it."""
+    c = updates.channel()
+    return "" if c in (None, "stable") else c
+
+
 def total_ram_gb():
     """Total system memory in GB (Linux, macOS, Windows), or None if unknown."""
     try:
@@ -266,7 +272,7 @@ class App:
         self.gpu = None  # gpu.summary(), filled in the background (nvidia-smi can take a moment)
         threading.Thread(target=self._detect_gpu, daemon=True).start()
         self.instance = secrets.token_hex(8)  # changes with every start, so the page sees a restart
-        self.update = {"behind": None, "checked": 0.0, "version": "", "changelog": []}
+        self.update = {"behind": None, "checked": 0.0, "version": "", "changelog": [], "channel": ""}
         self._update_lock = threading.Lock()
         self._checking = False
         self.tool_runs = toolrun.Registry()
@@ -302,7 +308,8 @@ class App:
                 r = updates.inspect()
                 behind = r["behind"]
                 checked = time.time() if behind is not None else time.time() - updates.CHECK_EVERY + updates.RETRY_AFTER
-                self.update = {"behind": behind, "checked": checked, "version": r["version"], "changelog": r["changelog"]}
+                self.update = {"behind": behind, "checked": checked, "version": r["version"], "changelog": r["changelog"],
+                               "channel": _shown_channel()}
                 if behind:
                     log_app.info("Update check: %d new change%s available", behind, "" if behind == 1 else "s")
                 else:
@@ -323,12 +330,13 @@ class App:
         finally:
             self._checking = False
         checked = time.time() if r["behind"] is not None else time.time() - updates.CHECK_EVERY + updates.RETRY_AFTER
-        self.update = {"behind": r["behind"], "checked": checked, "version": r["version"], "changelog": r["changelog"]}
+        self.update = {"behind": r["behind"], "checked": checked, "version": r["version"], "changelog": r["changelog"],
+                       "channel": _shown_channel()}
         log_app.info("Update check (button): %s", "failed (%s)" % r["error"] if r["behind"] is None else
                      "%d new change%s, remote version %s" % (r["behind"], "" if r["behind"] == 1 else "s", r["version"] or "unknown") if r["behind"] else "up to date")
         return {"behind": r["behind"] or 0, "available": bool(r["behind"]), "known": r["behind"] is not None,
                 "version": r["version"], "current": __version__, "error": r["error"], "changelog": r["changelog"],
-                "can_update": updates.update_command() is not None}
+                "can_update": updates.update_command() is not None, "channel": self.update["channel"]}
 
     def update_info(self):
         """State for the "Update available" hint, plus the outcome of the last update (shown once)."""
@@ -338,6 +346,7 @@ class App:
         return {"enabled": enabled, "available": behind > 0, "behind": behind, "version": self.update["version"] if behind else "",
                 "current": __version__, "changelog": self.update["changelog"] if behind else [],
                 "can_update": updates.update_command() is not None, "result": updates.pop_result(self.data_dir),
+                "channel": self.update.get("channel", ""),
                 "desktop_update": desktopapp.pending_update() if behind > 0 else ""}
 
     # settings ---------------------------------------------------------
