@@ -6,6 +6,7 @@ import ipaddress
 import json
 import os
 import re
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -182,32 +183,56 @@ def ollama_capabilities(p, model, timeout=5):
 PROMPT_HEADROOM = 16384      # Ollama, manual limit: context window = answer limit + this much room for the chat
 AUTO_CONTEXT_CAP = 131072    # Ollama, automatic: never a window larger than this
 FALLBACK_CONTEXT = 16384     # Ollama, automatic: window when the computer's memory or the model's size is unknown
-TOKENS_PER_GB = 6000         # Ollama, automatic: context tokens that one spare GB of memory holds (a rough, careful guess)
+TOKENS_PER_GB = 3000         # Ollama, automatic: context tokens that one spare GB of memory holds (careful: models differ a lot)
+FAIL_RETRY = 60              # seconds before a failed /api/show is asked again
 OS_RESERVE_GB = 2            # memory left for the system and Sunak itself
-_SHOW = {}                   # (backend, model) -> {"context": tokens, "size_gb": estimate} as /api/show says
+_SHOW = {}                   # (backend, model) -> {"context": tokens, "size_gb": GB} as Ollama says
+_SHOW_FAILED = {}            # (backend, model) -> when /api/show last failed
 
 
 def ollama_show(p, model, timeout=5):
-    """What /api/show says about a model: {"context": its longest context, "size_gb": rough memory use}; a
-    missing value is None. Remembered per backend and model once Ollama answered."""
+    """What Ollama says about a model: {"context": its longest context, "size_gb": its size on disk (about what it
+    takes in memory), else a guess from the parameter count}; a missing value is None. Remembered per backend and
+    model once Ollama answered; after a failure Ollama is left alone for FAIL_RETRY seconds."""
     key = (_base(p), model)
     if key in _SHOW:
         return _SHOW[key]
+    unknown = {"context": None, "size_gb": None}
+    if time.monotonic() - _SHOW_FAILED.get(key, -FAIL_RETRY) < FAIL_RETRY:
+        return unknown
     try:
         with _request(_base(p) + "/api/show", {"model": model}, p.get("api_key", ""), timeout=timeout) as r:
             info = json.load(r).get("model_info")
     except (ProviderError, OSError, ValueError, AttributeError):
-        return {"context": None, "size_gb": None}
+        _SHOW_FAILED[key] = time.monotonic()
+        return unknown
     info = info if isinstance(info, dict) else {}
     ctx = next((v for k, v in info.items() if k.endswith(".context_length") and isinstance(v, int) and v > 0), None)
     params = info.get("general.parameter_count")
-    out = {"context": ctx, "size_gb": round(params * 0.7 / 1e9, 1) if isinstance(params, int) and params > 0 else None}
-    _SHOW[key] = out
+    size = round(params / 1e9, 1) if isinstance(params, int) and params > 0 else None  # about 1 byte per parameter: careful
+    try:
+        size = next((round(m["size"] / 1e9, 1) for m in ollama_tags(p, timeout) if m["name"] == model and m["size"]), size)
+    except (ProviderError, OSError, ValueError):
+        pass
+    out = _SHOW[key] = {"context": ctx, "size_gb": size}
     return out
 
 
 def ollama_context_length(p, model):
     return ollama_show(p, model)["context"]
+
+
+def _on_this_computer(url):
+    """True when the backend runs on this computer (or the Docker host): localhost, or a name without a dot such as
+    the compose service "ollama". An address in the LAN is another computer."""
+    host = urllib.parse.urlparse(url).hostname or ""
+    if host in ("localhost", "127.0.0.1", "::1", "host.docker.internal"):
+        return True
+    try:
+        ipaddress.ip_address(host)
+        return False
+    except ValueError:
+        return bool(host) and "." not in host
 
 
 def auto_window(p, model, host_gb):
@@ -216,7 +241,7 @@ def auto_window(p, model, host_gb):
     is not measured: it gets the model's own window (at most AUTO_CONTEXT_CAP)."""
     show = ollama_show(p, model)
     model_ctx = show["context"] or FALLBACK_CONTEXT
-    if not _is_local(_base(p)):
+    if not _on_this_computer(_base(p)):  # another computer in the LAN or on the internet: not measured
         return min(model_ctx, AUTO_CONTEXT_CAP)
     if not host_gb or show["size_gb"] is None:
         return min(model_ctx, FALLBACK_CONTEXT)
@@ -235,10 +260,7 @@ def ollama_options(p, model, options):
         out["temperature"] = options["temperature"]
     limit = options.get("max_tokens")
     if isinstance(limit, int) and limit > 0:
-        ctx = limit + PROMPT_HEADROOM
-        known = ollama_context_length(p, model)
-        if known:
-            ctx = min(ctx, known)
+        ctx = min(limit + PROMPT_HEADROOM, ollama_context_length(p, model) or AUTO_CONTEXT_CAP)
         out["num_ctx"], out["num_predict"] = ctx, min(limit, ctx)
     elif "host_gb" in options:
         ctx = auto_window(p, model, options["host_gb"])
@@ -263,8 +285,9 @@ def _chat_stream(p, model, messages, options=None, meter=usage.NONE):
         messages = _with_images(messages, p["type"])
     if p["type"] == "ollama":
         payload = {"model": model, "messages": messages, "stream": True}
-        if ollama_options(p, model, options):
-            payload["options"] = ollama_options(p, model, options)
+        opts = ollama_options(p, model, options)
+        if opts:
+            payload["options"] = opts
         resp = _request(_base(p) + "/api/chat", payload, p.get("api_key", ""))
         with resp:
             for line in resp:
@@ -314,7 +337,7 @@ def _chat_stream(p, model, messages, options=None, meter=usage.NONE):
 _NO_STREAM_USAGE = set()  # OpenAI-compatible servers that refused `stream_options` (asked without it from then on)
 
 
-_OUTPUT_FIX = {}  # (backend, model) -> (name, value) of the answer limit that server accepted (value None = none sent)
+_OUTPUT_FIX = {}  # (backend, model) -> (name, value, asked) the server accepted for the limit `asked` (value None = none sent)
 
 
 def _limit_fix(e, payload):
@@ -341,12 +364,13 @@ def open_openai_stream(p, path, payload):
     The same goes for the answer limit: a server that wants another name, names a smaller maximum or does not know the limit
     is asked again with that (or without), and remembered."""
     key = (_base(p), payload.get("model"))
-    if key in _OUTPUT_FIX:
+    asked = payload.get("max_tokens")
+    memo = _OUTPUT_FIX.get(key)
+    if asked is not None and memo and memo[2] == asked:  # only for the limit the correction was learned for
         payload = dict(payload)
-        name, value = _OUTPUT_FIX[key]
-        payload.pop("max_tokens", None)
-        if value is not None:
-            payload[name] = value
+        payload.pop("max_tokens")
+        if memo[1] is not None:
+            payload[memo[0]] = min(asked, memo[1])
     for attempt in range(3):
         try:
             return _open_openai_stream(p, path, payload)
@@ -357,7 +381,7 @@ def open_openai_stream(p, path, payload):
             if attempt == 1:  # two corrections did not help: ask without a limit
                 fixed = {k: v for k, v in fixed.items() if k not in ("max_tokens", "max_completion_tokens")}
             name = next((k for k in ("max_tokens", "max_completion_tokens") if k in fixed), "max_tokens")
-            _OUTPUT_FIX[key] = (name, fixed.get(name))
+            _OUTPUT_FIX[key] = (name, fixed.get(name), asked if asked is not None else memo[2])
             payload = fixed
     return _open_openai_stream(p, path, payload)
 

@@ -14,6 +14,7 @@ OPENAI = {"id": "x", "type": "openai", "base_url": "http://openai.test/v1"}
 class OllamaOptionsTest(unittest.TestCase):
     def setUp(self):
         providers._SHOW.clear()
+        providers._SHOW_FAILED.clear()
 
     def test_window_fits_the_limit(self):
         with mock.patch.object(providers, "ollama_context_length", return_value=None):
@@ -46,10 +47,20 @@ class OllamaOptionsTest(unittest.TestCase):
         with self.show(131072, None):
             self.assertEqual(providers.ollama_options(OLLAMA, "m", {"host_gb": 64})["num_ctx"], providers.FALLBACK_CONTEXT)
 
-    def test_remote_ollama_gets_the_model_window(self):
-        remote = dict(OLLAMA, base_url="http://gpu-box.example.com:11434")
-        with self.show(65536, 5.6):
-            self.assertEqual(providers.ollama_options(remote, "m", {"host_gb": 8})["num_ctx"], 65536)
+    def test_other_computers_get_the_model_window(self):
+        for url in ("http://gpu-box.example.com:11434", "http://192.168.1.20:11434"):
+            with self.show(65536, 5.6):
+                self.assertEqual(providers.ollama_options(dict(OLLAMA, base_url=url), "m", {"host_gb": 8})["num_ctx"], 65536)
+
+    def test_docker_service_name_is_this_computer(self):
+        with self.show(131072, 5.6):
+            o = providers.ollama_options(dict(OLLAMA, base_url="http://ollama:11434"), "m", {"host_gb": 8})
+        self.assertLess(o["num_ctx"], 20000)
+
+    def test_manual_window_is_capped_when_the_model_is_unknown(self):
+        with self.show(None, None):
+            o = providers.ollama_options(OLLAMA, "m", {"max_tokens": 1000000})
+        self.assertEqual(o["num_ctx"], providers.AUTO_CONTEXT_CAP)
 
     def test_no_limit_leaves_the_window_alone(self):
         self.assertEqual(providers.ollama_options(OLLAMA, "m", {"temperature": 0}), {"temperature": 0})
@@ -94,6 +105,14 @@ class OpenAILimitTest(unittest.TestCase):
         self.assertEqual(sent[1]["max_tokens"], 16384)
         _, sent = self.run_with([])  # the next request starts with the accepted value
         self.assertEqual(sent[0]["max_tokens"], 16384)
+
+    def test_memo_only_for_the_limit_it_was_learned_for(self):
+        self.run_with(["HTTP 400: max_tokens is too large: 32768. This model supports at most 16384 max_tokens."])
+        sent = []
+        with mock.patch.object(providers, "_open_openai_stream", lambda p, path, pl: sent.append(dict(pl)) or "r"):
+            providers.open_openai_stream(OPENAI, "/chat/completions", {"model": "m", "max_tokens": 4000})
+            providers.open_openai_stream(OPENAI, "/chat/completions", {"model": "m"})  # automatic: no limit
+        self.assertEqual(sent, [{"model": "m", "max_tokens": 4000}, {"model": "m"}])
 
     def test_dropped_when_unknown(self):
         _, sent = self.run_with(["HTTP 400: unknown field max_tokens"])

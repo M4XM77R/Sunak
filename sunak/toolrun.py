@@ -179,8 +179,9 @@ class OllamaTurns:
     @_metered
     def turn(self, meter):
         payload = {"model": self.model, "messages": self.msgs, "stream": True, "tools": _openai_tools(self.tools)}
-        if providers.ollama_options(self.p, self.model, self.options):
-            payload["options"] = providers.ollama_options(self.p, self.model, self.options)
+        opts = providers.ollama_options(self.p, self.model, self.options)
+        if opts:
+            payload["options"] = opts
         try:
             resp = providers._request(providers._base(self.p) + "/api/chat", payload, self.p.get("api_key", ""))
         except ProviderError as e:
