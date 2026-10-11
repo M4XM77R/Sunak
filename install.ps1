@@ -94,10 +94,22 @@ if defined SUNAK_HELP (
   $pyCmd -m sunak help update
   exit /b
 )
+set "SUNAK_CH="
+if /I "%~1"=="update" for %%A in (%*) do (
+  if /I "%%A"=="dev" set "SUNAK_CH=dev"
+  if /I "%%A"=="stable" set "SUNAK_CH=stable"
+  if /I "%%A"=="main" set "SUNAK_CH=stable"
+)
 set "SUNAK_ASK=--confirm"
+if /I "%~1"=="update" if /I "%~3"=="-y" set "SUNAK_ASK=--confirm --yes"
+if /I "%~1"=="update" if /I "%~3"=="--yes" set "SUNAK_ASK=--confirm --yes"
 if /I "%~1"=="update" if /I "%~2"=="-y" set "SUNAK_ASK=--confirm --yes"
 if /I "%~1"=="update" if /I "%~2"=="--yes" set "SUNAK_ASK=--confirm --yes"
 if /I "%~1"=="update" (
+  if defined SUNAK_CH (
+    $pyCmd -m sunak channel %SUNAK_CH%
+    if errorlevel 1 exit /b 1
+  )
   $pyCmd -m sunak changelog %SUNAK_ASK%
   if errorlevel 3 exit /b 0
   $pyCmd -m sunak stop >nul 2>&1

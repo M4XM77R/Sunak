@@ -63,6 +63,56 @@ def repo_dir(root=desktop.PKG_ROOT):
     return None
 
 
+CHANNELS = {"dev": "dev", "stable": None, "main": None}  # name -> branch of the clone (None = its default branch, "stable")
+
+
+def default_branch(repo):
+    """The branch a clone follows normally (origin's default, else "main")."""
+    ref = _git(repo, "symbolic-ref", "--short", "refs/remotes/origin/HEAD") or ""
+    return ref[len("origin/"):] if ref.startswith("origin/") and len(ref) > 7 else "main"
+
+
+def channel(root=desktop.PKG_ROOT):
+    """The update channel of the clone: "stable" (its default branch), "dev", another branch name, or None when
+    that cannot be found out."""
+    repo = repo_dir(root)
+    branch = _git(repo, "rev-parse", "--abbrev-ref", "HEAD") if repo else None
+    if not branch or branch == "HEAD":
+        return None
+    return "dev" if branch == "dev" else "stable" if branch == default_branch(repo) else branch
+
+
+def switch_channel(name, root=desktop.PKG_ROOT):
+    """Put the clone on the branch of channel `name` ("dev", "stable"), so that the next update follows it.
+    Returns (ok, message). Nothing is changed when the clone has uncommitted changes, the branch is not on the
+    remote or the local branch has commits that the remote does not have."""
+    if name not in CHANNELS:
+        return False, f"Unknown channel '{name}'. Use: dev, stable."
+    repo = repo_dir(root)
+    if repo is None:
+        return False, "Sunak was not installed from a git clone, so there is no channel to switch."
+    if _git(repo, "fetch", "--quiet") is None:
+        return False, "Could not reach the update source (no network or no access)."
+    branch = CHANNELS[name] or default_branch(repo)
+    remote = f"refs/remotes/origin/{branch}"
+    if _git(repo, "rev-parse", "--verify", "--quiet", remote) is None:
+        return False, f"The branch '{branch}' does not exist on the update source."
+    current = _git(repo, "rev-parse", "--abbrev-ref", "HEAD")
+    if current == branch:
+        return True, f"Already on the {name} channel (branch {branch})."
+    if _git(repo, "status", "--porcelain", "--untracked-files=no"):
+        return False, f"The clone {repo} has uncommitted changes. Commit or stash them first, then run this again."
+    if _git(repo, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}") is None:
+        done = _git(repo, "checkout", "-q", "-b", branch, "--track", f"origin/{branch}")
+    elif _git(repo, "merge-base", "--is-ancestor", branch, f"origin/{branch}") is None:
+        return False, f"The local branch '{branch}' in {repo} has commits that the update source does not have. Resolve that first."
+    else:
+        done = _git(repo, "checkout", "-q", branch)
+    if done is None:
+        return False, f"Could not switch {repo} to the branch '{branch}'."
+    return True, f"Switched to the {name} channel (branch {branch}). The update that follows installs it."
+
+
 def installed_commit(root, repo):
     """Commit of the installed copy: written to .commit by the installer, else the clone's HEAD."""
     if Path(root) == Path(repo):

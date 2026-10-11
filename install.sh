@@ -109,7 +109,9 @@ case "\${1:-}" in
   uninstall) cd "\$HOME" && exec python3 -m sunak "\$@" ;;  # keeps your data unless you say otherwise
   update)
     case "\${2:-}" in -h|--help) exec python3 -m sunak help update ;; esac
-    ask="--confirm"; case "\${2:-}" in -y|--yes) ask="--confirm --yes" ;; esac
+    ch=""; ask="--confirm"
+    for a in "\${@:2}"; do case "\$a" in dev|stable|main) ch="\$a" ;; -y|--yes) ask="--confirm --yes" ;; esac; done
+    if [ -n "\$ch" ]; then python3 -m sunak channel "\$ch" || exit 1; fi  # sunak update dev: the clone moves to that branch first
     python3 -m sunak changelog \$ask; [ \$? -eq 3 ] && exit 0  # shows what is new and asks (3 = declined)
     export SUNAK_HOME="$HOME_DIR" SUNAK_REPO="$REPO" SUNAK_BRANCH="$BRANCH"  # reinstall into the same place
     old=\$(python3 -m sunak version)
