@@ -95,7 +95,7 @@ class ClaudeTurns:
 
     def __init__(self, p, model, messages, options, tools):
         self.p = p
-        self.payload, self.headers = providers.anthropic_payload(p, model, messages)
+        self.payload, self.headers = providers.anthropic_payload(p, model, messages, options)
         official = urllib.parse.urlparse(providers._base(p)).hostname == "api.anthropic.com"
         self.payload["tools"] = [dict({"name": t["name"], "description": t["description"],
                                        "input_schema": t["parameters"]},
@@ -179,8 +179,9 @@ class OllamaTurns:
     @_metered
     def turn(self, meter):
         payload = {"model": self.model, "messages": self.msgs, "stream": True, "tools": _openai_tools(self.tools)}
-        if "temperature" in self.options:
-            payload["options"] = {"temperature": self.options["temperature"]}
+        opts = providers.ollama_options(self.p, self.model, self.options)
+        if opts:
+            payload["options"] = opts
         try:
             resp = providers._request(providers._base(self.p) + "/api/chat", payload, self.p.get("api_key", ""))
         except ProviderError as e:
@@ -236,6 +237,7 @@ class OpenAITurns:
         payload = {"model": self.model, "messages": self.msgs, "stream": True, "tools": _openai_tools(self.tools)}
         if "temperature" in self.options:
             payload["temperature"] = self.options["temperature"]
+        providers.set_output_limit(payload, self.options)
         try:
             resp = providers.open_openai_stream(self.p, "/chat/completions", payload)
         except ProviderError as e:

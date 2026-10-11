@@ -6,6 +6,7 @@ import ipaddress
 import json
 import os
 import re
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -179,17 +180,114 @@ def ollama_capabilities(p, model, timeout=5):
     return caps if isinstance(caps, list) else None
 
 
+PROMPT_HEADROOM = 16384      # Ollama, manual limit: context window = answer limit + this much room for the chat
+AUTO_CONTEXT_CAP = 131072    # Ollama, automatic: never a window larger than this
+FALLBACK_CONTEXT = 16384     # Ollama, automatic: window when the computer's memory or the model's size is unknown
+TOKENS_PER_GB = 3000         # Ollama, automatic: context tokens that one spare GB of memory holds (careful: models differ a lot)
+FAIL_RETRY = 60              # seconds before a failed /api/show is asked again
+OS_RESERVE_GB = 2            # memory left for the system and Sunak itself
+_SHOW = {}                   # (backend, model) -> {"context": tokens, "size_gb": GB} as Ollama says
+_SHOW_FAILED = {}            # (backend, model) -> when /api/show last failed
+
+
+def ollama_show(p, model, timeout=5):
+    """What Ollama says about a model: {"context": its longest context, "size_gb": its size on disk (about what it
+    takes in memory), else a guess from the parameter count}; a missing value is None. Remembered per backend and
+    model once Ollama answered; after a failure Ollama is left alone for FAIL_RETRY seconds."""
+    key = (_base(p), model)
+    if key in _SHOW:
+        return _SHOW[key]
+    unknown = {"context": None, "size_gb": None}
+    if time.monotonic() - _SHOW_FAILED.get(key, -FAIL_RETRY) < FAIL_RETRY:
+        return unknown
+    try:
+        with _request(_base(p) + "/api/show", {"model": model}, p.get("api_key", ""), timeout=timeout) as r:
+            info = json.load(r).get("model_info")
+    except (ProviderError, OSError, ValueError, AttributeError):
+        _SHOW_FAILED[key] = time.monotonic()
+        return unknown
+    info = info if isinstance(info, dict) else {}
+    ctx = next((v for k, v in info.items() if k.endswith(".context_length") and isinstance(v, int) and v > 0), None)
+    params = info.get("general.parameter_count")
+    size = round(params / 1e9, 1) if isinstance(params, int) and params > 0 else None  # about 1 byte per parameter: careful
+    try:
+        size = next((round(m["size"] / 1e9, 1) for m in ollama_tags(p, timeout) if m["name"] == model and m["size"]), size)
+    except (ProviderError, OSError, ValueError):
+        pass
+    out = _SHOW[key] = {"context": ctx, "size_gb": size}
+    return out
+
+
+def ollama_context_length(p, model):
+    return ollama_show(p, model)["context"]
+
+
+def _on_this_computer(url):
+    """True when the backend runs on this computer (or the Docker host): localhost, or a name without a dot such as
+    the compose service "ollama". An address in the LAN is another computer."""
+    host = urllib.parse.urlparse(url).hostname or ""
+    if host in ("localhost", "127.0.0.1", "::1", "host.docker.internal"):
+        return True
+    try:
+        ipaddress.ip_address(host)
+        return False
+    except ValueError:
+        return bool(host) and "." not in host
+
+
+def auto_window(p, model, host_gb):
+    """Context window (tokens) for an Ollama model: what the model supports, but no more than the memory of the
+    computer holds (`host_gb`: the GPU's memory, or the main memory without a usable GPU). A server on another computer
+    is not measured: it gets the model's own window (at most AUTO_CONTEXT_CAP)."""
+    show = ollama_show(p, model)
+    model_ctx = show["context"] or FALLBACK_CONTEXT
+    if not _on_this_computer(_base(p)):  # another computer in the LAN or on the internet: not measured
+        return min(model_ctx, AUTO_CONTEXT_CAP)
+    if not host_gb or show["size_gb"] is None:
+        return min(model_ctx, FALLBACK_CONTEXT)
+    spare = host_gb - OS_RESERVE_GB - show["size_gb"]
+    return min(model_ctx, AUTO_CONTEXT_CAP, max(4096, int(spare * TOKENS_PER_GB)))
+
+
+def ollama_options(p, model, options):
+    """The "options" of an Ollama request. Ollama cuts an answer off where its context window (often only 4096
+    tokens by default, prompt included) is full, so Sunak sets `num_ctx` and `num_predict` itself.
+    Manual (`max_tokens` in the options): the limit, plus room for the chat, at most what the model supports.
+    Automatic (`host_gb` in the options, even if None): the window from auto_window, three quarters of it for the answer.
+    Neither: only the temperature (short internal calls leave the window alone)."""
+    out = {}
+    if "temperature" in options:
+        out["temperature"] = options["temperature"]
+    limit = options.get("max_tokens")
+    if isinstance(limit, int) and limit > 0:
+        ctx = min(limit + PROMPT_HEADROOM, ollama_context_length(p, model) or AUTO_CONTEXT_CAP)
+        out["num_ctx"], out["num_predict"] = ctx, min(limit, ctx)
+    elif "host_gb" in options:
+        ctx = auto_window(p, model, options["host_gb"])
+        out["num_ctx"], out["num_predict"] = ctx, max(1024, ctx * 3 // 4)
+    return out
+
+
+def set_output_limit(payload, options):
+    """Answer limit for an OpenAI-compatible request (`max_tokens`), when the user set one. Automatic means none:
+    the server then allows what its model can write."""
+    limit = options.get("max_tokens")
+    if isinstance(limit, int) and limit > 0:
+        payload["max_tokens"] = limit
+
+
 def _chat_stream(p, model, messages, options=None, meter=usage.NONE):
     options = options or {}
     if p["type"] == "anthropic":
-        yield from anthropic_stream(p, model, messages, meter)
+        yield from anthropic_stream(p, model, messages, meter, options)
         return
     if any(m.get("images") for m in messages):
         messages = _with_images(messages, p["type"])
     if p["type"] == "ollama":
         payload = {"model": model, "messages": messages, "stream": True}
-        if "temperature" in options:
-            payload["options"] = {"temperature": options["temperature"]}
+        opts = ollama_options(p, model, options)
+        if opts:
+            payload["options"] = opts
         resp = _request(_base(p) + "/api/chat", payload, p.get("api_key", ""))
         with resp:
             for line in resp:
@@ -212,6 +310,7 @@ def _chat_stream(p, model, messages, options=None, meter=usage.NONE):
     payload = {"model": model, "messages": messages, "stream": True}
     if "temperature" in options:
         payload["temperature"] = options["temperature"]
+    set_output_limit(payload, options)
     resp = open_openai_stream(p, "/chat/completions", payload)
     with resp:
         for raw in resp:
@@ -238,9 +337,56 @@ def _chat_stream(p, model, messages, options=None, meter=usage.NONE):
 _NO_STREAM_USAGE = set()  # OpenAI-compatible servers that refused `stream_options` (asked without it from then on)
 
 
+_OUTPUT_FIX = {}  # (backend, model) -> (name, value, asked) the server accepted for the limit `asked` (value None = none sent)
+
+
+def _limit_fix(e, payload):
+    """A payload with an answer limit the server accepts after its refusal `e`, or None when `e` is not about the limit.
+    The server may want `max_completion_tokens`, name a smaller maximum, or not know the option at all."""
+    msg = str(e).lower()
+    name = next((k for k in ("max_tokens", "max_completion_tokens") if k in payload), None)
+    if not name or not msg.startswith(("http 400", "http 422")) or not any(k in msg for k in ("max_tokens", "max_completion_tokens", "max_output")):
+        return None
+    out = dict(payload)
+    del out[name]
+    if name == "max_tokens" and "max_completion_tokens" in msg and "instead" in msg:
+        out["max_completion_tokens"] = payload[name]
+        return out
+    smaller = [n for n in map(int, re.findall(r"\d+", re.sub(r"^http \d+", "", msg))) if 256 <= n < payload[name]]
+    if smaller:
+        out[name] = max(smaller)
+    return out
+
+
 def open_openai_stream(p, path, payload):
     """POST a streaming request to an OpenAI-compatible server and return the response. It asks for the token counts
-    (`stream_options.include_usage`); a server whose error names the option is asked again without it, and remembered; any other error is passed on."""
+    (`stream_options.include_usage`); a server whose error names the option is asked again without it, and remembered; any other error is passed on.
+    The same goes for the answer limit: a server that wants another name, names a smaller maximum or does not know the limit
+    is asked again with that (or without), and remembered."""
+    key = (_base(p), payload.get("model"))
+    asked = payload.get("max_tokens")
+    memo = _OUTPUT_FIX.get(key)
+    if asked is not None and memo and memo[2] == asked:  # only for the limit the correction was learned for
+        payload = dict(payload)
+        payload.pop("max_tokens")
+        if memo[1] is not None:
+            payload[memo[0]] = min(asked, memo[1])
+    for attempt in range(3):
+        try:
+            return _open_openai_stream(p, path, payload)
+        except ProviderError as e:
+            fixed = _limit_fix(e, payload)
+            if fixed is None:
+                raise
+            if attempt == 1:  # two corrections did not help: ask without a limit
+                fixed = {k: v for k, v in fixed.items() if k not in ("max_tokens", "max_completion_tokens")}
+            name = next((k for k in ("max_tokens", "max_completion_tokens") if k in fixed), "max_tokens")
+            _OUTPUT_FIX[key] = (name, fixed.get(name), asked if asked is not None else memo[2])
+            payload = fixed
+    return _open_openai_stream(p, path, payload)
+
+
+def _open_openai_stream(p, path, payload):
     base = _base(p)
     if base in _NO_STREAM_USAGE:
         return _request(base + path, payload, p.get("api_key", ""))
@@ -355,7 +501,7 @@ def anthropic_models(p, timeout=6):
 
 
 def claude_max_tokens(model):
-    """Output limit that every model of that generation accepts (streaming makes large limits safe)."""
+    """The most a model of that generation may write in one answer (streaming makes large limits safe)."""
     if model.startswith("claude-3-haiku"):
         return 4096
     if model.startswith("claude-3"):
@@ -369,7 +515,7 @@ def _blocks(content):
     return content if isinstance(content, list) else [{"type": "text", "text": content}]
 
 
-def anthropic_payload(p, model, messages):
+def anthropic_payload(p, model, messages, options=None):
     """Request body for POST /v1/messages: system prompt moved to the top level, streaming on,
     summarized reasoning on models with adaptive thinking (temperature is not sent; current
     Claude models reject it)."""
@@ -391,7 +537,11 @@ def anthropic_payload(p, model, messages):
                 chat[-1]["content"] = _blocks(prev) + _blocks(content)
         else:
             chat.append({"role": m["role"], "content": content})
-    payload = {"model": model, "max_tokens": claude_max_tokens(model), "stream": True, "messages": chat}
+    max_tokens = claude_max_tokens(model)
+    limit = (options or {}).get("max_tokens")
+    if isinstance(limit, int) and 0 < limit < max_tokens:
+        max_tokens = limit
+    payload = {"model": model, "max_tokens": max_tokens, "stream": True, "messages": chat}
     if system:
         payload["system"] = system
     if adaptive_thinking(model):
@@ -404,9 +554,9 @@ def anthropic_payload(p, model, messages):
     return payload, headers
 
 
-def anthropic_stream(p, model, messages, meter=usage.NONE):
+def anthropic_stream(p, model, messages, meter=usage.NONE, options=None):
     """Stream a Claude answer as ("think"|"text", chunk) tuples from the SSE event stream."""
-    payload, headers = anthropic_payload(p, model, messages)
+    payload, headers = anthropic_payload(p, model, messages, options)
     resp = _request(_base(p) + "/v1/messages", payload, extra_headers=headers)
     with resp:
         for raw in resp:
