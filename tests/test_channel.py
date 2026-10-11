@@ -57,6 +57,30 @@ class ChannelTest(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("commits that the update source does not have", message)
 
+    def test_single_branch_clone_without_dev(self):
+        single = Path(self.tmp.name) / "single"
+        git(self.tmp.name, "clone", "-q", "--single-branch", "-b", "main", self.remote.as_uri(), str(single))
+        git(single, "remote", "set-head", "origin", "main")
+        self.assertEqual(git(single, "branch", "-r", "--list", "origin/dev"), "")  # a plain fetch will not bring it
+        ok, message = updates.switch_channel("dev", single)
+        self.assertTrue(ok, message)
+        self.assertEqual(updates.channel(single), "dev")
+        self.assertTrue((single / "dev.txt").exists())
+        git(single, "fetch", "-q")  # origin/dev is kept up to date from now on
+        self.assertIn("origin/dev", git(single, "branch", "-r"))
+
+    def test_detached_head_with_own_commits_is_left_alone(self):
+        git(self.clone, "checkout", "-q", "--detach")
+        commit(self.clone, "lost.txt")
+        ok, message = updates.switch_channel("dev", self.clone)
+        self.assertFalse(ok)
+        self.assertIn("detached HEAD", message)
+
+    def test_inspect_with_channel_does_not_switch(self):
+        r = updates.inspect(self.clone, channel="dev")
+        self.assertEqual((r["behind"], r["error"]), (1, ""))
+        self.assertEqual(updates.channel(self.clone), "stable")
+
     def test_missing_branch_and_unknown_channel(self):
         git(self.clone, "push", "-q", "origin", ":dev")
         self.assertIn("does not exist", updates.switch_channel("dev", self.clone)[1])

@@ -329,10 +329,18 @@ def changelog_command(rest):
     """sunak changelog [--confirm] [--yes]: the changes of the next update, optionally asking before it installs
     (the `sunak update` launcher runs it first). Exit code 3 = the user said no; a check that does not work
     never stops an update."""
+    rest = list(rest)
+    channel = None
+    if "--channel" in rest:  # sunak update dev: the changes of that channel, before the clone is switched
+        i = rest.index("--channel")
+        channel = rest[i + 1] if i + 1 < len(rest) else None
+        del rest[i:i + 2]
+        if channel not in updates.CHANNELS:
+            return fail("Usage: sunak changelog --channel dev|stable")
     flags = [a for a in rest if a in ("--confirm", "--yes", "-y")]
     if len(flags) != len(rest):
         return fail(f"Unknown option '{next(a for a in rest if a not in flags)}'. Usage: sunak changelog [--confirm] [--yes]")
-    r = updates.inspect()
+    r = updates.inspect(channel=channel)
     confirm, behind = "--confirm" in flags, r["behind"]
     if behind is None:
         print("Could not look for a newer version (" + {"no_clone": "Sunak was not installed from a git clone",
