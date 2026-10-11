@@ -63,6 +63,64 @@ def repo_dir(root=desktop.PKG_ROOT):
     return None
 
 
+CHANNELS = {"dev": "dev", "stable": None, "main": None}  # name -> branch of the clone (None = its default branch, "stable")
+
+
+def default_branch(repo):
+    """The branch a clone follows normally (origin's default, else "main")."""
+    ref = _git(repo, "symbolic-ref", "--short", "refs/remotes/origin/HEAD") or ""
+    return ref[len("origin/"):] if ref.startswith("origin/") and len(ref) > 7 else "main"
+
+
+def fetch_branch(repo, branch):
+    """Fetch one branch of origin into refs/remotes/origin/<branch>. A plain `git fetch` does not bring branches that
+    a single-branch or shallow clone (what the installer makes) was not cloned with."""
+    return _git(repo, "fetch", "--quiet", "origin", f"+refs/heads/{branch}:refs/remotes/origin/{branch}") is not None
+
+
+def channel(root=desktop.PKG_ROOT):
+    """The update channel of the clone: "stable" (its default branch), "dev", another branch name, or None when
+    that cannot be found out."""
+    repo = repo_dir(root)
+    branch = _git(repo, "rev-parse", "--abbrev-ref", "HEAD") if repo else None
+    if not branch or branch == "HEAD":
+        return None
+    return "dev" if branch == "dev" else "stable" if branch == default_branch(repo) else branch
+
+
+def switch_channel(name, root=desktop.PKG_ROOT):
+    """Put the clone on the branch of channel `name` ("dev", "stable"), so that the next update follows it.
+    Returns (ok, message). Nothing is changed when the clone has uncommitted changes, the branch is not on the
+    remote or the local branch has commits that the remote does not have."""
+    if name not in CHANNELS:
+        return False, f"Unknown channel '{name}'. Use: dev, stable."
+    repo = repo_dir(root)
+    if repo is None:
+        return False, "Sunak was not installed from a git clone, so there is no channel to switch."
+    if _git(repo, "fetch", "--quiet") is None:
+        return False, "Could not reach the update source (no network or no access)."
+    branch = CHANNELS[name] or default_branch(repo)
+    if not fetch_branch(repo, branch):
+        return False, f"The branch '{branch}' does not exist on the update source (or it cannot be reached)."
+    current = _git(repo, "rev-parse", "--abbrev-ref", "HEAD")
+    if current == branch:
+        return True, f"Already on the {name} channel (branch {branch})."
+    if current == "HEAD" and _git(repo, "merge-base", "--is-ancestor", "HEAD", f"origin/{branch}") is None:
+        return False, f"The clone {repo} is on a detached HEAD with commits that are not on '{branch}'. Create a branch for them first."
+    if _git(repo, "status", "--porcelain", "--untracked-files=no"):
+        return False, f"The clone {repo} has uncommitted changes. Commit or stash them first, then run this again."
+    _git(repo, "remote", "set-branches", "--add", "origin", branch)  # plain fetch and pull follow it; tracking needs it
+    if _git(repo, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}") is None:
+        done = _git(repo, "checkout", "-q", "-b", branch, "--track", f"origin/{branch}")
+    elif _git(repo, "merge-base", "--is-ancestor", branch, f"origin/{branch}") is None:
+        return False, f"The local branch '{branch}' in {repo} has commits that the update source does not have. Resolve that first."
+    else:
+        done = _git(repo, "checkout", "-q", branch)
+    if done is None:
+        return False, f"Could not switch {repo} to the branch '{branch}'."
+    return True, f"Switched to the {name} channel (branch {branch}). The update that follows installs it."
+
+
 def installed_commit(root, repo):
     """Commit of the installed copy: written to .commit by the installer, else the clone's HEAD."""
     if Path(root) == Path(repo):
@@ -74,24 +132,31 @@ def installed_commit(root, repo):
     return commit if re.fullmatch(r"[0-9a-f]{40,64}", commit) else "HEAD"
 
 
-def inspect(root=desktop.PKG_ROOT):
+def inspect(root=desktop.PKG_ROOT, channel=None):
     """The update check with details: {"behind": new commits (0 = up to date, None = unknown), "version": the
     version on the remote ("" when unknown), "changelog": the CHANGELOG.md entries between the installed
     and the remote version (newest first, [] when there are none or the file is missing), "error": why it could
-    not be found out ("" when it could)}."""
+    not be found out ("" when it could)}. With `channel` ("dev", "stable") it compares with that channel's branch
+    instead of the one the clone is on, without switching anything."""
     repo = repo_dir(root)
     if repo is None:
         return {"behind": None, "version": "", "changelog": [], "error": "no_clone"}
     if _git(repo, "fetch", "--quiet") is None:
         return {"behind": None, "version": "", "changelog": [], "error": "no_remote"}
+    upstream = "@{u}"
+    if channel in CHANNELS:
+        branch = CHANNELS[channel] or default_branch(repo)
+        if not fetch_branch(repo, branch):
+            return {"behind": None, "version": "", "changelog": [], "error": "no_upstream"}
+        upstream = f"refs/remotes/origin/{branch}"
     for base in dict.fromkeys((installed_commit(root, repo), "HEAD")):
-        count = _git(repo, "rev-list", "--count", f"{base}..@{{u}}", timeout=20)
+        count = _git(repo, "rev-list", "--count", f"{base}..{upstream}", timeout=20)
         if count is not None and count.isdigit():
-            m = re.search(r'^__version__\s*=\s*"([^"]+)"', _git(repo, "show", "@{u}:sunak/__init__.py", timeout=20) or "", re.M)
+            m = re.search(r'^__version__\s*=\s*"([^"]+)"', _git(repo, "show", f"{upstream}:sunak/__init__.py", timeout=20) or "", re.M)
             version = m.group(1) if m else ""
             entries = []
             if int(count):
-                entries = changelog.between(changelog.parse(_git(repo, "show", "@{u}:CHANGELOG.md", timeout=20)), __version__, version)
+                entries = changelog.between(changelog.parse(_git(repo, "show", f"{upstream}:CHANGELOG.md", timeout=20)), __version__, version)
             return {"behind": int(count), "version": version, "changelog": entries, "error": ""}
     return {"behind": None, "version": "", "changelog": [], "error": "no_upstream"}
 

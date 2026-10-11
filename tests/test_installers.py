@@ -22,6 +22,15 @@ class InstallerTest(unittest.TestCase):
         update = sh[sh.index("  update)"):sh.index("    exit ;;")]
         self.assertIn('export SUNAK_HOME="$HOME_DIR"', update)
 
+    def test_update_dev_switches_the_channel_after_the_changelog(self):
+        sh = (ROOT / "install.sh").read_text(encoding="utf-8")
+        update = sh[sh.index("  update)"):sh.index("    exit ;;")]
+        self.assertLess(update.index("sunak changelog"), update.index("sunak channel"))  # ask first, switch after the yes
+        ps = (ROOT / "install.ps1").read_text(encoding="utf-8")
+        block = ps[ps.index('if /I "%~1"=="update" ('):]
+        self.assertLess(block.index("sunak changelog"), block.index("sunak channel %SUNAK_CH%"))
+        self.assertLess(block.index("if errorlevel 3"), block.index("sunak channel %SUNAK_CH%"))
+
     def test_update_shows_the_changelog_first_and_stops_when_declined(self):
         sh = (ROOT / "install.sh").read_text(encoding="utf-8")
         update = sh[sh.index("  update)"):sh.index("    exit ;;")]
