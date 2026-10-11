@@ -47,9 +47,11 @@ COMMANDS = {
     "status": {"group": "Manage", "args": "[--port N]", "summary": "Is Sunak running? Address and autostart",
                "example": "sunak status"},
     "stop": {"group": "Manage", "args": "[--port N]", "summary": "Stop the running Sunak", "example": "sunak stop"},
-    "update": {"group": "Manage", "args": "[--yes]", "summary": "Install the newest version", "example": "sunak update",
+    "update": {"group": "Manage", "args": "[dev|stable] [--yes]", "summary": "Install the newest version", "example": "sunak update",
                "details": "Shows what is new (the changelog) and asks before it installs. Stops a running Sunak; start it\n"
                           "again afterwards. In the app, the Update button does the same.\n"
+                          "  dev        switch to the dev channel (test versions) first; later plain updates stay on it\n"
+                          "  stable     switch back to the normal channel (`main` means the same)\n"
                           "  --yes, -y  do not ask (for scripts; without a terminal Sunak never asks)\n"
                           "Part of the installed sunak command. Without installing: run git pull in the Sunak folder."},
     "desktop": {"group": "Manage", "args": "[install|update|uninstall|status]", "summary": "Optional desktop app (own window)",
@@ -63,6 +65,10 @@ COMMANDS = {
                            "No Rust needed. The app needs this Sunak installation; it starts and stops the server itself.\n"
                            "Packages exist for Windows, macOS (Apple silicon) and Linux (x86_64). They are not code-signed.\n"
                            "In the app: Settings → Desktop app."},
+    "channel": {"group": "Manage", "args": "[dev|stable]", "summary": "Show or switch the update channel", "example": "sunak channel",
+                "details": "Without a name: which channel the next update follows (stable = the normal branch, dev = test versions).\n"
+                           "With a name: put your Sunak clone on that branch. `sunak update dev` does this and installs it.\n"
+                           "Fails without changing anything when the clone has uncommitted changes or its own commits on that branch."},
     "changelog": {"group": "Manage", "args": "[--confirm] [--yes]", "summary": "What the next update changes", "example": "sunak changelog",
                   "details": "Looks for a newer version and shows its changes from CHANGELOG.md, without installing anything.\n"
                              "When Sunak is up to date, it shows the changes of the installed version.\n"
@@ -304,14 +310,37 @@ def import_command(rest):
     return 0
 
 
+def channel_command(rest):
+    """sunak channel [dev|stable|main]: show the update channel, or switch the clone to another one."""
+    if len(rest) > 1 or (rest and rest[0] not in updates.CHANNELS):
+        return fail("Usage: sunak channel [dev|stable]")
+    if not rest:
+        current = updates.channel()
+        if current is None:
+            return fail("Sunak was not installed from a git clone, so there is no update channel.")
+        print(f"Update channel: {current}")
+        return 0
+    ok, message = updates.switch_channel(rest[0])
+    print(message, file=sys.stdout if ok else sys.stderr)
+    return 0 if ok else 1
+
+
 def changelog_command(rest):
     """sunak changelog [--confirm] [--yes]: the changes of the next update, optionally asking before it installs
     (the `sunak update` launcher runs it first). Exit code 3 = the user said no; a check that does not work
     never stops an update."""
+    rest = list(rest)
+    channel = None
+    if "--channel" in rest:  # sunak update dev: the changes of that channel, before the clone is switched
+        i = rest.index("--channel")
+        channel = rest[i + 1] if i + 1 < len(rest) else None
+        del rest[i:i + 2]
+        if channel not in updates.CHANNELS:
+            return fail("Usage: sunak changelog --channel dev|stable")
     flags = [a for a in rest if a in ("--confirm", "--yes", "-y")]
     if len(flags) != len(rest):
         return fail(f"Unknown option '{next(a for a in rest if a not in flags)}'. Usage: sunak changelog [--confirm] [--yes]")
-    r = updates.inspect()
+    r = updates.inspect(channel=channel)
     confirm, behind = "--confirm" in flags, r["behind"]
     if behind is None:
         print("Could not look for a newer version (" + {"no_clone": "Sunak was not installed from a git clone",
@@ -415,6 +444,8 @@ def main(argv=None):
         return desktop_command(argv[1:])
     if argv and argv[0] == "logs":
         return logs_command(argv[1:])
+    if argv and argv[0] == "channel":
+        return channel_command(argv[1:])
     if argv and argv[0] == "changelog":
         return changelog_command(argv[1:])
     if argv and argv[0] == "import":
