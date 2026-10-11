@@ -3734,7 +3734,7 @@ async function checkUpdate() {
   if ($('#updateBtn').disabled) return; // an update is running
   state.update = u;
   $('#updateNote').classList.toggle('hidden', !u.available);
-  $('#updateText').textContent = `${tr('Update available')}${u.behind > 1 ? ` (${tr('{n} changes', { n: u.behind })})` : ''}`;
+  $('#updateText').textContent = `${tr('Update available')}${u.behind > 1 ? ` (${tr('{n} changes', { n: u.behind })})` : ''}${u.channel ? ` · ${u.channel}` : ''}`;
   $('#updateBtn').classList.toggle('hidden', !u.can_update);
   $('#updateNote').title = u.can_update ? '' : 'Run “git pull” and the installer in your Sunak folder to update.';
 }
@@ -3790,6 +3790,7 @@ $('#checkNow').onclick = async () => {
     else {
       out.textContent = r.version && r.version !== r.current ? tr('New version {version} available (you have {current})', { version: r.version, current: r.current })
         : tr('An update is available ({n} changes)', { n: r.behind });
+      if (r.channel) out.textContent += ` · ${r.channel}`;
       install.classList.toggle('hidden', !r.can_update);
       if (!r.can_update) out.textContent += ` ${tr('Run “git pull” and the installer in your Sunak folder to update.')}`;
       log.replaceChildren(changelogView(r.changelog));

@@ -11,6 +11,7 @@ Format: one section per version, `## [a.b.c] – YYYY-MM-DD`, followed by short 
 - A switch fails with a clear message and changes nothing when the clone has uncommitted changes, when the branch does not exist on the update source, or when the local branch has commits that the update source does not have. It needs the clone the installer remembered (not an archive installation).
 - `sunak update dev` shows the changelog of the dev branch and asks first; only after a yes the clone is switched. Single-branch and shallow clones (what the installer makes) work: the branch is fetched explicitly and added to the clone's fetch list.
 - A clone on a detached HEAD is only switched when nothing would be lost. Switching back to stable does not roll back a data format that a newer version has changed.
+- The app follows the clone's channel, too: the update check and the Update button use the branch the clone is on, and "Update available" and Settings → Updates name the channel when it is not stable (for example "· dev").
 - To get onto dev with 1.3.0 or older, which do not know the command yet: `git -C <your clone> remote set-branches --add origin dev`, `git -C <your clone> fetch origin`, `git -C <your clone> checkout -b dev --track origin/dev`, then `sunak update`.
 
 ## [1.3.0] – 2026-10-10
