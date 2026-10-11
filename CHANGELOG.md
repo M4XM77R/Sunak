@@ -7,11 +7,12 @@ Format: one section per version, `## [a.b.c] – YYYY-MM-DD`, followed by short 
 ## [1.4.0] – 2026-10-11
 
 ### Added
-- Setting **Longest answer (tokens)** (Settings → Chat, default 32768): how long one answer may get before it is cut off.
+- Setting **Longest answer (tokens)** (Settings → Chat). The default `0` means automatic; a number sets a fixed limit.
 
 ### Changed
-- Ollama: Sunak now sends `num_predict` (the answer limit) and a matching `num_ctx` (answer limit plus 16384 tokens of room for the chat, at most the context length the model reports). Applies to chats, research reports, mail drafts and tool runs.
-- OpenAI-compatible servers: Sunak now sends `max_tokens`. A server that wants `max_completion_tokens`, names a smaller maximum or does not accept the option is asked again with that (or without it), and Sunak remembers it for that model.
+- Automatic answer length depends on where the model runs. Ollama on this computer: Sunak asks the model for its context length and size (`/api/show`) and sets `num_ctx` / `num_predict` to what the memory of this computer holds (GPU memory, or main memory without a usable GPU), at most what the model supports; if the memory or the model size is unknown, a safe 16384-token window is used. An Ollama on another computer gets the model's own window. Claude and OpenAI-compatible servers: the power of this computer does not matter, so Sunak uses the model's maximum (Claude: 64000 for current models; OpenAI-compatible: no limit sent, the server allows what its model can write).
+- A fixed limit goes to Ollama (`num_predict` plus a fitting `num_ctx`), Claude (can only lower the maximum) and OpenAI-compatible servers (`max_tokens`; a server that wants `max_completion_tokens`, names a smaller maximum or does not accept the option is asked again with that, or without it, and Sunak remembers it for that model).
+- Applies to chats, research reports, mail drafts and tool runs.
 
 ### Fixed
 - Answers ended after about 4000 tokens with Ollama: Sunak sent no context size, so Ollama's default window (often 4096 tokens, prompt included) was full after a few lines.

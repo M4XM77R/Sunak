@@ -137,7 +137,7 @@ Your data then lives in the `data/` folder next to the Compose file (Ollama mode
 
 **Introduction:** The first time a profile is used, a short tour opens (six steps, skippable with the button or `Esc`). It stays away afterwards; Settings → Introduction → "Show the introduction" opens it again. Profiles that already existed see it once after the update to 0.20.0.
 
-**Answer length:** Settings → Chat → "Longest answer (tokens)" (default 32768) sets how long one answer may get. With Ollama, Sunak also enlarges the context window to fit (at most what the model supports; a larger window needs more memory). Claude always uses the maximum of its model.
+**Answer length:** Settings → Chat → "Longest answer (tokens)" is automatic (0) by default. Claude and OpenAI-compatible servers write as much as their model allows; the power of your computer does not matter there. Ollama on your computer gets a context window as long as its memory holds (GPU memory, or main memory without a GPU), at most what the model supports, so answers are not cut off after a few lines. A number sets a fixed limit instead (a longer window needs more memory with Ollama).
 
 ### Automatic memory
 

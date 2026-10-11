@@ -7,13 +7,13 @@ from unittest import mock
 from sunak import providers
 from sunak.providers import ProviderError
 
-OLLAMA = {"id": "o", "type": "ollama", "base_url": "http://ollama.test"}
+OLLAMA = {"id": "o", "type": "ollama", "base_url": "http://localhost:11434"}
 OPENAI = {"id": "x", "type": "openai", "base_url": "http://openai.test/v1"}
 
 
 class OllamaOptionsTest(unittest.TestCase):
     def setUp(self):
-        providers._CONTEXT_LENGTH.clear()
+        providers._SHOW.clear()
 
     def test_window_fits_the_limit(self):
         with mock.patch.object(providers, "ollama_context_length", return_value=None):
@@ -25,8 +25,44 @@ class OllamaOptionsTest(unittest.TestCase):
             o = providers.ollama_options(OLLAMA, "m", {"max_tokens": 32768})
         self.assertEqual((o["num_ctx"], o["num_predict"]), (8192, 8192))
 
+    def show(self, context, size_gb):
+        return mock.patch.object(providers, "ollama_show", return_value={"context": context, "size_gb": size_gb})
+
+    def test_automatic_fits_the_memory(self):
+        with self.show(131072, 5.6):  # 8B model on a 16 GB computer: 16 - 2 - 5.6 spare GB
+            o = providers.ollama_options(OLLAMA, "m", {"host_gb": 16})
+        self.assertEqual(o["num_ctx"], int((16 - providers.OS_RESERVE_GB - 5.6) * providers.TOKENS_PER_GB))
+        self.assertEqual(o["num_predict"], o["num_ctx"] * 3 // 4)
+
+    def test_automatic_is_clamped_to_the_model_and_has_a_floor(self):
+        with self.show(8192, 1.0):
+            self.assertEqual(providers.ollama_options(OLLAMA, "m", {"host_gb": 128})["num_ctx"], 8192)
+        with self.show(131072, 40.0):  # model larger than the memory
+            self.assertEqual(providers.ollama_options(OLLAMA, "m", {"host_gb": 16})["num_ctx"], 4096)
+
+    def test_automatic_falls_back_when_detection_fails(self):
+        with self.show(131072, 5.6):
+            self.assertEqual(providers.ollama_options(OLLAMA, "m", {"host_gb": None})["num_ctx"], providers.FALLBACK_CONTEXT)
+        with self.show(131072, None):
+            self.assertEqual(providers.ollama_options(OLLAMA, "m", {"host_gb": 64})["num_ctx"], providers.FALLBACK_CONTEXT)
+
+    def test_remote_ollama_gets_the_model_window(self):
+        remote = dict(OLLAMA, base_url="http://gpu-box.example.com:11434")
+        with self.show(65536, 5.6):
+            self.assertEqual(providers.ollama_options(remote, "m", {"host_gb": 8})["num_ctx"], 65536)
+
     def test_no_limit_leaves_the_window_alone(self):
         self.assertEqual(providers.ollama_options(OLLAMA, "m", {"temperature": 0}), {"temperature": 0})
+
+
+class ClaudeLimitTest(unittest.TestCase):
+    CLAUDE = {"id": "c", "type": "anthropic", "base_url": "https://api.anthropic.com", "api_key": "k"}
+
+    def test_automatic_is_the_model_maximum_and_manual_can_lower_it(self):
+        msgs = [{"role": "user", "content": "hi"}]
+        self.assertEqual(providers.anthropic_payload(self.CLAUDE, "claude-sonnet-5-5", msgs, {"host_gb": 8})[0]["max_tokens"], 64000)
+        self.assertEqual(providers.anthropic_payload(self.CLAUDE, "claude-sonnet-5-5", msgs, {"max_tokens": 5000})[0]["max_tokens"], 5000)
+        self.assertEqual(providers.anthropic_payload(self.CLAUDE, "claude-sonnet-5-5", msgs, {"max_tokens": 999999})[0]["max_tokens"], 64000)
 
 
 class OpenAILimitTest(unittest.TestCase):

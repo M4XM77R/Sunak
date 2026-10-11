@@ -47,7 +47,7 @@ DEFAULT_SETTINGS = {
     "default_model": "",
     "system_prompt": "You are Sunak, a helpful, honest and concise assistant. Use Markdown when it helps.",
     "temperature": 0.7,
-    "max_output_tokens": providers.DEFAULT_MAX_OUTPUT,  # longest answer (tokens) a model may write; Ollama gets a context window to fit
+    "max_output_tokens": 0,  # longest answer (tokens); 0 = automatic: the model's maximum, with Ollama what the computer's memory holds
     "use_memory": True,
     "auto_memory": True,     # Sunak picks up lasting facts about the user from chats by itself (memory.py)
     "accent": "",       # "" = the theme's own accent color
@@ -71,7 +71,7 @@ DEFAULT_SETTINGS = {
     "intro_seen": False,     # the introduction (first start of a profile, Settings → Introduction) was shown or skipped
     "reminder_lang": "en",   # language of the push messages: the interface language the settings were last saved in
 }
-INT_PREFS = {"max_output_tokens": (256, 1000000),
+INT_PREFS = {"max_output_tokens": (0, 1000000),
              "image_gen_size": (512, 1024),
              "image_gen_steps": (1, imagegen.MAX_STEPS)}  # allowed ranges
 # Settings of the whole installation (only admin profiles change them); all other prefs are per profile.
@@ -951,8 +951,11 @@ class App:
             out["temperature"] = float(s["temperature"])
         except (TypeError, ValueError):
             pass
-        if isinstance(s.get("max_output_tokens"), int):
+        if s.get("max_output_tokens"):
             out["max_tokens"] = s["max_output_tokens"]
+        else:  # automatic: a local Ollama is limited by the memory of this computer (GPU, else main memory)
+            g = self.gpu or {}
+            out["host_gb"] = g["vram_gb"] if g.get("usable") and not g.get("unified") and g.get("vram_gb") else self.ram
         return out
 
 

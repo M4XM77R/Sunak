@@ -3596,7 +3596,7 @@ $('#saveSettings').onclick = async () => {
       image_gen_size: Number($('#imageGenSize').value), image_gen_steps: Number($('#imageGenSteps').value),
     };
     state.settings = await api('/api/settings', { method: 'PUT', body: { ...install,
-      system_prompt: $('#sysPrompt').value, temperature: parseFloat($('#temperature').value), max_output_tokens: Number($('#maxOutput').value) || 32768, use_memory: $('#useMemory').checked, auto_memory: $('#autoMemory').checked,
+      system_prompt: $('#sysPrompt').value, temperature: parseFloat($('#temperature').value), max_output_tokens: Number($('#maxOutput').value) || 0, use_memory: $('#useMemory').checked, auto_memory: $('#autoMemory').checked,
       mail_notify: $('#mailNotify').checked, reminders: $('#remindersOn').checked,
       ntfy_topic: $('#ntfyTopic').value, reminder_lang: sunakLang, accent: s.accent, theme: s.theme, default_model: $('#defaultModel').value, personas: draftPersonas,
     } });

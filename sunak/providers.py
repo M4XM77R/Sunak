@@ -179,32 +179,57 @@ def ollama_capabilities(p, model, timeout=5):
     return caps if isinstance(caps, list) else None
 
 
-DEFAULT_MAX_OUTPUT = 32768   # answer length (tokens) when the settings do not say otherwise
-PROMPT_HEADROOM = 16384      # Ollama: context window = answer limit + this much room for the chat so far
-_CONTEXT_LENGTH = {}         # (backend, model) -> the context length the model supports, as Ollama reports it
+PROMPT_HEADROOM = 16384      # Ollama, manual limit: context window = answer limit + this much room for the chat
+AUTO_CONTEXT_CAP = 131072    # Ollama, automatic: never a window larger than this
+FALLBACK_CONTEXT = 16384     # Ollama, automatic: window when the computer's memory or the model's size is unknown
+TOKENS_PER_GB = 6000         # Ollama, automatic: context tokens that one spare GB of memory holds (a rough, careful guess)
+OS_RESERVE_GB = 2            # memory left for the system and Sunak itself
+_SHOW = {}                   # (backend, model) -> {"context": tokens, "size_gb": estimate} as /api/show says
 
 
-def ollama_context_length(p, model, timeout=5):
-    """The longest context a model supports, as Ollama reports it, or None when it does not say."""
+def ollama_show(p, model, timeout=5):
+    """What /api/show says about a model: {"context": its longest context, "size_gb": rough memory use}; a
+    missing value is None. Remembered per backend and model once Ollama answered."""
     key = (_base(p), model)
-    if key in _CONTEXT_LENGTH:
-        return _CONTEXT_LENGTH[key]
+    if key in _SHOW:
+        return _SHOW[key]
     try:
         with _request(_base(p) + "/api/show", {"model": model}, p.get("api_key", ""), timeout=timeout) as r:
             info = json.load(r).get("model_info")
     except (ProviderError, OSError, ValueError, AttributeError):
-        return None
-    for k, v in (info.items() if isinstance(info, dict) else ()):
-        if k.endswith(".context_length") and isinstance(v, int) and v > 0:
-            _CONTEXT_LENGTH[key] = v
-            return v
-    return None
+        return {"context": None, "size_gb": None}
+    info = info if isinstance(info, dict) else {}
+    ctx = next((v for k, v in info.items() if k.endswith(".context_length") and isinstance(v, int) and v > 0), None)
+    params = info.get("general.parameter_count")
+    out = {"context": ctx, "size_gb": round(params * 0.7 / 1e9, 1) if isinstance(params, int) and params > 0 else None}
+    _SHOW[key] = out
+    return out
+
+
+def ollama_context_length(p, model):
+    return ollama_show(p, model)["context"]
+
+
+def auto_window(p, model, host_gb):
+    """Context window (tokens) for an Ollama model: what the model supports, but no more than the memory of the
+    computer holds (`host_gb`: the GPU's memory, or the main memory without a usable GPU). A server on another computer
+    is not measured: it gets the model's own window (at most AUTO_CONTEXT_CAP)."""
+    show = ollama_show(p, model)
+    model_ctx = show["context"] or FALLBACK_CONTEXT
+    if not _is_local(_base(p)):
+        return min(model_ctx, AUTO_CONTEXT_CAP)
+    if not host_gb or show["size_gb"] is None:
+        return min(model_ctx, FALLBACK_CONTEXT)
+    spare = host_gb - OS_RESERVE_GB - show["size_gb"]
+    return min(model_ctx, AUTO_CONTEXT_CAP, max(4096, int(spare * TOKENS_PER_GB)))
 
 
 def ollama_options(p, model, options):
     """The "options" of an Ollama request. Ollama cuts an answer off where its context window (often only 4096
-    tokens by default, prompt included) is full, so a requested answer limit also needs a window that fits it:
-    `num_predict` = the limit, `num_ctx` = limit + room for the chat, at most what the model supports."""
+    tokens by default, prompt included) is full, so Sunak sets `num_ctx` and `num_predict` itself.
+    Manual (`max_tokens` in the options): the limit, plus room for the chat, at most what the model supports.
+    Automatic (`host_gb` in the options, even if None): the window from auto_window, three quarters of it for the answer.
+    Neither: only the temperature (short internal calls leave the window alone)."""
     out = {}
     if "temperature" in options:
         out["temperature"] = options["temperature"]
@@ -215,11 +240,15 @@ def ollama_options(p, model, options):
         if known:
             ctx = min(ctx, known)
         out["num_ctx"], out["num_predict"] = ctx, min(limit, ctx)
+    elif "host_gb" in options:
+        ctx = auto_window(p, model, options["host_gb"])
+        out["num_ctx"], out["num_predict"] = ctx, max(1024, ctx * 3 // 4)
     return out
 
 
 def set_output_limit(payload, options):
-    """Answer limit for an OpenAI-compatible request (`max_tokens`), when the options ask for one."""
+    """Answer limit for an OpenAI-compatible request (`max_tokens`), when the user set one. Automatic means none:
+    the server then allows what its model can write."""
     limit = options.get("max_tokens")
     if isinstance(limit, int) and limit > 0:
         payload["max_tokens"] = limit
@@ -228,7 +257,7 @@ def set_output_limit(payload, options):
 def _chat_stream(p, model, messages, options=None, meter=usage.NONE):
     options = options or {}
     if p["type"] == "anthropic":
-        yield from anthropic_stream(p, model, messages, meter)
+        yield from anthropic_stream(p, model, messages, meter, options)
         return
     if any(m.get("images") for m in messages):
         messages = _with_images(messages, p["type"])
@@ -448,7 +477,7 @@ def anthropic_models(p, timeout=6):
 
 
 def claude_max_tokens(model):
-    """Output limit that every model of that generation accepts (streaming makes large limits safe)."""
+    """The most a model of that generation may write in one answer (streaming makes large limits safe)."""
     if model.startswith("claude-3-haiku"):
         return 4096
     if model.startswith("claude-3"):
@@ -462,7 +491,7 @@ def _blocks(content):
     return content if isinstance(content, list) else [{"type": "text", "text": content}]
 
 
-def anthropic_payload(p, model, messages):
+def anthropic_payload(p, model, messages, options=None):
     """Request body for POST /v1/messages: system prompt moved to the top level, streaming on,
     summarized reasoning on models with adaptive thinking (temperature is not sent; current
     Claude models reject it)."""
@@ -484,7 +513,11 @@ def anthropic_payload(p, model, messages):
                 chat[-1]["content"] = _blocks(prev) + _blocks(content)
         else:
             chat.append({"role": m["role"], "content": content})
-    payload = {"model": model, "max_tokens": claude_max_tokens(model), "stream": True, "messages": chat}
+    max_tokens = claude_max_tokens(model)
+    limit = (options or {}).get("max_tokens")
+    if isinstance(limit, int) and 0 < limit < max_tokens:
+        max_tokens = limit
+    payload = {"model": model, "max_tokens": max_tokens, "stream": True, "messages": chat}
     if system:
         payload["system"] = system
     if adaptive_thinking(model):
@@ -497,9 +530,9 @@ def anthropic_payload(p, model, messages):
     return payload, headers
 
 
-def anthropic_stream(p, model, messages, meter=usage.NONE):
+def anthropic_stream(p, model, messages, meter=usage.NONE, options=None):
     """Stream a Claude answer as ("think"|"text", chunk) tuples from the SSE event stream."""
-    payload, headers = anthropic_payload(p, model, messages)
+    payload, headers = anthropic_payload(p, model, messages, options)
     resp = _request(_base(p) + "/v1/messages", payload, extra_headers=headers)
     with resp:
         for raw in resp:

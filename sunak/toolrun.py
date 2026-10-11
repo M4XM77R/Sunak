@@ -95,7 +95,7 @@ class ClaudeTurns:
 
     def __init__(self, p, model, messages, options, tools):
         self.p = p
-        self.payload, self.headers = providers.anthropic_payload(p, model, messages)
+        self.payload, self.headers = providers.anthropic_payload(p, model, messages, options)
         official = urllib.parse.urlparse(providers._base(p)).hostname == "api.anthropic.com"
         self.payload["tools"] = [dict({"name": t["name"], "description": t["description"],
                                        "input_schema": t["parameters"]},
