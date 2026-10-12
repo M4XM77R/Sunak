@@ -81,6 +81,22 @@ class ParserTest(unittest.TestCase):
         self.assertTrue(all(e["body"] for e in entries))
 
 
+class DevVersionTest(unittest.TestCase):
+    def test_dev_versions_rank_below_their_release(self):
+        k = changelog.version_key
+        self.assertLess(k("1.5.0"), k("1.6.0-dev.1"))
+        self.assertLess(k("1.6.0-dev.1"), k("1.6.0-dev.2"))
+        self.assertLess(k("1.6.0-dev.12"), k("1.6.0"))
+        self.assertIsNone(k("1.6.0-beta"))
+
+    def test_headings_and_between_understand_dev_versions(self):
+        text = "## [1.6.0-dev.2] – 2026-10-12\n- b\n\n## [1.6.0-dev.1]\n- a\n\n## [1.5.0]\n- old\n"
+        entries = changelog.parse(text)
+        self.assertEqual([e["version"] for e in entries], ["1.6.0-dev.2", "1.6.0-dev.1", "1.5.0"])
+        self.assertEqual([e["version"] for e in changelog.between(entries, "1.5.0", "1.6.0-dev.2")], ["1.6.0-dev.2", "1.6.0-dev.1"])
+        self.assertEqual([e["version"] for e in changelog.between(entries, "1.6.0-dev.1", "1.6.0")], ["1.6.0-dev.2"])
+
+
 class CliTest(unittest.TestCase):
     def inspect(self, behind, entries=(), version="9.9.9", error=""):
         return unittest.mock.patch.object(updates, "inspect", return_value={

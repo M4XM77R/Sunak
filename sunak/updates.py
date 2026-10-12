@@ -15,6 +15,7 @@ import re
 import subprocess
 import sys
 import time
+import urllib.request
 from pathlib import Path
 
 from . import __version__, changelog, desktop
@@ -96,7 +97,7 @@ def switch_channel(name, root=desktop.PKG_ROOT):
         return False, f"Unknown channel '{name}'. Use: dev, stable."
     repo = repo_dir(root)
     if repo is None:
-        return False, "Sunak was not installed from a git clone, so there is no channel to switch."
+        return False, "Sunak was not installed from a git clone, and a channel needs one. For dev: git clone -b dev https://github.com/M4XM77R/sunak.git, then run install.sh (install.ps1 on Windows) in it."
     if _git(repo, "fetch", "--quiet") is None:
         return False, "Could not reach the update source (no network or no access)."
     branch = CHANNELS[name] or default_branch(repo)
@@ -132,6 +133,37 @@ def installed_commit(root, repo):
     return commit if re.fullmatch(r"[0-9a-f]{40,64}", commit) else "HEAD"
 
 
+RAW = "https://raw.githubusercontent.com/{repo}/{branch}/{path}"
+
+
+def _raw(branch, path, timeout=15):
+    """A file of the public repository on `branch` as text, or None when it cannot be read."""
+    repo = os.environ.get("SUNAK_REPO") or "M4XM77R/sunak"
+    try:
+        req = urllib.request.Request(RAW.format(repo=repo, branch=branch, path=path), headers={"User-Agent": "sunak"})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return r.read(1_000_000).decode("utf-8", errors="replace")
+    except (OSError, ValueError):
+        return None
+
+
+def inspect_download(channel=None):
+    """The update check for a copy without a git clone (installed from a download, as the Windows installer does):
+    compares the version with the one in the public repository. Without commits to count, `behind` is 1 for
+    "a newer version exists" and 0 for "same version"."""
+    branch = CHANNELS.get(channel) or "main"
+    m = re.search(r'^__version__\s*=\s*"([^"]+)"', _raw(branch, "sunak/__init__.py") or "", re.M)
+    if not m:
+        return {"behind": None, "version": "", "changelog": [], "error": "no_remote"}
+    version = m.group(1)
+    new, old = changelog.version_key(version), changelog.version_key(__version__)
+    if new is None or old is None or new <= old:
+        return {"behind": 0 if new is not None and old is not None else None, "version": version, "changelog": [],
+                "error": "" if new is not None and old is not None else "no_upstream"}
+    entries = changelog.between(changelog.parse(_raw(branch, "CHANGELOG.md")), __version__, version)
+    return {"behind": 1, "version": version, "changelog": entries, "error": ""}
+
+
 def inspect(root=desktop.PKG_ROOT, channel=None):
     """The update check with details: {"behind": new commits (0 = up to date, None = unknown), "version": the
     version on the remote ("" when unknown), "changelog": the CHANGELOG.md entries between the installed
@@ -140,7 +172,7 @@ def inspect(root=desktop.PKG_ROOT, channel=None):
     instead of the one the clone is on, without switching anything."""
     repo = repo_dir(root)
     if repo is None:
-        return {"behind": None, "version": "", "changelog": [], "error": "no_clone"}
+        return inspect_download(channel)  # no clone: compare the version with the public repository
     if _git(repo, "fetch", "--quiet") is None:
         return {"behind": None, "version": "", "changelog": [], "error": "no_remote"}
     upstream = "@{u}"
@@ -231,7 +263,7 @@ def apply(port, host, data_dir, root=desktop.PKG_ROOT):
     time.sleep(1)  # let the operating system free the port
     cmd = update_command(root)
     if cmd is None:
-        ok, out = False, "Sunak cannot update itself here. Run git pull and the installer in your clone."
+        ok, out = False, "Sunak cannot update itself here. Run \"sunak update\" or the installer again."
     else:
         try:
             r = subprocess.run(cmd, capture_output=True, text=True, errors="replace", timeout=900,
