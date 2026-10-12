@@ -4,6 +4,11 @@ All changes to Sunak, newest version first. Sunak shows the entries between your
 
 Format: one section per version, `## [a.b.c] – YYYY-MM-DD`, followed by short points under **Added**, **Changed**, **Fixed** or **Removed**. Every change to Sunak gets a new version and an entry here.
 
+## [1.5.1] – 2026-10-12
+
+### Fixed
+- **Check for updates** no longer fails with "not installed from a git clone" when Sunak was installed from a download (the Windows installer, or the Linux/macOS installer without git): the check compares the version with the public repository (`sunak/__init__.py` and `CHANGELOG.md` on the `main` branch, or `dev` for the dev channel) and shows the changelog. Without commits to count it reports "one change" for a newer version.
+
 ## [1.5.0] – 2026-10-11
 
 ### Added

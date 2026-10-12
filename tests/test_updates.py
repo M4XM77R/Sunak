@@ -11,6 +11,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
 import unittest.mock
 import urllib.error
 import urllib.request
@@ -71,7 +72,8 @@ class UpdateCheckTest(unittest.TestCase):
         git(self.other, "push", "-q", "origin", "main")
         r = updates.inspect(self.clone)
         self.assertEqual((r["behind"], r["version"], r["error"]), (1, "9.8.7", ""))
-        self.assertEqual(updates.inspect(Path(self.tmp.name) / "nothing")["error"], "no_clone")
+        with mock.patch.object(updates, "_raw", return_value=None):  # no clone and no network
+            self.assertEqual(updates.inspect(Path(self.tmp.name) / "nothing")["error"], "no_remote")
         git(self.clone, "remote", "set-url", "origin", str(Path(self.tmp.name) / "gone.git"))
         r = updates.inspect(self.clone)
         self.assertEqual((r["behind"], r["error"]), (None, "no_remote"))
@@ -119,7 +121,8 @@ class UpdateCheckTest(unittest.TestCase):
         self.assertEqual(updates.check(app), 0)
 
     def test_failures_are_silent(self):
-        self.assertIsNone(updates.check(Path(self.tmp.name) / "nothing"))
+        with mock.patch.object(updates, "_raw", return_value=None):
+            self.assertIsNone(updates.check(Path(self.tmp.name) / "nothing"))
         with unittest.mock.patch("subprocess.run", side_effect=FileNotFoundError("git")):
             self.assertIsNone(updates.check(self.clone))
         git(self.clone, "remote", "set-url", "origin", str(Path(self.tmp.name) / "gone.git"))  # offline
