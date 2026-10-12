@@ -8,14 +8,18 @@ import re
 
 MAX_CHARS = 400_000   # a changelog bigger than this is not read at all
 MAX_ENTRIES = 100
-HEADING = re.compile(r"^##[ \t]+\[?(\d{1,4}\.\d{1,5}\.\d{1,6})\]?[ \t]*(?:[–—-][ \t]*(.*?))?[ \t]*$")
+HEADING = re.compile(r"^##[ \t]+\[?(\d{1,4}\.\d{1,5}\.\d{1,6}(?:-dev\.\d{1,6})?)\]?[ \t]*(?:[–—-][ \t]*(.*?))?[ \t]*$")
 DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 
 def version_key(version):
-    """(0, 14, 0) for "0.14.0"; None when it is not a plain a.b.c version."""
-    m = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)", str(version).strip())
-    return tuple(int(x) for x in m.groups()) if m else None
+    """Sort key of "0.14.0" or of a dev version "1.6.0-dev.2"; None when it is neither. A dev version ranks
+    below the release it leads to (1.6.0-dev.2 < 1.6.0) and above the previous release."""
+    m = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)(?:-dev\.(\d+))?", str(version).strip())
+    if not m:
+        return None
+    a, b, c, dev = m.groups()
+    return (int(a), int(b), int(c)) + ((0, int(dev)) if dev is not None else (1, 0))
 
 
 def parse(text):

@@ -53,7 +53,7 @@ COMMANDS = {
                           "  dev        switch to the dev channel (test versions) first; later plain updates stay on it\n"
                           "  stable     switch back to the normal channel (`main` means the same)\n"
                           "  --yes, -y  do not ask (for scripts; without a terminal Sunak never asks)\n"
-                          "Part of the installed sunak command. Without installing: run git pull in the Sunak folder."},
+                          "Part of the installed sunak command. Without installing: run git pull in the Sunak folder, or run the installer again."},
     "desktop": {"group": "Manage", "args": "[install|update|uninstall|status]", "summary": "Optional desktop app (own window)",
                 "example": "sunak desktop install",
                 "details": "Sunak in its own window instead of the browser (a small Tauri app, see desktop/README.md).\n"
@@ -317,7 +317,7 @@ def channel_command(rest):
     if not rest:
         current = updates.channel()
         if current is None:
-            return fail("Sunak was not installed from a git clone, so there is no update channel.")
+            return fail("Sunak was not installed from a git clone, so there is no update channel (the dev channel needs a clone: git clone -b dev https://github.com/M4XM77R/sunak.git, then run install.sh or install.ps1 in it).")
         print(f"Update channel: {current}")
         return 0
     ok, message = updates.switch_channel(rest[0])
@@ -344,7 +344,7 @@ def changelog_command(rest):
     confirm, behind = "--confirm" in flags, r["behind"]
     if behind is None:
         print("Could not look for a newer version (" + {"no_clone": "Sunak was not installed from a git clone",
-              "no_remote": "no network or no access to the update source", "no_upstream": "the clone has no branch to compare with"}
+              "no_remote": "no network or no access to the update source", "no_upstream": "there is no branch or version to compare with"}
               .get(r["error"], "unknown reason") + ").")
         if not confirm:
             return 1

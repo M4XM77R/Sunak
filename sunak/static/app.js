@@ -3737,7 +3737,7 @@ async function checkUpdate() {
   $('#updateNote').classList.toggle('hidden', !u.available);
   $('#updateText').textContent = `${tr('Update available')}${u.behind > 1 ? ` (${tr('{n} changes', { n: u.behind })})` : ''}${u.channel ? ` · ${u.channel}` : ''}`;
   $('#updateBtn').classList.toggle('hidden', !u.can_update);
-  $('#updateNote').title = u.can_update ? '' : 'Run “git pull” and the installer in your Sunak folder to update.';
+  $('#updateNote').title = u.can_update ? '' : 'Run “sunak update” (or the installer again) to update.';
 }
 // the entries of CHANGELOG.md between the installed and the new version, shown before anything is installed
 function changelogView(entries) {
@@ -3779,7 +3779,7 @@ async function installUpdate() {
 const UPDATE_ERRORS = {
   no_clone: 'This Sunak was not installed from a git clone, so there is nothing to compare with.',
   no_remote: 'Sunak could not reach the update source (no network or no access).',
-  no_upstream: 'The clone has no branch to compare with.',
+  no_upstream: 'There is no branch or version to compare with.',
 };
 $('#checkNow').onclick = async () => {
   const btn = $('#checkNow'), out = $('#checkResult'), install = $('#installNow'), log = $('#checkChangelog');
@@ -3793,7 +3793,7 @@ $('#checkNow').onclick = async () => {
         : tr('An update is available ({n} changes)', { n: r.behind });
       if (r.channel) out.textContent += ` · ${r.channel}`;
       install.classList.toggle('hidden', !r.can_update);
-      if (!r.can_update) out.textContent += ` ${tr('Run “git pull” and the installer in your Sunak folder to update.')}`;
+      if (!r.can_update) out.textContent += ` ${tr('Run “sunak update” (or the installer again) to update.')}`;
       log.replaceChildren(changelogView(r.changelog));
     }
     checkUpdate(); // the hint at the top follows the same result

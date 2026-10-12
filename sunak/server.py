@@ -307,7 +307,7 @@ class App:
 
         def run():
             try:
-                r = updates.inspect()
+                r = updates.inspect()  # clones follow their own branch; a download is compared with main (dev needs a clone)
                 behind = r["behind"]
                 checked = time.time() if behind is not None else time.time() - updates.CHECK_EVERY + updates.RETRY_AFTER
                 self.update = {"behind": behind, "checked": checked, "version": r["version"], "changelog": r["changelog"],
