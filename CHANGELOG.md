@@ -8,6 +8,8 @@ Format: one section per version, `## [a.b.c] – YYYY-MM-DD`, followed by short 
 
 ### Fixed
 - **Check for updates** no longer fails with "not installed from a git clone" when Sunak was installed from a download (the Windows installer, or the Linux/macOS installer without git): the check compares the version with the public repository (`sunak/__init__.py` and `CHANGELOG.md` on the `main` branch, or `dev` for the dev channel) and shows the changelog. Without commits to count it reports "one change" for a newer version.
+- Dev versions named `a.b.c-dev.N` are understood by the update check and the changelog (`1.6.0-dev.2` ranks below `1.6.0` and above `1.5.x`); before, such a version made the check fail.
+- Messages no longer tell users without a clone to run `git pull`: they say to run `sunak update` or the installer again. `sunak channel` / `sunak update dev` without a clone explain that the dev channel needs a git clone.
 
 ## [1.5.0] – 2026-10-11
 

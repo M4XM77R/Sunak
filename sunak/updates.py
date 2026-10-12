@@ -97,7 +97,7 @@ def switch_channel(name, root=desktop.PKG_ROOT):
         return False, f"Unknown channel '{name}'. Use: dev, stable."
     repo = repo_dir(root)
     if repo is None:
-        return False, "Sunak was not installed from a git clone, so there is no channel to switch."
+        return False, "Sunak was not installed from a git clone, and a channel needs one. For dev: git clone -b dev https://github.com/M4XM77R/sunak.git, then run install.sh (install.ps1 on Windows) in it."
     if _git(repo, "fetch", "--quiet") is None:
         return False, "Could not reach the update source (no network or no access)."
     branch = CHANNELS[name] or default_branch(repo)
@@ -263,7 +263,7 @@ def apply(port, host, data_dir, root=desktop.PKG_ROOT):
     time.sleep(1)  # let the operating system free the port
     cmd = update_command(root)
     if cmd is None:
-        ok, out = False, "Sunak cannot update itself here. Run git pull and the installer in your clone."
+        ok, out = False, "Sunak cannot update itself here. Run \"sunak update\" or the installer again."
     else:
         try:
             r = subprocess.run(cmd, capture_output=True, text=True, errors="replace", timeout=900,

@@ -46,6 +46,10 @@ class DownloadCheckTest(unittest.TestCase):
         self.assertIsNone(r["behind"])
         self.assertEqual(r["error"], "no_remote")
 
+    def test_dev_version_of_the_remote(self):
+        self.assertEqual(self.inspect("9.0.0-dev.3")["behind"], 1)
+        self.assertEqual(self.inspect("1.0.0-dev.1")["behind"], 0)  # older than what is installed
+
     def test_channel_picks_branch(self):
         seen = []
         self.inspect("9.0.0", "dev", seen)
